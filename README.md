@@ -10,7 +10,7 @@ Dr Parity is a Next.js-based cloning engine that reverse-engineers any website i
 
 ```bash
 # Clone to start a new project
-git clone https://github.com/cameronmcallister/dr-parity.git my-project
+git clone https://github.com/CameronMc12/dr-parity.git my-project
 cd my-project
 npm install
 

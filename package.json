@@ -7,11 +7,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cameronmcallister/dr-parity.git"
+    "url": "https://github.com/CameronMc12/dr-parity.git"
   },
-  "homepage": "https://github.com/cameronmcallister/dr-parity",
+  "homepage": "https://github.com/CameronMc12/dr-parity",
   "bugs": {
-    "url": "https://github.com/cameronmcallister/dr-parity/issues"
+    "url": "https://github.com/CameronMc12/dr-parity/issues"
   },
   "keywords": [
     "claude-code",
