@@ -57,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Package.json metadata (description, repository, homepage, keywords, engines)
 
 ### Fixed
-- LICENSE copyright holder now attributed to JCodesMore
+- LICENSE copyright holder now attributed to Cameron McAllister
 
 ## [0.1.0] - 2026-03-28
 
@@ -72,9 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MIT license
 - README with badges, demo section, quick start, and star history
 
-[Unreleased]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.3.1...HEAD
-[0.3.1]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.1.1...v0.2.0
-[0.1.1]: https://github.com/JCodesMore/ai-website-cloner-template/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/JCodesMore/ai-website-cloner-template/releases/tag/v0.1.0
+[Unreleased]: https://github.com/cameronmcallister/dr-parity/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/cameronmcallister/dr-parity/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/cameronmcallister/dr-parity/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/cameronmcallister/dr-parity/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/cameronmcallister/dr-parity/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/cameronmcallister/dr-parity/releases/tag/v0.1.0

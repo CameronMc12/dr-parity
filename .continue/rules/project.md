@@ -11,10 +11,18 @@ alwaysApply: true
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
-# Website Reverse-Engineer Template
+# Dr Parity — 1:1 Website Cloning Engine
 
 ## What This Is
-A reusable template for reverse-engineering any website into a clean, modern Next.js codebase using AI coding agents. The Next.js + shadcn/ui + Tailwind v4 base is pre-scaffolded — just run `/clone-website <url1> [<url2> ...]`.
+A dedicated engine for reverse-engineering any website or web app into a pixel-perfect Next.js codebase. Dr Parity uses automated Playwright extraction + Chrome MCP visual intelligence to capture every detail including animations, then generates clean components with an iterative QA loop.
+
+## Engine Pipeline
+The `/clone-website` skill orchestrates a 5-phase pipeline:
+1. **Extract** — Playwright scripts + Chrome MCP visual capture
+2. **Analyze** — Structure into typed specs (topology, components, tokens, behaviors)
+3. **Generate** — Build Next.js components from specs
+4. **Compare** — Screenshot clone vs original, pixel-diff
+5. **Iterate** — Fix discrepancies until threshold met
 
 ## Tech Stack
 - **Framework:** Next.js 16 (App Router, React 19, TypeScript strict)
@@ -54,6 +62,12 @@ src/
     utils.ts        # cn() utility (shadcn)
   types/            # TypeScript interfaces
   hooks/            # Custom React hooks
+engine/
+  extract/          # Playwright + Chrome MCP extraction
+  analyze/          # Topology, components, tokens, behaviors
+  generate/         # Code generation from specs
+  qa/               # Screenshot comparison & fix loop
+  types/            # TypeScript interfaces for engine
 public/
   images/           # Downloaded images from target site
   videos/           # Downloaded videos from target site

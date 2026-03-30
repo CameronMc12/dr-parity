@@ -1,8 +1,9 @@
 export default function Home() {
   return (
-    <main className="flex min-h-screen items-center justify-center">
-      <p className="text-muted-foreground">
-        Clone target not yet built. Run <code className="font-mono text-foreground">/clone-website</code> to start.
+    <main className="flex min-h-screen flex-col items-center justify-center">
+      <h1 className="text-4xl font-bold">Dr Parity</h1>
+      <p className="mt-4 text-muted-foreground">
+        Run /clone-website to get started
       </p>
     </main>
   );

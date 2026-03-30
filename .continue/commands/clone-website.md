@@ -7,469 +7,506 @@ invokable: true
      Run `node scripts/sync-skills.mjs` to regenerate. -->
 
 
-# Clone Website
+# Dr Parity -- Clone Website
 
-You are about to reverse-engineer and rebuild **$ARGUMENTS** as pixel-perfect clones.
+You are about to reverse-engineer and rebuild **$ARGUMENTS** as a pixel-perfect, animation-accurate 1:1 clone.
 
-When multiple URLs are provided, process them independently and in parallel where possible, while keeping each site's extraction artifacts isolated in dedicated folders (for example, `docs/research/<hostname>/`).
+Dr Parity uses a 5-phase automated pipeline backed by Playwright extraction + Chrome MCP visual intelligence. Every computed style, every animation, every font, every asset is captured and replicated. The automated extraction captures 95% of what exists on the page. Chrome MCP catches the remaining 5%. Together they miss nothing.
 
-This is not a two-phase process (inspect then build). You are a **foreman walking the job site** — as you inspect each section of the page, you write a detailed specification to a file, then hand that file to a specialist builder agent with everything they need. Extraction and construction happen in parallel, but extraction is meticulous and produces auditable artifacts.
+When multiple URLs are provided, process them independently and in parallel where possible, isolating each site's artifacts in dedicated folders (e.g., `docs/research/<hostname>/`).
 
-## Scope Defaults
+---
 
-The target is whatever page `$ARGUMENTS` resolves to. Clone exactly what's visible at that URL. Unless the user specifies otherwise, use these defaults:
+## Phase 0: Pre-Flight
 
-- **Fidelity level:** Pixel-perfect — exact match in colors, spacing, typography, animations
-- **In scope:** Visual layout and styling, component structure and interactions, responsive design, mock data for demo purposes
-- **Out of scope:** Real backend / database, authentication, real-time features, SEO optimization, accessibility audit
-- **Customization:** None — pure emulation
+Before anything else, establish the working environment.
 
-If the user provides additional instructions (specific fidelity level, customizations, extra context), honor those over the defaults.
+### 0.1 Parse Arguments
 
-## Pre-Flight
+Extract URL(s) and any user instructions from `$ARGUMENTS`. Normalize and validate each URL. If any are invalid, ask the user to correct them before proceeding. If the user provided additional instructions (fidelity level, customizations, specific pages), note them for use throughout the pipeline.
 
-1. **Browser automation is required.** Check for available browser MCP tools (Chrome MCP, Playwright MCP, Browserbase MCP, Puppeteer MCP, etc.). Use whichever is available — if multiple exist, prefer Chrome MCP. If none are detected, ask the user which browser tool they have and how to connect it. This skill cannot work without browser automation.
-2. Parse `$ARGUMENTS` as one or more URLs. Normalize and validate each URL; if any are invalid, ask the user to correct them before proceeding. For each valid URL, verify it is accessible via your browser MCP tool.
-3. Verify the base project builds: `npm run build`. The Next.js + shadcn/ui + Tailwind v4 scaffold should already be in place. If not, tell the user to set it up first.
-4. Create the output directories if they don't exist: `docs/research/`, `docs/research/components/`, `docs/design-references/`, `scripts/`. For multiple clones, also prepare per-site folders like `docs/research/<hostname>/` and `docs/design-references/<hostname>/`.
-5. When working with multiple sites in one command, optionally confirm whether to run them in parallel (recommended, if resources allow) or sequentially to avoid overload.
+### 0.2 Verify Browser MCP
+
+Check for available browser MCP tools (Chrome MCP, Playwright MCP, Browserbase MCP, Puppeteer MCP). Use whichever is available -- prefer Chrome MCP if multiple exist. If none are detected, ask the user which browser tool they have. This skill requires browser automation for the visual verification pass in Phase 1.2 and the side-by-side QA in Phase 4.3.
+
+### 0.3 Verify Build
+
+Run `npm run build` to confirm the base project compiles. The Next.js + shadcn/ui + Tailwind v4 scaffold must already be in place. If not, tell the user to set it up first.
+
+### 0.4 Create Output Directories
+
+```bash
+mkdir -p docs/research docs/design-references docs/animations public/fonts public/images public/videos public/seo
+```
+
+For multiple sites, also create per-site folders: `docs/research/<hostname>/`, `docs/design-references/<hostname>/`.
+
+### 0.5 Verify Playwright
+
+```bash
+npx playwright --version
+```
+
+If Playwright is not installed or Chromium is missing:
+
+```bash
+npx playwright install chromium
+```
+
+---
+
+## Phase 1: Automated Extraction
+
+This phase runs the automated Playwright pipeline to capture every detail of the target site. It is the foundation of everything that follows.
+
+### 1.1 Run the Automated Extraction Script
+
+```bash
+npx tsx scripts/extract.ts <url> --output docs/research
+```
+
+This single command executes the entire extraction pipeline:
+
+**Animation Monitor Injection (BEFORE page navigation)**
+The script calls `injectAnimationMonitors(page)` before `page.goto()`. This shims `IntersectionObserver`, `Element.prototype.animate`, and scroll event listeners so that all runtime animation triggers are intercepted the moment the page's own JavaScript runs. This is critical -- if you navigate first and inject after, you miss every animation registered during page initialization.
+
+**Page Scan (`scanPage`)**
+Full DOM walk that captures ALL non-default computed styles on every visible element. For each element, it diffs `getComputedStyle()` against browser defaults for that tag, keeping only the properties that differ. This is how we get exact values, not approximations. The scan also detects sections (via `<section>` elements, `<main>` children, ARIA landmarks, or body children as fallback), identifies media (images, videos, SVGs, canvas, iframes, background images), and extracts text content verbatim.
+
+**Animation Detection (`detectAnimations`) -- Three Layers**
+1. **Static analysis:** Parses all stylesheets for `@keyframes` rules, `transition` properties, and `animation` properties. Captures keyframe definitions, durations, easings, and delays.
+2. **Runtime monitoring:** Reads back the data collected by the injected shims -- every `IntersectionObserver` callback registration, every `Element.animate()` call, every scroll listener. Each is mapped to its target element via CSS selector.
+3. **Active probing:** Scrolls the page from top to bottom in increments, capturing style diffs at each position to detect scroll-driven animations. Hovers over elements with `transition` properties to capture hover state before/after values.
+
+The result includes the animation type (`css-transition`, `css-animation`, `intersection-observer`, `gsap`, `lenis`, `framer-motion`, etc.), the trigger (scroll position, intersection threshold, hover, click, load), the animated properties with from/to values, duration, easing, delay, iteration count, direction, fill mode, keyframes, and the library driving it.
+
+**Font Extraction (`extractFonts`)**
+Detects `@font-face` rules from all stylesheets (including cross-origin sheets fetched from within the page context), Google Fonts `<link>` tags, and Typekit/Adobe Fonts scripts. Google Fonts CSS is re-fetched with a WOFF2-compatible User-Agent to get WOFF2 URLs instead of TTF. All font files are downloaded to `public/fonts/`. Variable fonts are detected via `font-variation-settings`. Font usage is mapped to DOM elements (which selectors use which family/weight).
+
+**Asset Collection (`collectAssets`)**
+Discovers ALL images, videos, inline SVGs, favicons, and OG images in one `page.evaluate()` call. Downloads them in parallel batches (concurrency 4) to `public/images/`, `public/videos/`, `public/seo/`. Inline SVGs are deduplicated by content hash and auto-named by DOM context (parent link, aria-label, nearby heading). Each asset entry tracks original URL, local path, filename, MIME type, file size, and dimensions.
+
+**Interaction Mapping (`mapInteractions`)**
+Three responsibilities:
+1. Clicks every detected tab, pill, toggle, and accordion trigger, recording the content and styles for each state.
+2. Scrolls the page and diffs fixed/sticky element styles at each position to capture scroll-dependent behaviors.
+3. Resizes the viewport to test breakpoints (1440px, 768px, 390px by default) and captures layout changes at each width.
+
+**Merge (`mergeExtractionData`)**
+Combines all extraction outputs into a unified `PageData` JSON. Sections from the page scan are enriched with animations (matched by element selector), interaction models (classified from the interaction mapper), and responsive breakpoints. Global behaviors (smooth scroll, scroll snap, custom cursor, preloader) are built from detected libraries. The complete result is saved to `docs/research/page-data.json`.
+
+### 1.2 Chrome MCP Visual Verification
+
+After the automated extraction, use Chrome MCP to visually verify and supplement what the automation captured.
+
+1. Navigate to the target URL in Chrome MCP.
+2. Take full-page screenshots at desktop (1440px). Save to `docs/design-references/`.
+3. Scroll through the page slowly, section by section, observing:
+   - Are there animations the automated extraction might have missed? (WebGL, canvas, complex GSAP timelines, Lottie, SVG morphing)
+   - Are there hover states on elements that look interactive but weren't caught by the hover probe?
+   - Are there loading states, skeleton screens, or delayed content that only appears after a pause?
+   - Is there a smooth scroll library active? Does the scroll feel buttery (Lenis, Locomotive) or native?
+   - Are there parallax effects where background layers move at different scroll rates?
+   - Do characters or words animate individually (text reveal animations)?
+   - Are there micro-interactions on buttons, inputs, links beyond simple color changes?
+   - Are there page transitions or FLIP animations?
+4. For each section, take a focused screenshot. These become the reference images that builders use.
+5. Document any findings Chrome MCP catches that the automation missed in `docs/research/CHROME_MCP_FINDINGS.md`.
+
+### 1.3 Validate Extraction Output
+
+Read `docs/research/page-data.json` and verify:
+
+- **Sections:** All visible sections were captured. Compare against what you see in Chrome MCP. If any section is missing, note it.
+- **Fonts:** Font files exist in `public/fonts/`. Check `pageData.fonts` for families, weights, and downloaded file paths.
+- **Assets:** Images exist in `public/images/`, videos in `public/videos/`. Check `pageData.assets` for completeness.
+- **Animations:** The `animations` array in each section is populated. Cross-reference against what you observed during the Chrome MCP scroll.
+- **Text content:** Spot-check a few sections -- does `textContent` match what the page actually displays?
+
+If anything is missing or incomplete, use Chrome MCP to manually extract the missing data and either re-run the relevant extraction step or manually supplement `page-data.json`.
+
+---
+
+## Phase 2: Analysis
+
+Run the analysis pipeline on the extracted data. This is pure data transformation -- no browser interaction required.
+
+### 2.1 Build Topology
+
+Using the logic from `engine/analyze/topology.ts` (`buildTopology`):
+
+- Sort sections by vertical position (top of bounding rect).
+- Separate flow sections (static, relative, absolute) from overlay sections (fixed, sticky).
+- Classify each section's background: light, dark, image, video, or gradient.
+- Detect transitions between adjacent sections.
+- Identify the scroll container (window or custom).
+- Detect scroll-snap and smooth-scroll behaviors.
+- Identify the smooth scroll library if present (Lenis, Locomotive, custom).
+
+Output: A `TopologyMap` with ordered sections, overlays, scroll container info.
+
+### 2.2 Extract Design Tokens
+
+Using the logic from `engine/analyze/design-tokens.ts` (`extractDesignTokens`):
+
+- Flatten all elements across all sections.
+- Deduplicate colors and build a semantic palette (primary, secondary, background, foreground, muted, accent, border) plus the full color list.
+- Extract the typography scale: font families (sans, mono, serif), sizes with line heights, weights used.
+- Extract the spacing scale: deduplicated ascending values, detected base unit (4px or 8px).
+- Extract border-radius values with frequency counts.
+- Extract box-shadow values.
+- Collect breakpoint widths from responsive data.
+- Generate CSS custom properties ready for `globals.css`.
+
+Output: A `DesignTokens` object with colors, typography, spacing, borderRadius, shadows, fonts, breakpoints, and cssVariables.
+
+### 2.3 Build Component Tree
+
+Using the logic from `engine/analyze/component-tree.ts` (`buildComponentTree`):
+
+- Map each section to a `ComponentNode` with a PascalCase name, target file path, and spec.
+- Detect shared components (patterns that repeat across multiple sections).
+- Determine client vs server component split: any section with animations, scroll triggers, click handlers, hover effects, or browser API usage becomes a client component (`"use client"`).
+- Generate import specs for each component's dependencies.
+- Wire shared component dependencies into section nodes.
+
+Output: A `ComponentTree` with root Page node, section children, and shared components.
+
+### 2.4 Analyze Behaviors
+
+Using the logic from `engine/analyze/behavior-model.ts` (`analyzeBehaviors`):
+
+- For each section, collect all animations (section-level + element-level).
+- Classify interaction model: static, scroll-driven, click-driven, hover-driven, time-driven, or hybrid.
+- Extract scroll triggers with element selectors, trigger positions, and actions.
+- Extract click handlers with action types (tab-switch, modal-open, accordion-toggle, navigation).
+- Extract hover effects with style changes and transitions.
+- Detect required npm libraries (GSAP, Lenis, Framer Motion, etc.) with the specific reason each is needed.
+- Classify global scroll behavior: native, lenis, locomotive, or custom.
+
+Output: A `BehaviorModel` with per-section behaviors, required libraries, and global scroll behavior.
+
+### 2.5 Save Analysis and Install Dependencies
+
+Save the combined analysis output to `docs/research/analysis.json`.
+
+If the behavior model identifies required npm packages, install them now:
+
+```bash
+npm install <package1> <package2> ...
+```
+
+Common packages detected: `gsap`, `@studio-freight/lenis` (or `lenis`), `framer-motion`, `lottie-react`, `locomotive-scroll`.
+
+---
+
+## Phase 3: Generation
+
+Build the clone from the analyzed specs. This is where code is written.
+
+### 3.1 Foundation (Sequential -- Do This First)
+
+Generate the foundation files before any component work. These are project-wide and everything depends on them.
+
+**globals.css**
+- Tailwind v4 imports (`@import "tailwindcss"`, `@import "tw-animate-css"`, `@import "shadcn/tailwind.css"`)
+- `@custom-variant dark (&:is(.dark *))` for dark mode
+- `@theme inline` block with font family variables, color tokens mapped to shadcn names
+- `:root` and `.dark` blocks with ALL extracted CSS custom properties (colors, spacing, typography)
+- Extracted `@keyframes` definitions (every keyframe rule from the target site's stylesheets)
+- Smooth scroll CSS (`html { scroll-behavior: smooth }` or Lenis-specific styles)
+- Global utility classes found on the target site
+- Scroll-snap configuration if detected
+- Custom scrollbar styles if the target hides or customizes scrollbars
+
+**layout.tsx**
+- Font loading via `next/font/local` (for downloaded font files in `public/fonts/`) or `next/font/google` (as fallback if font files couldn't be obtained)
+- Font variables applied to `<html>` or `<body>` className
+- Metadata: title, description, favicons, OG images (from downloaded assets in `public/seo/`)
+- Proper `<html>` and `<body>` attributes
+
+**icons.tsx**
+- Every extracted inline SVG as a named React component
+- PascalCase naming based on DOM context (aria-label, parent link, nearby heading)
+- Each component accepts `className` prop and forwards `...props`
+- `viewBox` preserved from original SVG
+
+Write these files directly. Then verify:
+
+```bash
+npm run build
+```
+
+Fix any errors before proceeding.
+
+### 3.2 Components (Parallel -- Dispatch Builder Agents)
+
+For each section in the component tree, dispatch a builder agent. Each builder receives the following inline in its prompt (not as file references -- the builder should have zero need to read external docs):
+
+1. **The section's complete spec:** ALL computed styles for every element, the full element tree structure, text content verbatim, animation specs with triggers/durations/easings, responsive breakpoint data with what changes at each width.
+2. **The section screenshot:** Path to the reference image in `docs/design-references/` so the builder can visually verify.
+3. **Design tokens:** The CSS variable names and values so the builder uses consistent colors, spacing, and typography.
+4. **Animation implementation notes:** Human-readable description of each animation plus code hints. For example: "Fades in from below when scrolled into view. Use IntersectionObserver with threshold 0.2, animate opacity 0->1 and translateY(30px)->0 over 600ms ease-out."
+5. **Responsive behavior:** Exact breakpoint values and what changes at each (e.g., "At 768px: grid switches from 3 columns to 2, gap reduces from 32px to 16px").
+6. **Shared component imports:** Which components from `icons.tsx`, which shadcn/ui primitives, which shared components to import.
+7. **Target file path:** e.g., `src/components/HeroSection.tsx`.
+
+**Builder Instructions (CRITICAL -- every builder MUST follow these):**
+
+- Use EXACT computed style values from the extraction. Not "it looks like text-lg" but `text-[18px] leading-[24px]` if the exact values don't match a Tailwind utility. Use arbitrary values (`[value]`) whenever no exact utility match exists.
+- Implement ALL animations with correct triggers, durations, and easings. A static clone of an animated site is NOT a 1:1 clone.
+- Use real text content verbatim from extraction. Not placeholder or paraphrased text.
+- Use downloaded assets with local paths (`/images/hero-bg.webp`, not `https://example.com/hero.webp`).
+- Handle responsive behavior at ALL extracted breakpoints.
+- Add `"use client"` directive if the component has any interactivity (animations, scroll listeners, click handlers, hover effects beyond CSS hover, useState, useEffect, useRef).
+- Respect `prefers-reduced-motion` for all animations.
+- Verify `npx tsc --noEmit` passes before finishing.
+
+**Dispatch Strategy:**
+
+| Section Complexity | Strategy |
+|---|---|
+| Simple (static, 1-2 sub-components) | 1 builder agent for the entire section |
+| Medium (3-4 sub-components, some states) | 1 builder per major sub-component + 1 for wrapper |
+| Complex (5+ sub-components, multiple states, intricate animations) | Break into focused sub-component builders, then wrapper builder |
+
+- Independent sections: dispatch in PARALLEL for speed.
+- Dependent sections (wrapper needs sub-components): dispatch sub-components first, then wrapper after they complete.
+- Each builder works in a worktree branch to avoid conflicts.
+
+**Complexity Budget Rule:** If a builder prompt exceeds ~150 lines of spec content, the section is too complex for one agent. Break it into smaller pieces.
+
+**After builders complete:** Merge completed worktree branches, resolving conflicts intelligently since you have full context on what each builder produced and what the intended outcome is.
+
+### 3.3 Page Assembly (After All Components Are Built)
+
+After all components are built and merged, assemble the page:
+
+1. Generate `src/app/page.tsx` importing all section components in topology order.
+2. Render overlay components (fixed header, sticky elements) outside `<main>`, flow sections inside `<main>`.
+3. Add page-level behaviors:
+   - Scroll container setup (Lenis initialization if detected)
+   - Scroll-snap configuration
+   - Page-level IntersectionObserver setups
+   - Any global animation orchestration
+4. If Lenis or another scroll library is used, the page needs `"use client"` directive and the library initialization in a `useEffect`.
+
+Verify:
+
+```bash
+npm run build
+```
+
+Fix any errors before proceeding to QA.
+
+---
+
+## Phase 4: Visual QA & Iteration
+
+This phase pushes the clone from 90% to 98%+. Never skip it.
+
+### 4.1 Automated Pixel Comparison
+
+Start the dev server and run the QA script:
+
+```bash
+# Start dev server in background
+npm run dev &
+DEV_PID=$!
+
+# Wait for server to be ready
+sleep 5
+
+# Run pixel-diff QA
+npx tsx scripts/qa.ts <original-url> --clone-url http://localhost:3000 --threshold 5
+
+# Stop dev server
+kill $DEV_PID
+```
+
+This captures screenshots of both the original and clone at 3 viewports (1440px desktop, 768px tablet, 390px mobile) and runs pixelmatch to quantify visual differences. Results are saved to `docs/design-references/qa/qa-report.json`.
+
+### 4.2 Review QA Report
+
+Read `docs/design-references/qa/qa-report.json`. For each viewport:
+
+| Match % | Action |
+|---|---|
+| >= 95% | PASS -- move on to the next viewport |
+| 90-95% | Review diff images, fix the most visible discrepancies |
+| < 90% | Serious issues -- identify the sections with highest pixel difference from the diff images |
+
+The diff images (saved alongside the report) highlight exactly where the differences are in red. Use these to identify which components need fixes.
+
+### 4.3 Visual Side-by-Side with Chrome MCP
+
+Open BOTH the original site and `http://localhost:3000` in Chrome MCP tabs. Compare section by section:
+
+1. Scroll through both simultaneously. At each section, compare:
+   - Colors: do backgrounds, text, and accent colors match?
+   - Spacing: are paddings, margins, and gaps identical?
+   - Typography: do font sizes, weights, and line heights match?
+   - Layout: is the grid/flex structure the same?
+   - Animation timing: do animations trigger at the same scroll positions? Same duration and easing?
+
+2. For each discrepancy found:
+   - Is it a color mismatch? Check the CSS variable value against the extraction data.
+   - Is it a spacing issue? Check the computed padding/margin values.
+   - Is it a font issue? Verify the font files loaded correctly in DevTools.
+   - Is it an animation timing issue? Compare trigger thresholds and durations.
+   - Was the extraction spec wrong? Re-extract from Chrome MCP and fix the component.
+   - Was the spec right but the builder got it wrong? Dispatch a targeted fix agent.
+
+3. Test ALL interactive behaviors:
+   - Scroll through: do animations trigger at the right positions?
+   - Click every tab/button: does content switch correctly?
+   - Hover interactive elements: do hover states match?
+   - Test at mobile width: does responsive layout work?
+   - Test smooth scroll feel: does it match the original (Lenis, native)?
+
+### 4.4 Fix Iteration
+
+For each discrepancy, dispatch a targeted fix agent with:
+- The specific component file to fix
+- The exact issue (e.g., "heading fontSize should be 58px not 48px", "hover opacity should transition over 200ms not 150ms")
+- The diff image showing the discrepancy (if from pixel-diff)
+- The reference screenshot from the original
+
+After fixes are applied, re-run the QA comparison:
+
+```bash
+npx tsx scripts/qa.ts <original-url> --clone-url http://localhost:3000 --threshold 5
+```
+
+Repeat until all viewports pass the threshold or a maximum of 3 iterations. The fix loop module (`engine/qa/fix-loop.ts`) is designed for exactly this -- it produces `FixSuggestion` objects with the component file, priority, issue description, and suggested code change.
+
+---
+
+## Phase 5: Animation Documentation
+
+Generate educational documentation for every animation detected on the site. This goes in `docs/animations/ANIMATIONS.md`.
+
+```markdown
+# Animations Detected on [site name]
+
+## Summary
+- Total animations: X
+- CSS Transitions: X
+- CSS Animations: X
+- Scroll-driven: X
+- Intersection Observer: X
+- Library-based: X (breakdown: GSAP X, Lenis X, Framer Motion X, etc.)
+
+## Animation Catalog
+
+### 1. [Human-readable description]
+- **Type:** [css-transition | css-animation | intersection-observer | gsap | lenis | framer-motion | etc.]
+- **Trigger:** [scroll into view at 20% threshold | hover | page load at 0ms delay | scroll position 500px | etc.]
+- **Element:** [CSS selector]
+- **Properties animated:** [e.g., opacity 0 -> 1, transform translateY(30px) -> translateY(0)]
+- **Duration:** [e.g., 600ms]
+- **Easing:** [e.g., cubic-bezier(0.16, 1, 0.3, 1)]
+- **Delay:** [e.g., 0ms, or stagger: 100ms per item]
+- **Iterations:** [1 | infinite]
+- **Fill mode:** [forwards | both | none]
+- **Implementation:**
+  ```tsx
+  // Code snippet showing how to recreate this animation
+  ```
+```
+
+Build this from the `AnimationSpec` data in `page-data.json`. Each spec includes `humanDescription`, `implementationNotes`, and optionally `codeSnippet` -- use all three to produce clear documentation.
+
+---
 
 ## Guiding Principles
 
-These are the truths that separate a successful clone from a "close enough" mess. Internalize them — they should inform every decision you make.
+### 1. CAPTURE EVERYTHING -- Leave Nothing Behind
 
-### 1. Completeness Beats Speed
+Every pixel, every animation, every font weight, every hover state, every responsive breakpoint. The automated extraction captures computed styles for every visible element, all animation mechanisms, all font files, all assets. Chrome MCP catches what automation cannot: the subjective feel of scroll, canvas/WebGL content, and edge cases.
 
-Every builder agent must receive **everything** it needs to do its job perfectly: screenshot, exact CSS values, downloaded assets with local paths, real text content, component structure. If a builder has to guess anything — a color, a font size, a padding value — you have failed at extraction. Take the extra minute to extract one more property rather than shipping an incomplete brief.
+### 2. EXACT Values, Not Approximations
 
-### 2. Small Tasks, Perfect Results
+The extraction pipeline diffs `getComputedStyle()` against browser defaults, keeping only non-default properties with their exact values. When mapping to Tailwind, use arbitrary values (`text-[18px] leading-[24px]`) if no exact utility match exists. "It looks like text-lg" is WRONG if the computed value differs from what `text-lg` resolves to.
 
-When an agent gets "build the entire features section," it glosses over details — it approximates spacing, guesses font sizes, and produces something "close enough" but clearly wrong. When it gets a single focused component with exact CSS values, it nails it every time.
+### 3. Real Content, Real Assets, Real Fonts
 
-Look at each section and judge its complexity. A simple banner with a heading and a button? One agent. A complex section with 3 different card variants, each with unique hover states and internal layouts? One agent per card variant plus one for the section wrapper. When in doubt, make it smaller.
+- **Text:** Verbatim from `element.textContent`, not paraphrased or replaced with placeholder.
+- **Images/Videos:** Downloaded to `public/`, referenced by local path. Never link to the original domain.
+- **Fonts:** Actual font files downloaded to `public/fonts/` and loaded via `next/font/local`. Fall back to `next/font/google` only if the original font files cannot be obtained.
+- **SVGs:** Extracted as React components in `icons.tsx`, not replaced with Lucide or other icon library equivalents.
 
-**Complexity budget rule:** If a builder prompt exceeds ~150 lines of spec content, the section is too complex for one agent. Break it into smaller pieces. This is a mechanical check — don't override it with "but it's all related."
+### 4. Animations Are Not Optional
 
-### 3. Real Content, Real Assets
+A static clone of an animated site is NOT a 1:1 clone. The animation detector captures four dimensions for every animation:
+- **What** animates: which element, which CSS properties, from/to values
+- **When** it animates: scroll position, viewport intersection, hover, click, page load
+- **How** it animates: duration, easing, keyframes, iteration count, direction
+- **Why** it animates: the library/mechanism driving it (CSS transition, IntersectionObserver, GSAP, etc.)
 
-Extract the actual text, images, videos, and SVGs from the live site. This is a clone, not a mockup. Use `element.textContent`, download every `<img>` and `<video>`, extract inline `<svg>` elements as React components. The only time you generate content is when something is clearly server-generated and unique per session.
+All four must be replicated in the generated code. Every animation in the extraction data must appear in the built clone.
 
-**Layered assets matter.** A section that looks like one image is often multiple layers — a background watercolor/gradient, a foreground UI mockup PNG, an overlay icon. Inspect each container's full DOM tree and enumerate ALL `<img>` elements and background images within it, including absolutely-positioned overlays. Missing an overlay image makes the clone look empty even if the background is correct.
+### 5. The QA Loop Is Mandatory
 
-### 4. Foundation First
+Never declare a clone complete without running the pixel-diff comparison. The human eye misses subtle differences in spacing, color values, and font rendering. pixelmatch does not. Run the QA, fix what it finds, run it again. The threshold is 95% match per viewport.
 
-Nothing can be built until the foundation exists: global CSS with the target site's design tokens (colors, fonts, spacing), TypeScript types for the content structures, and global assets (fonts, favicons). This is sequential and non-negotiable. Everything after this can be parallel.
+### 6. Responsive Is Not Optional
 
-### 5. Extract How It Looks AND How It Behaves
+Every section must work at desktop (1440px), tablet (768px), and mobile (390px). The interaction mapper tests all three viewports and captures layout changes. The builders must implement every responsive breakpoint.
 
-A website is not a screenshot — it's a living thing. Elements move, change, appear, and disappear in response to scrolling, hovering, clicking, resizing, and time. If you only extract the static CSS of each element, your clone will look right in a screenshot but feel dead when someone actually uses it.
+### 7. Small Tasks, Perfect Results
 
-For every element, extract its **appearance** (exact computed CSS via `getComputedStyle()`) AND its **behavior** (what changes, what triggers the change, and how the transition happens). Not "it looks like 16px" — extract the actual computed value. Not "the nav changes on scroll" — document the exact trigger (scroll position, IntersectionObserver threshold, viewport intersection), the before and after states (both sets of CSS values), and the transition (duration, easing, CSS transition vs. JS-driven vs. CSS `animation-timeline`).
+A builder with a focused task (one component, exact spec) produces pixel-perfect results. A builder with a massive scope (entire complex section) approximates. When a builder prompt exceeds ~150 lines of spec content, break the section into smaller sub-component tasks.
 
-Examples of behaviors to watch for — these are illustrative, not exhaustive. The page may do things not on this list, and you must catch those too:
-- A navbar that shrinks, changes background, or gains a shadow after scrolling past a threshold
-- Elements that animate into view when they enter the viewport (fade-up, slide-in, stagger delays)
-- Sections that snap into place on scroll (`scroll-snap-type`)
-- Parallax layers that move at different rates than the scroll
-- Hover states that animate (not just change — the transition duration and easing matter)
-- Dropdowns, modals, accordions with enter/exit animations
-- Scroll-driven progress indicators or opacity transitions
-- Auto-playing carousels or cycling content
-- Dark-to-light (or any theme) transitions between page sections
-- **Tabbed/pill content that cycles** — buttons that switch visible card sets with transitions
-- **Scroll-driven tab/accordion switching** — sidebars where the active item auto-changes as content scrolls past (IntersectionObserver, NOT click handlers)
-- **Smooth scroll libraries** (Lenis, Locomotive Scroll) — check for `.lenis` class or scroll container wrappers
+### 8. Build Must Always Compile
 
-### 6. Identify the Interaction Model Before Building
+After every merge, after every fix, run `npm run build`. A broken build is never acceptable, even temporarily.
 
-This is the single most expensive mistake in cloning: building a click-based UI when the original is scroll-driven, or vice versa. Before writing any builder prompt for an interactive section, you must definitively answer: **Is this section driven by clicks, scrolls, hovers, time, or some combination?**
-
-How to determine this:
-1. **Don't click first.** Scroll through the section slowly and observe if things change on their own as you scroll.
-2. If they do, it's scroll-driven. Extract the mechanism: `IntersectionObserver`, `scroll-snap`, `position: sticky`, `animation-timeline`, or JS scroll listeners.
-3. If nothing changes on scroll, THEN click/hover to test for click/hover-driven interactivity.
-4. Document the interaction model explicitly in the component spec: "INTERACTION MODEL: scroll-driven with IntersectionObserver" or "INTERACTION MODEL: click-to-switch with opacity transition."
-
-A section with a sticky sidebar and scrolling content panels is fundamentally different from a tabbed interface where clicking switches content. Getting this wrong means a complete rewrite, not a CSS tweak.
-
-### 7. Extract Every State, Not Just the Default
-
-Many components have multiple visual states — a tab bar shows different cards per tab, a header looks different at scroll position 0 vs 100, a card has hover effects. You must extract ALL states, not just whatever is visible on page load.
-
-For tabbed/stateful content:
-- Click each tab/button via browser MCP
-- Extract the content, images, and card data for EACH state
-- Record which content belongs to which state
-- Note the transition animation between states (opacity, slide, fade, etc.)
-
-For scroll-dependent elements:
-- Capture computed styles at scroll position 0 (initial state)
-- Scroll past the trigger threshold and capture computed styles again (scrolled state)
-- Diff the two to identify exactly which CSS properties change
-- Record the transition CSS (duration, easing, properties)
-- Record the exact trigger threshold (scroll position in px, or viewport intersection ratio)
-
-### 8. Spec Files Are the Source of Truth
-
-Every component gets a specification file in `docs/research/components/` BEFORE any builder is dispatched. This file is the contract between your extraction work and the builder agent. The builder receives the spec file contents inline in its prompt — the file also persists as an auditable artifact that the user (or you) can review if something looks wrong.
-
-The spec file is not optional. It is not a nice-to-have. If you dispatch a builder without first writing a spec file, you are shipping incomplete instructions based on whatever you can remember from a browser MCP session, and the builder will guess to fill gaps.
-
-### 9. Build Must Always Compile
-
-Every builder agent must verify `npx tsc --noEmit` passes before finishing. After merging worktrees, you verify `npm run build` passes. A broken build is never acceptable, even temporarily.
-
-## Phase 1: Reconnaissance
-
-Navigate to the target URL with browser MCP.
-
-### Screenshots
-- Take **full-page screenshots** at desktop (1440px) and mobile (390px) viewports
-- Save to `docs/design-references/` with descriptive names
-- These are your master reference — builders will receive section-specific crops/screenshots later
-
-### Global Extraction
-Extract these from the page before doing anything else:
-
-**Fonts** — Inspect `<link>` tags for Google Fonts or self-hosted fonts. Check computed `font-family` on key elements (headings, body, code, labels). Document every family, weight, and style actually used. Configure them in `src/app/layout.tsx` using `next/font/google` or `next/font/local`.
-
-**Colors** — Extract the site's color palette from computed styles across the page. Update `src/app/globals.css` with the target's actual colors in the `:root` and `.dark` CSS variable blocks. Map them to shadcn's token names (background, foreground, primary, muted, etc.) where they fit. Add custom properties for colors that don't map to shadcn tokens.
-
-**Favicons & Meta** — Download favicons, apple-touch-icons, OG images, webmanifest to `public/seo/`. Update `layout.tsx` metadata.
-
-**Global UI patterns** — Identify any site-wide CSS or JS: custom scrollbar hiding, scroll-snap on the page container, global keyframe animations, backdrop filters, gradients used as overlays, **smooth scroll libraries** (Lenis, Locomotive Scroll — check for `.lenis`, `.locomotive-scroll`, or custom scroll container classes). Add these to `globals.css` and note any libraries that need to be installed.
-
-### Mandatory Interaction Sweep
-
-This is a dedicated pass AFTER screenshots and BEFORE anything else. Its purpose is to discover every behavior on the page — many of which are invisible in a static screenshot.
-
-**Scroll sweep:** Scroll the page slowly from top to bottom via browser MCP. At each section, pause and observe:
-- Does the header change appearance? Record the scroll position where it triggers.
-- Do elements animate into view? Record which ones and the animation type.
-- Does a sidebar or tab indicator auto-switch as you scroll? Record the mechanism.
-- Are there scroll-snap points? Record which containers.
-- Is there a smooth scroll library active? Check for non-native scroll behavior.
-
-**Click sweep:** Click every element that looks interactive:
-- Every button, tab, pill, link, card
-- Record what happens: does content change? Does a modal open? Does a dropdown appear?
-- For tabs/pills: click EACH ONE and record the content that appears for each state
-
-**Hover sweep:** Hover over every element that might have hover states:
-- Buttons, cards, links, images, nav items
-- Record what changes: color, scale, shadow, underline, opacity
-
-**Responsive sweep:** Test at 3 viewport widths via browser MCP:
-- Desktop: 1440px
-- Tablet: 768px
-- Mobile: 390px
-- At each width, note which sections change layout (column → stack, sidebar disappears, etc.) and at approximately which breakpoint the change occurs.
-
-Save all findings to `docs/research/BEHAVIORS.md`. This is your behavior bible — reference it when writing every component spec.
-
-### Page Topology
-Map out every distinct section of the page from top to bottom. Give each a working name. Document:
-- Their visual order
-- Which are fixed/sticky overlays vs. flow content
-- The overall page layout (scroll container, column structure, z-index layers)
-- Dependencies between sections (e.g., a floating nav that overlays everything)
-- **The interaction model** of each section (static, click-driven, scroll-driven, time-driven)
-
-Save this as `docs/research/PAGE_TOPOLOGY.md` — it becomes your assembly blueprint.
-
-## Phase 2: Foundation Build
-
-This is sequential. Do it yourself (not delegated to an agent) since it touches many files:
-
-1. **Update fonts** in `layout.tsx` to match the target site's actual fonts
-2. **Update globals.css** with the target's color tokens, spacing values, keyframe animations, utility classes, and any **global scroll behaviors** (Lenis, smooth scroll CSS, scroll-snap on body)
-3. **Create TypeScript interfaces** in `src/types/` for the content structures you've observed
-4. **Extract SVG icons** — find all inline `<svg>` elements on the page, deduplicate them, and save as named React components in `src/components/icons.tsx`. Name them by visual function (e.g., `SearchIcon`, `ArrowRightIcon`, `LogoIcon`).
-5. **Download global assets** — write and run a Node.js script (`scripts/download-assets.mjs`) that downloads all images, videos, and other binary assets from the page to `public/`. Preserve meaningful directory structure.
-6. Verify: `npm run build` passes
-
-### Asset Discovery Script Pattern
-
-Use browser MCP to enumerate all assets on the page:
-
-```javascript
-// Run this via browser MCP to discover all assets
-JSON.stringify({
-  images: [...document.querySelectorAll('img')].map(img => ({
-    src: img.src || img.currentSrc,
-    alt: img.alt,
-    width: img.naturalWidth,
-    height: img.naturalHeight,
-    // Include parent info to detect layered compositions
-    parentClasses: img.parentElement?.className,
-    siblings: img.parentElement ? [...img.parentElement.querySelectorAll('img')].length : 0,
-    position: getComputedStyle(img).position,
-    zIndex: getComputedStyle(img).zIndex
-  })),
-  videos: [...document.querySelectorAll('video')].map(v => ({
-    src: v.src || v.querySelector('source')?.src,
-    poster: v.poster,
-    autoplay: v.autoplay,
-    loop: v.loop,
-    muted: v.muted
-  })),
-  backgroundImages: [...document.querySelectorAll('*')].filter(el => {
-    const bg = getComputedStyle(el).backgroundImage;
-    return bg && bg !== 'none';
-  }).map(el => ({
-    url: getComputedStyle(el).backgroundImage,
-    element: el.tagName + '.' + el.className?.split(' ')[0]
-  })),
-  svgCount: document.querySelectorAll('svg').length,
-  fonts: [...new Set([...document.querySelectorAll('*')].slice(0, 200).map(el => getComputedStyle(el).fontFamily))],
-  favicons: [...document.querySelectorAll('link[rel*="icon"]')].map(l => ({ href: l.href, sizes: l.sizes?.toString() }))
-});
-```
-
-Then write a download script that fetches everything to `public/`. Use batched parallel downloads (4 at a time) with proper error handling.
-
-## Phase 3: Component Specification & Dispatch
-
-This is the core loop. For each section in your page topology (top to bottom), you do THREE things: **extract**, **write the spec file**, then **dispatch builders**.
-
-### Step 1: Extract
-
-For each section, use browser MCP to extract everything:
-
-1. **Screenshot** the section in isolation (scroll to it, screenshot the viewport). Save to `docs/design-references/`.
-
-2. **Extract CSS** for every element in the section. Use the extraction script below — don't hand-measure individual properties. Run it once per component container and capture the full output:
-
-```javascript
-// Per-component extraction — run via browser MCP
-// Replace SELECTOR with the actual CSS selector for the component
-(function(selector) {
-  const el = document.querySelector(selector);
-  if (!el) return JSON.stringify({ error: 'Element not found: ' + selector });
-  const props = [
-    'fontSize','fontWeight','fontFamily','lineHeight','letterSpacing','color',
-    'textTransform','textDecoration','backgroundColor','background',
-    'padding','paddingTop','paddingRight','paddingBottom','paddingLeft',
-    'margin','marginTop','marginRight','marginBottom','marginLeft',
-    'width','height','maxWidth','minWidth','maxHeight','minHeight',
-    'display','flexDirection','justifyContent','alignItems','gap',
-    'gridTemplateColumns','gridTemplateRows',
-    'borderRadius','border','borderTop','borderBottom','borderLeft','borderRight',
-    'boxShadow','overflow','overflowX','overflowY',
-    'position','top','right','bottom','left','zIndex',
-    'opacity','transform','transition','cursor',
-    'objectFit','objectPosition','mixBlendMode','filter','backdropFilter',
-    'whiteSpace','textOverflow','WebkitLineClamp'
-  ];
-  function extractStyles(element) {
-    const cs = getComputedStyle(element);
-    const styles = {};
-    props.forEach(p => { const v = cs[p]; if (v && v !== 'none' && v !== 'normal' && v !== 'auto' && v !== '0px' && v !== 'rgba(0, 0, 0, 0)') styles[p] = v; });
-    return styles;
-  }
-  function walk(element, depth) {
-    if (depth > 4) return null;
-    const children = [...element.children];
-    return {
-      tag: element.tagName.toLowerCase(),
-      classes: element.className?.toString().split(' ').slice(0, 5).join(' '),
-      text: element.childNodes.length === 1 && element.childNodes[0].nodeType === 3 ? element.textContent.trim().slice(0, 200) : null,
-      styles: extractStyles(element),
-      images: element.tagName === 'IMG' ? { src: element.src, alt: element.alt, naturalWidth: element.naturalWidth, naturalHeight: element.naturalHeight } : null,
-      childCount: children.length,
-      children: children.slice(0, 20).map(c => walk(c, depth + 1)).filter(Boolean)
-    };
-  }
-  return JSON.stringify(walk(el, 0), null, 2);
-})('SELECTOR');
-```
-
-3. **Extract multi-state styles** — for any element with multiple states (scroll-triggered, hover, active tab), capture BOTH states:
-
-```javascript
-// State A: capture styles at current state (e.g., scroll position 0)
-// Then trigger the state change (scroll, click, hover via browser MCP)
-// State B: re-run the extraction script on the same element
-// The diff between A and B IS the behavior specification
-```
-
-Record the diff explicitly: "Property X changes from VALUE_A to VALUE_B, triggered by TRIGGER, with transition: TRANSITION_CSS."
-
-4. **Extract real content** — all text, alt attributes, aria labels, placeholder text. Use `element.textContent` for each text node. For tabbed/stateful content, **click each tab and extract content per state**.
-
-5. **Identify assets** this section uses — which downloaded images/videos from `public/`, which icon components from `icons.tsx`. Check for **layered images** (multiple `<img>` or background-images stacked in the same container).
-
-6. **Assess complexity** — how many distinct sub-components does this section contain? A distinct sub-component is an element with its own unique styling, structure, and behavior (e.g., a card, a nav item, a search panel).
-
-### Step 2: Write the Component Spec File
-
-For each section (or sub-component, if you're breaking it up), create a spec file in `docs/research/components/`. This is NOT optional — every builder must have a corresponding spec file.
-
-**File path:** `docs/research/components/<component-name>.spec.md`
-
-**Template:**
-
-```markdown
-# <ComponentName> Specification
-
-## Overview
-- **Target file:** `src/components/<ComponentName>.tsx`
-- **Screenshot:** `docs/design-references/<screenshot-name>.png`
-- **Interaction model:** <static | click-driven | scroll-driven | time-driven>
-
-## DOM Structure
-<Describe the element hierarchy — what contains what>
-
-## Computed Styles (exact values from getComputedStyle)
-
-### Container
-- display: ...
-- padding: ...
-- maxWidth: ...
-- (every relevant property with exact values)
-
-### <Child element 1>
-- fontSize: ...
-- color: ...
-- (every relevant property)
-
-### <Child element N>
-...
-
-## States & Behaviors
-
-### <Behavior name, e.g., "Scroll-triggered floating mode">
-- **Trigger:** <exact mechanism — scroll position 50px, IntersectionObserver rootMargin "-30% 0px", click on .tab-button, hover>
-- **State A (before):** maxWidth: 100vw, boxShadow: none, borderRadius: 0
-- **State B (after):** maxWidth: 1200px, boxShadow: 0 4px 20px rgba(0,0,0,0.1), borderRadius: 16px
-- **Transition:** transition: all 0.3s ease
-- **Implementation approach:** <CSS transition + scroll listener | IntersectionObserver | CSS animation-timeline | etc.>
-
-### Hover states
-- **<Element>:** <property>: <before> → <after>, transition: <value>
-
-## Per-State Content (if applicable)
-
-### State: "Featured"
-- Title: "..."
-- Subtitle: "..."
-- Cards: [{ title, description, image, link }, ...]
-
-### State: "Productivity"
-- Title: "..."
-- Cards: [...]
-
-## Assets
-- Background image: `public/images/<file>.webp`
-- Overlay image: `public/images/<file>.png`
-- Icons used: <ArrowIcon>, <SearchIcon> from icons.tsx
-
-## Text Content (verbatim)
-<All text content, copy-pasted from the live site>
-
-## Responsive Behavior
-- **Desktop (1440px):** <layout description>
-- **Tablet (768px):** <what changes — e.g., "maintains 2-column, gap reduces to 16px">
-- **Mobile (390px):** <what changes — e.g., "stacks to single column, images full-width">
-- **Breakpoint:** layout switches at ~<N>px
-```
-
-Fill every section. If a section doesn't apply (e.g., no states for a static footer), write "N/A" — but think twice before marking States & Behaviors as N/A. Even a footer might have hover states on links.
-
-### Step 3: Dispatch Builders
-
-Based on complexity, dispatch builder agent(s) in worktree(s):
-
-**Simple section** (1-2 sub-components): One builder agent gets the entire section.
-
-**Complex section** (3+ distinct sub-components): Break it up. One agent per sub-component, plus one agent for the section wrapper that imports them. Sub-component builders go first since the wrapper depends on them.
-
-**What every builder agent receives:**
-- The full contents of its component spec file (inline in the prompt — don't say "go read the spec file")
-- Path to the section screenshot in `docs/design-references/`
-- Which shared components to import (`icons.tsx`, `cn()`, shadcn primitives)
-- The target file path (e.g., `src/components/HeroSection.tsx`)
-- Instruction to verify with `npx tsc --noEmit` before finishing
-- For responsive behavior: the specific breakpoint values and what changes
-
-**Don't wait.** As soon as you've dispatched the builder(s) for one section, move to extracting the next section. Builders work in parallel in their worktrees while you continue extraction.
-
-### Step 4: Merge
-
-As builder agents complete their work:
-- Merge their worktree branches into main
-- You have full context on what each agent built, so resolve any conflicts intelligently
-- After each merge, verify the build still passes: `npm run build`
-- If a merge introduces type errors, fix them immediately
-
-The extract → spec → dispatch → merge cycle continues until all sections are built.
-
-## Phase 4: Page Assembly
-
-After all sections are built and merged, wire everything together in `src/app/page.tsx`:
-
-- Import all section components
-- Implement the page-level layout from your topology doc (scroll containers, column structures, sticky positioning, z-index layering)
-- Connect real content to component props
-- Implement page-level behaviors: scroll snap, scroll-driven animations, dark-to-light transitions, intersection observers, smooth scroll (Lenis etc.)
-- Verify: `npm run build` passes clean
-
-## Phase 5: Visual QA Diff
-
-After assembly, do NOT declare the clone complete. Take side-by-side comparison screenshots:
-
-1. Open the original site and your clone side-by-side (or take screenshots at the same viewport widths)
-2. Compare section by section, top to bottom, at desktop (1440px)
-3. Compare again at mobile (390px)
-4. For each discrepancy found:
-   - Check the component spec file — was the value extracted correctly?
-   - If the spec was wrong: re-extract from browser MCP, update the spec, fix the component
-   - If the spec was right but the builder got it wrong: fix the component to match the spec
-5. Test all interactive behaviors: scroll through the page, click every button/tab, hover over interactive elements
-6. Verify smooth scroll feels right, header transitions work, tab switching works, animations play
-
-Only after this visual QA pass is the clone complete.
-
-## Pre-Dispatch Checklist
-
-Before dispatching ANY builder agent, verify you can check every box. If you can't, go back and extract more.
-
-- [ ] Spec file written to `docs/research/components/<name>.spec.md` with ALL sections filled
-- [ ] Every CSS value in the spec is from `getComputedStyle()`, not estimated
-- [ ] Interaction model is identified and documented (static / click / scroll / time)
-- [ ] For stateful components: every state's content and styles are captured
-- [ ] For scroll-driven components: trigger threshold, before/after styles, and transition are recorded
-- [ ] For hover states: before/after values and transition timing are recorded
-- [ ] All images in the section are identified (including overlays and layered compositions)
-- [ ] Responsive behavior is documented for at least desktop and mobile
-- [ ] Text content is verbatim from the site, not paraphrased
-- [ ] The builder prompt is under ~150 lines of spec; if over, the section needs to be split
+---
 
 ## What NOT to Do
 
-These are lessons from previous failed clones — each one cost hours of rework:
+- **Don't skip the automated extraction and go straight to Chrome MCP manual inspection.** The automation captures 100x more data (every computed style on every element) than manual inspection. Chrome MCP supplements; it does not replace.
+- **Don't approximate CSS values.** Use exact computed style values from the extraction. Arbitrary Tailwind values (`[18px]`) are correct when no exact utility exists.
+- **Don't use placeholder text or stock images.** Use real extracted content and downloaded assets.
+- **Don't skip animations.** Every `AnimationSpec` in the extraction data must be implemented in the clone.
+- **Don't skip the QA comparison.** Run `scripts/qa.ts` and fix what it finds.
+- **Don't skip responsive testing.** Test at all 3 viewports.
+- **Don't bundle too much work into one builder agent.** Keep tasks focused and under ~150 lines of spec.
+- **Don't ignore the extraction summary.** `page-data.json` contains critical metadata about the page structure.
+- **Don't replace extracted fonts with Google Font alternatives** unless the font files genuinely cannot be obtained.
+- **Don't declare done until the QA report passes** at >= 95% match per viewport.
+- **Don't build click-based tabs when the original is scroll-driven (or vice versa).** The extraction captures the interaction model for each section. Respect it.
+- **Don't miss overlay/layered images.** The asset collector discovers background images and positioned overlays. Check the `media` field on elements.
+- **Don't reference docs from builder prompts.** Each builder gets its full spec inline. Zero external file reads.
+- **Don't build without verifying compilation.** Every builder runs `npx tsc --noEmit`. Every merge runs `npm run build`.
 
-- **Don't build click-based tabs when the original is scroll-driven (or vice versa).** Determine the interaction model FIRST by scrolling before clicking. This is the #1 most expensive mistake — it requires a complete rewrite, not a CSS fix.
-- **Don't extract only the default state.** If there are tabs showing "Featured" on load, click Productivity, Creative, Lifestyle and extract each one's cards/content. If the header changes on scroll, capture styles at position 0 AND position 100+.
-- **Don't miss overlay/layered images.** A background watercolor + foreground UI mockup = 2 images. Check every container's DOM tree for multiple `<img>` elements and positioned overlays.
-- **Don't build mockup components for content that's actually videos/animations.** Check if a section uses `<video>`, Lottie, or canvas before building elaborate HTML mockups of what the video shows.
-- **Don't approximate CSS classes.** "It looks like `text-lg`" is wrong if the computed value is `18px` and `text-lg` is `18px/28px` but the actual line-height is `24px`. Extract exact values.
-- **Don't build everything in one monolithic commit.** The whole point of this pipeline is incremental progress with verified builds at each step.
-- **Don't reference docs from builder prompts.** Each builder gets the CSS spec inline in its prompt — never "see DESIGN_TOKENS.md for colors." The builder should have zero need to read external docs.
-- **Don't skip asset extraction.** Without real images, videos, and fonts, the clone will always look fake regardless of how perfect the CSS is.
-- **Don't give a builder agent too much scope.** If you're writing a builder prompt and it's getting long because the section is complex, that's a signal to break it into smaller tasks.
-- **Don't bundle unrelated sections into one agent.** A CTA section and a footer are different components with different designs — don't hand them both to one agent and hope for the best.
-- **Don't skip responsive extraction.** If you only inspect at desktop width, the clone will break at tablet and mobile. Test at 1440, 768, and 390 during extraction.
-- **Don't forget smooth scroll libraries.** Check for Lenis (`.lenis` class), Locomotive Scroll, or similar. Default browser scrolling feels noticeably different and the user will spot it immediately.
-- **Don't dispatch builders without a spec file.** The spec file forces exhaustive extraction and creates an auditable artifact. Skipping it means the builder gets whatever you can fit in a prompt from memory.
+---
 
-## Completion
+## Scope Defaults
 
-When done, report:
+Unless the user specifies otherwise:
+
+- **Fidelity level:** Pixel-perfect -- exact match in colors, spacing, typography, animations
+- **In scope:** Visual layout, component structure, interactions, responsive design, all animations, real content and assets
+- **Out of scope:** Real backend/database, authentication, real-time features, SEO audit, accessibility audit
+- **Customization:** None -- pure emulation
+
+If the user provides additional instructions, honor those over the defaults.
+
+---
+
+## Completion Report
+
+When finished, report:
+
 - Total sections built
-- Total components created
-- Total spec files written (should match components)
-- Total assets downloaded (images, videos, SVGs, fonts)
-- Build status (`npm run build` result)
-- Visual QA results (any remaining discrepancies)
-- Any known gaps or limitations
+- Total components created (with client vs server breakdown)
+- Total animations implemented (with type breakdown: CSS transitions, CSS animations, scroll-driven, intersection-observer, library-based)
+- Total assets downloaded (images, videos, SVGs, fonts -- with file counts and total size)
+- Total lines of generated code
+- QA scores per viewport (desktop %, tablet %, mobile %)
+- Overall pixel match percentage
+- Any known limitations or gaps
+- Link to animation documentation: `docs/animations/ANIMATIONS.md`
+- Build status: `npm run build` result
