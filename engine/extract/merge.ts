@@ -15,6 +15,10 @@ import type {
   TechStackAnalysis,
   LibraryInfo,
   Rect,
+  ColorToken,
+  SpacingToken,
+  ElementSpec,
+  StylesheetExtractionResult,
 } from '../types/extraction';
 import type { PageScanResult } from './playwright/page-scanner';
 import type { AnimationDetectionResult } from './playwright/animation-detector';
@@ -33,11 +37,12 @@ export interface MergeInput {
   fonts: FontExtractionResult;
   assets: AssetCollectionResult;
   interactions: InteractionMapResult;
+  stylesheets?: StylesheetExtractionResult;
   viewport: { width: number; height: number };
 }
 
 export function mergeExtractionData(input: MergeInput): PageData {
-  const { url, scan, animations, fonts, assets, interactions, viewport } =
+  const { url, scan, animations, fonts, assets, interactions, stylesheets, viewport } =
     input;
 
   // 1. Start with sections from the scanner
@@ -51,8 +56,7 @@ export function mergeExtractionData(input: MergeInput): PageData {
   // 3. Build tech stack analysis
   const techStack = buildTechStack(animations);
 
-  // 4. Extract color and spacing tokens from the scan
-  //    (These come pre-built from the scanner or will be empty for now)
+  // 4. Extract color and spacing tokens from actual scan data
   const colors = extractColorTokens(scan);
   const spacing = extractSpacingTokens(scan);
 
@@ -72,6 +76,7 @@ export function mergeExtractionData(input: MergeInput): PageData {
     globalBehaviors,
     assets: assets.manifest,
     techStack,
+    stylesheets,
     extractedAt: new Date().toISOString(),
   };
 }
@@ -344,28 +349,124 @@ function buildTechStack(
 }
 
 // ---------------------------------------------------------------------------
-// Token extraction stubs
+// Token extraction from scan data
 // ---------------------------------------------------------------------------
 
+/** CSS color properties to collect from computed styles. */
+const COLOR_PROPERTIES = ['color', 'background-color', 'border-color', 'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color', 'outline-color'] as const;
+
+/** CSS spacing properties to collect from computed styles. */
+const SPACING_PROPERTIES = [
+  'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+  'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+  'gap', 'row-gap', 'column-gap',
+] as const;
+
 /**
- * Extract color tokens from scan data.
- * The scan captures computed styles on every element; a dedicated token
- * extraction pass would parse those into ColorTokens. For now we return
- * an empty array — the token extractor is a separate pipeline step.
+ * Walk all elements in all sections and collect every unique color value,
+ * categorised by usage (background, text, border).
  */
-function extractColorTokens(
-  _scan: PageScanResult,
-): PageData['colors'] {
-  return [];
+function extractColorTokens(scan: PageScanResult): ColorToken[] {
+  const colorMap = new Map<string, { usage: Set<string>; frequency: number }>();
+
+  const collectFromElement = (el: ElementSpec): void => {
+    for (const prop of COLOR_PROPERTIES) {
+      const value = el.computedStyles[prop];
+      if (!value || value === 'transparent' || value === 'rgba(0, 0, 0, 0)' || value === 'inherit' || value === 'currentcolor') {
+        continue;
+      }
+
+      const usage = prop.includes('background')
+        ? 'background'
+        : prop.includes('border') || prop.includes('outline')
+          ? 'border'
+          : 'text';
+
+      const existing = colorMap.get(value);
+      if (existing) {
+        existing.usage.add(usage);
+        existing.frequency += 1;
+      } else {
+        colorMap.set(value, { usage: new Set([usage]), frequency: 1 });
+      }
+    }
+
+    for (const child of el.children) {
+      collectFromElement(child);
+    }
+  };
+
+  for (const section of scan.sections) {
+    for (const el of section.elements) {
+      collectFromElement(el);
+    }
+  }
+
+  // Sort by frequency descending, assign auto-generated names
+  const sorted = Array.from(colorMap.entries()).sort(
+    (a, b) => b[1].frequency - a[1].frequency,
+  );
+
+  return sorted.map(([value, data], idx) => ({
+    name: `color-${idx}`,
+    value,
+    usage: Array.from(data.usage),
+    frequency: data.frequency,
+  }));
 }
 
 /**
- * Extract spacing tokens from scan data.
- * Same rationale as extractColorTokens — this is a placeholder for the
- * dedicated token extraction step.
+ * Walk all elements in all sections and collect every unique spacing value
+ * from padding, margin, and gap properties.
  */
-function extractSpacingTokens(
-  _scan: PageScanResult,
-): PageData['spacing'] {
-  return [];
+function extractSpacingTokens(scan: PageScanResult): SpacingToken[] {
+  const spacingMap = new Map<number, { usage: Set<string>; frequency: number }>();
+
+  const collectFromElement = (el: ElementSpec): void => {
+    for (const prop of SPACING_PROPERTIES) {
+      const raw = el.computedStyles[prop];
+      if (!raw || raw === '0px' || raw === 'auto' || raw === 'normal') continue;
+
+      const px = parseFloat(raw);
+      if (Number.isNaN(px) || px <= 0) continue;
+
+      // Round to nearest integer to reduce near-duplicates
+      const rounded = Math.round(px);
+
+      const usage = prop.startsWith('padding')
+        ? 'padding'
+        : prop.startsWith('margin')
+          ? 'margin'
+          : 'gap';
+
+      const existing = spacingMap.get(rounded);
+      if (existing) {
+        existing.usage.add(usage);
+        existing.frequency += 1;
+      } else {
+        spacingMap.set(rounded, { usage: new Set([usage]), frequency: 1 });
+      }
+    }
+
+    for (const child of el.children) {
+      collectFromElement(child);
+    }
+  };
+
+  for (const section of scan.sections) {
+    for (const el of section.elements) {
+      collectFromElement(el);
+    }
+  }
+
+  // Sort by value ascending for a clean spacing scale
+  const sorted = Array.from(spacingMap.entries()).sort(
+    (a, b) => a[0] - b[0],
+  );
+
+  return sorted.map(([value, data]) => ({
+    value,
+    usage: Array.from(data.usage),
+    frequency: data.frequency,
+  }));
 }

@@ -22,6 +22,12 @@ import type {
 } from '../types/diff';
 import { captureScreenshots } from './screenshotter';
 import { runFullDiff, type ScreenshotPair } from './pixel-diff';
+import {
+  compareSections,
+  type SectionInfo,
+  type SectionCompareResult,
+  type QuadrantAnalysis,
+} from './section-comparator';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -259,4 +265,215 @@ export async function runFixLoop(
     passed,
     totalFixesApplied: 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Section-by-section fix loop
+// ---------------------------------------------------------------------------
+
+export interface SectionFixLoopOptions {
+  originalUrl: string;
+  cloneUrl: string;
+  sections: SectionInfo[];
+  projectDir: string;
+  /** Max fix iterations per failing section (default 2). */
+  maxIterationsPerSection?: number;
+  /** Pixel-match percent to consider a section passing (default 95). */
+  passThreshold?: number;
+  outputDir?: string;
+}
+
+export interface SectionFixLoopResult {
+  sectionResults: SectionFixResult[];
+  overallScore: number;
+  allPassed: boolean;
+}
+
+export interface SectionFixResult {
+  sectionId: string;
+  sectionName: string;
+  iterations: number;
+  finalMatchPercent: number;
+  passed: boolean;
+  fixSuggestions: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Section fix-loop helpers
+// ---------------------------------------------------------------------------
+
+const DEFAULT_SECTION_MAX_ITERATIONS = 2;
+const DEFAULT_SECTION_PASS_THRESHOLD = 95;
+
+/**
+ * Describe which quadrant(s) contain the most diff pixels, producing a
+ * human-readable hint so fix agents know WHERE to look.
+ */
+function describeQuadrantConcentration(q: QuadrantAnalysis): string {
+  const entries: Array<{ label: string; value: number }> = [
+    { label: 'top-left', value: q.topLeft },
+    { label: 'top-right', value: q.topRight },
+    { label: 'bottom-left', value: q.bottomLeft },
+    { label: 'bottom-right', value: q.bottomRight },
+  ];
+
+  // Sort descending by diff density
+  entries.sort((a, b) => b.value - a.value);
+
+  const dominant = entries[0]!;
+  if (dominant.value < 1) return 'Diff is evenly distributed (no dominant region)';
+
+  const significantRegions = entries
+    .filter((e) => e.value >= dominant.value * 0.5 && e.value > 1)
+    .map((e) => `${e.label} (${e.value}%)`)
+    .join(', ');
+
+  return `Diff concentrated in: ${significantRegions}`;
+}
+
+/**
+ * Generate a human-readable fix suggestion from a section comparison result.
+ */
+function buildSectionFixSuggestion(
+  result: SectionCompareResult,
+): string {
+  const quadrantHint = describeQuadrantConcentration(result.diffQuadrants);
+
+  const possibleCauses: string[] = [];
+
+  // Infer likely causes from quadrant patterns
+  const { topLeft, topRight, bottomLeft, bottomRight } = result.diffQuadrants;
+  const topTotal = topLeft + topRight;
+  const bottomTotal = bottomLeft + bottomRight;
+  const leftTotal = topLeft + bottomLeft;
+  const rightTotal = topRight + bottomRight;
+
+  if (topTotal > bottomTotal * 2) {
+    possibleCauses.push('likely missing/wrong header element, background image, or top padding');
+  }
+  if (bottomTotal > topTotal * 2) {
+    possibleCauses.push('likely wrong bottom spacing, missing element, or footer mismatch');
+  }
+  if (leftTotal > rightTotal * 2) {
+    possibleCauses.push('likely text positioning or left-column content mismatch');
+  }
+  if (rightTotal > leftTotal * 2) {
+    possibleCauses.push('likely missing right-side visual, image, or decoration');
+  }
+
+  // Uniform diff suggests global issues
+  const allSimilar =
+    Math.abs(topLeft - topRight) < 5 &&
+    Math.abs(topLeft - bottomLeft) < 5 &&
+    Math.abs(topLeft - bottomRight) < 5;
+  if (allSimilar && topLeft > 3) {
+    possibleCauses.push('likely global style issue (background color, font-size, or overall spacing)');
+  }
+
+  const causeStr =
+    possibleCauses.length > 0 ? ` (${possibleCauses.join('; ')})` : '';
+
+  return (
+    `Section '${result.sectionName}' at scroll ${0}: ` +
+    `${result.pixelMatchPercent}% match. ` +
+    `${quadrantHint}${causeStr}`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Public API — Section fix loop
+// ---------------------------------------------------------------------------
+
+/**
+ * Run a section-by-section QA comparison and fix loop.
+ *
+ * For each section in topology order:
+ * 1. Compare original vs clone at the section's scroll position
+ * 2. If the section passes the threshold, move on
+ * 3. If it fails, generate a fix suggestion and log it
+ * 4. After external fixes are applied, re-compare (up to maxIterationsPerSection)
+ *
+ * This module does NOT apply fixes. It identifies what needs fixing and where,
+ * producing human-readable suggestions that Claude Code agents consume.
+ */
+export async function runSectionFixLoop(
+  browser: Browser,
+  options: SectionFixLoopOptions,
+): Promise<SectionFixLoopResult> {
+  const {
+    originalUrl,
+    cloneUrl,
+    sections,
+    projectDir,
+    maxIterationsPerSection = DEFAULT_SECTION_MAX_ITERATIONS,
+    passThreshold = DEFAULT_SECTION_PASS_THRESHOLD,
+    outputDir = `${projectDir}/docs/design-references/qa-sections`,
+  } = options;
+
+  const sectionResults: SectionFixResult[] = [];
+
+  for (const section of sections) {
+    let currentIteration = 0;
+    let lastMatchPercent = 0;
+    let passed = false;
+    const fixSuggestions: string[] = [];
+
+    while (currentIteration < maxIterationsPerSection) {
+      currentIteration++;
+      const iterDir = `${outputDir}/iteration-${currentIteration}`;
+
+      // Compare just this one section
+      const results = await compareSections(browser, {
+        originalUrl,
+        cloneUrl,
+        sections: [section],
+        outputDir: iterDir,
+        threshold: passThreshold,
+      });
+
+      const result = results[0];
+      if (!result) {
+        console.error(`[Section QA] No result for section '${section.name}'`);
+        break;
+      }
+
+      lastMatchPercent = result.pixelMatchPercent;
+      passed = result.passed;
+
+      const status = passed ? 'PASS' : 'FAIL';
+      console.log(
+        `[Section QA] ${section.name} — iteration ${currentIteration}: ` +
+          `${lastMatchPercent}% match — ${status}`,
+      );
+
+      if (passed) break;
+
+      // Generate fix suggestion
+      const suggestion = buildSectionFixSuggestion(result);
+      fixSuggestions.push(suggestion);
+      console.log(`  Fix suggestion: ${suggestion}`);
+
+      if (currentIteration < maxIterationsPerSection) {
+        console.log(`  Waiting for fixes before re-comparing '${section.name}'...`);
+      }
+    }
+
+    sectionResults.push({
+      sectionId: section.id,
+      sectionName: section.name,
+      iterations: currentIteration,
+      finalMatchPercent: lastMatchPercent,
+      passed,
+      fixSuggestions,
+    });
+  }
+
+  const totalMatch = sectionResults.reduce((sum, r) => sum + r.finalMatchPercent, 0);
+  const overallScore =
+    sectionResults.length > 0
+      ? Number((totalMatch / sectionResults.length).toFixed(1))
+      : 100;
+  const allPassed = sectionResults.every((r) => r.passed);
+
+  return { sectionResults, overallScore, allPassed };
 }

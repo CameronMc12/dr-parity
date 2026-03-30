@@ -241,23 +241,26 @@ Fix any errors before proceeding.
 
 ### 3.2 Components (Parallel -- Dispatch Builder Agents)
 
-For each section in the component tree, dispatch a builder agent. Each builder receives the following inline in its prompt (not as file references -- the builder should have zero need to read external docs):
+Builder prompts are auto-generated during extraction. Each prompt file in `docs/research/prompts/` contains the COMPLETE raw extraction data for one section -- no summarization needed.
 
-1. **The section's complete spec:** ALL computed styles for every element, the full element tree structure, text content verbatim, animation specs with triggers/durations/easings, responsive breakpoint data with what changes at each width.
-2. **The section screenshot:** Path to the reference image in `docs/design-references/` so the builder can visually verify.
-3. **Design tokens:** The CSS variable names and values so the builder uses consistent colors, spacing, and typography.
-4. **Animation implementation notes:** Human-readable description of each animation plus code hints. For example: "Fades in from below when scrolled into view. Use IntersectionObserver with threshold 0.2, animate opacity 0->1 and translateY(30px)->0 over 600ms ease-out."
-5. **Responsive behavior:** Exact breakpoint values and what changes at each (e.g., "At 768px: grid switches from 3 columns to 2, gap reduces from 32px to 16px").
-6. **Shared component imports:** Which components from `icons.tsx`, which shadcn/ui primitives, which shared components to import.
-7. **Target file path:** e.g., `src/components/HeroSection.tsx`.
+For each section, dispatch a builder agent with:
+```
+Read docs/research/prompts/section-{id}-{name}.md and build the component exactly as specified.
+The prompt contains the exact HTML structure, computed styles, animations, and assets.
+Translate HTML to JSX, use exact style values, implement all animations.
+Target file: src/components/{ComponentName}.tsx
+Verify: npx tsc --noEmit
+```
+
+**CRITICAL: Do NOT summarize or paraphrase the extraction data.** Pass the raw prompt file contents directly to each builder agent. The prompt files contain exact computed style values (fontSize: "45.7636px", not "about 46px"), exact animation triggers, and the actual DOM structure. Builders translate data to code -- they don't interpret descriptions.
 
 **Builder Instructions (CRITICAL -- every builder MUST follow these):**
 
-- Use EXACT computed style values from the extraction. Not "it looks like text-lg" but `text-[18px] leading-[24px]` if the exact values don't match a Tailwind utility. Use arbitrary values (`[value]`) whenever no exact utility match exists.
+- Use EXACT computed style values from the prompt file. Not "it looks like text-lg" but `text-[18px] leading-[24px]` if the exact values don't match a Tailwind utility. Use arbitrary values (`[value]`) whenever no exact utility match exists.
 - Implement ALL animations with correct triggers, durations, and easings. A static clone of an animated site is NOT a 1:1 clone.
-- Use real text content verbatim from extraction. Not placeholder or paraphrased text.
+- Use real text content verbatim from the prompt file. Not placeholder or paraphrased text.
 - Use downloaded assets with local paths (`/images/hero-bg.webp`, not `https://example.com/hero.webp`).
-- Handle responsive behavior at ALL extracted breakpoints.
+- Handle responsive behavior at ALL extracted breakpoints listed in the prompt file.
 - Add `"use client"` directive if the component has any interactivity (animations, scroll listeners, click handlers, hover effects beyond CSS hover, useState, useEffect, useRef).
 - Respect `prefers-reduced-motion` for all animations.
 - Verify `npx tsc --noEmit` passes before finishing.
@@ -274,7 +277,7 @@ For each section in the component tree, dispatch a builder agent. Each builder r
 - Dependent sections (wrapper needs sub-components): dispatch sub-components first, then wrapper after they complete.
 - Each builder works in a worktree branch to avoid conflicts.
 
-**Complexity Budget Rule:** If a builder prompt exceeds ~150 lines of spec content, the section is too complex for one agent. Break it into smaller pieces.
+**Complexity Budget Rule:** If a builder prompt file exceeds ~150 lines of spec content, the section is too complex for one agent. Break it into smaller pieces.
 
 **After builders complete:** Merge completed worktree branches, resolving conflicts intelligently since you have full context on what each builder produced and what the intended outcome is.
 

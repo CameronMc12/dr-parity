@@ -40,8 +40,53 @@ export interface PageData {
   globalBehaviors: GlobalBehavior[];
   assets: AssetManifest;
   techStack: TechStackAnalysis;
+  /** Extracted CSS stylesheets with rules, variables, keyframes, and media queries. */
+  stylesheets?: StylesheetExtractionResult;
   /** ISO-8601 timestamp of when extraction ran. */
   extractedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Stylesheet extraction
+// ---------------------------------------------------------------------------
+
+export interface StylesheetData {
+  /** URL of the stylesheet, or null for inline <style> elements. */
+  url: string | null;
+  rules: CSSRuleData[];
+  mediaQueries: MediaQueryData[];
+  keyframes: KeyframeData[];
+  cssVariables: CSSVariableData[];
+}
+
+export interface CSSRuleData {
+  selector: string;
+  properties: Record<string, string>;
+}
+
+export interface MediaQueryData {
+  query: string;
+  rules: CSSRuleData[];
+}
+
+export interface KeyframeData {
+  name: string;
+  frames: { offset: string; properties: Record<string, string> }[];
+}
+
+export interface CSSVariableData {
+  name: string;
+  value: string;
+  /** Scope selector, e.g. `:root`, `.dark`. */
+  scope: string;
+}
+
+export interface StylesheetExtractionResult {
+  stylesheets: StylesheetData[];
+  totalRules: number;
+  totalKeyframes: number;
+  totalMediaQueries: number;
+  totalVariables: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +121,8 @@ export interface SectionSpec {
   position: SectionPosition;
   backgroundColor: string;
   className: string;
+  /** Raw HTML structure for builders. */
+  outerHTML?: string;
 }
 
 export interface ElementSpec {

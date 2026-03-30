@@ -15,7 +15,12 @@ import { scanPage } from '../engine/extract/playwright/page-scanner';
 import { extractFonts } from '../engine/extract/playwright/font-extractor';
 import { collectAssets } from '../engine/extract/playwright/asset-collector';
 import { mapInteractions } from '../engine/extract/playwright/interaction-mapper';
+import { scrapeStylesheets } from '../engine/extract/playwright/stylesheet-scraper';
 import { mergeExtractionData } from '../engine/extract/merge';
+import { buildTopology } from '../engine/analyze/topology';
+import { extractDesignTokens } from '../engine/analyze/design-tokens';
+import { buildComponentTree } from '../engine/analyze/component-tree';
+import { generateBuilderPrompts } from '../engine/generate/builder-prompts';
 import { writeFile, mkdir } from 'fs/promises';
 import { join, resolve } from 'path';
 
@@ -57,6 +62,7 @@ function generateSummaryMarkdown(url: string, durationMs: number): string {
     '## Output Files',
     '',
     '- `page-data.json` — Complete extraction data',
+    '- `prompts/` — Per-section builder prompt files with raw extraction data',
     '',
     '## Next Steps',
     '',
@@ -91,28 +97,76 @@ async function main(): Promise<void> {
     });
     const page = await context.newPage();
 
+    // Fix esbuild __name helper not available in browser context.
+    // When tsx (esbuild) compiles TypeScript, it injects a `__name()` helper
+    // for function declarations. Playwright's page.evaluate() serialises
+    // callbacks into the browser where that helper doesn't exist.
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__defProp = Object.defineProperty;
+      (window as unknown as Record<string, unknown>).__name = (fn: unknown) => fn;
+    });
+
     // Inject animation monitors BEFORE navigation
-    console.log('[1/6] Injecting animation monitors...');
+    console.log('[1/8] Injecting animation monitors...');
     await injectAnimationMonitors(page);
 
-    // Navigate
-    console.log('[2/6] Navigating to target...');
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30_000 });
+    // Navigate — use domcontentloaded instead of networkidle to avoid
+    // timeouts on pages with long-polling / streaming connections.
+    console.log('[2/8] Navigating to target...');
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.waitForTimeout(3000); // Wait for JS to initialise
 
-    // Run extraction steps
-    console.log('[3/6] Scanning page structure...');
-    const scan = await scanPage(page);
+    // Run extraction steps — scan must be first (provides section data)
+    console.log('[3/8] Scanning page structure...');
+    const scan = await scanPage(page, { maxDepth: 8 });
 
-    console.log('[4/6] Running parallel extraction (animations, fonts, assets, interactions)...');
-    const [animations, fonts, assets, interactions] = await Promise.all([
-      detectAnimations(page),
+    // These can run in parallel — they read from the page independently
+    console.log('[4/8] Running parallel extraction (animations, fonts, assets, stylesheets)...');
+    const [animations, fonts, assets, stylesheetResult] = await Promise.all([
+      detectAnimations(page, { scrollProbe: true, hoverProbe: true }),
       extractFonts(page, outputDir),
       collectAssets(page, { outputDir }),
-      mapInteractions(page),
+      scrapeStylesheets(page),
     ]);
 
+    // Interactions need the page in a clean state, run after parallel batch
+    console.log('[5/8] Mapping interactions...');
+    const interactions = await mapInteractions(page);
+
+    // Screenshot each section
+    console.log('[6/8] Capturing section screenshots...');
+    const screenshotsDir = join(outputDir, 'screenshots');
+    await mkdir(screenshotsDir, { recursive: true });
+
+    for (const section of scan.sections) {
+      try {
+        await page.evaluate(
+          (top: number) => window.scrollTo(0, top),
+          section.boundingRect.top,
+        );
+        await page.waitForTimeout(300);
+        await page.screenshot({
+          path: join(screenshotsDir, `${section.id}.png`),
+          clip: {
+            x: 0,
+            y: 0,
+            width: VIEWPORT.width,
+            height: Math.min(section.boundingRect.height, 2000),
+          },
+        });
+      } catch {
+        // Section may be off-screen or zero-height — skip
+      }
+    }
+
+    // Full-page screenshot
+    await page.screenshot({
+      path: join(screenshotsDir, 'full-page.png'),
+      fullPage: true,
+    });
+
     // Merge all results
-    console.log('[5/6] Merging extraction data...');
+    console.log('[7/8] Merging extraction data...');
     const pageData = mergeExtractionData({
       url,
       scan,
@@ -120,11 +174,12 @@ async function main(): Promise<void> {
       fonts,
       assets,
       interactions,
+      stylesheets: stylesheetResult,
       viewport: VIEWPORT,
     });
 
     // Write outputs
-    console.log('[6/6] Writing output files...');
+    console.log('[8/8] Writing output files...');
     const jsonPath = join(outputDir, 'page-data.json');
     const summaryPath = join(outputDir, 'EXTRACTION_SUMMARY.md');
 
@@ -134,6 +189,27 @@ async function main(): Promise<void> {
       writeFile(jsonPath, JSON.stringify(pageData, null, 2), 'utf-8'),
       writeFile(summaryPath, generateSummaryMarkdown(url, durationMs), 'utf-8'),
     ]);
+
+    // Run analysis and generate builder prompts
+    console.log('Generating builder prompts...');
+    const projectDir = resolve(join(outputDir, '..', '..'));
+    const tokens = extractDesignTokens(pageData);
+    const componentTree = buildComponentTree(pageData);
+    buildTopology(pageData);
+
+    const allComponents = [
+      componentTree.root,
+      ...componentTree.root.children,
+    ];
+
+    const prompts = await generateBuilderPrompts({
+      projectDir,
+      pageData,
+      tokens,
+      components: allComponents,
+    });
+
+    console.log(`Generated ${prompts.length} builder prompts in docs/research/prompts/`);
 
     await context.close();
 

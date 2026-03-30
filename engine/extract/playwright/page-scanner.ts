@@ -581,6 +581,16 @@ async function extractSection(
         absolute: 'absolute',
       };
 
+      // Capture outerHTML, capped at 50KB to avoid massive payloads.
+      const MAX_OUTER_HTML = 50_000;
+      let outerHTML: string | undefined;
+      try {
+        const raw = el.outerHTML;
+        outerHTML = raw.length > MAX_OUTER_HTML ? raw.slice(0, MAX_OUTER_HTML) : raw;
+      } catch {
+        // outerHTML may fail on certain pseudo-elements
+      }
+
       return {
         name,
         rect,
@@ -590,6 +600,7 @@ async function extractSection(
         className: typeof cls === 'string' ? cls : '',
         elements: children,
         elementCount,
+        outerHTML,
       };
       // ---- End in-browser code ----
     },
@@ -614,6 +625,7 @@ async function extractSection(
     className: string;
     elements: SerializedElement[];
     elementCount: number;
+    outerHTML?: string;
   };
 
   // Convert the raw serialized data into proper typed objects.
@@ -633,6 +645,7 @@ async function extractSection(
     position: rawTyped.position as SectionSpec['position'],
     backgroundColor: rawTyped.bgColor,
     className: rawTyped.className,
+    outerHTML: rawTyped.outerHTML,
   };
 }
 

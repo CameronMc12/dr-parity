@@ -693,8 +693,30 @@ async function captureElementStyles(
 ): Promise<StyleSnapshot[]> {
   return page.evaluate(
     ({ sels, props }: { sels: string[]; props: string[] }) => {
+      /**
+       * Safely query an element by selector. Selectors built from class names
+       * may contain Tailwind JIT characters (`|`, `:`, `/`) that are invalid
+       * in CSS selectors. We rebuild class-based selectors using CSS.escape().
+       */
+      const safeQuery = (sel: string): Element | null => {
+        try {
+          return document.querySelector(sel);
+        } catch {
+          // Selector contains special characters — try escaping class parts
+          try {
+            const escaped = sel.replace(
+              /\.([^\s.>#~+[\]:]+)/g,
+              (_match, cls: string) => '.' + CSS.escape(cls),
+            );
+            return document.querySelector(escaped);
+          } catch {
+            return null;
+          }
+        }
+      };
+
       return sels.map(sel => {
-        const el = document.querySelector(sel);
+        const el = safeQuery(sel);
         const styles: Record<string, string> = {};
         if (el) {
           const computed = getComputedStyle(el);
