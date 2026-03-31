@@ -193,3 +193,65 @@ Gaps and opportunities discovered during implementation of the roadmap features.
 3. **Per-section re-extraction could merge into existing page-data.json**: Currently `--only-sections` generates a fresh `page-data.json` with only the filtered sections. Instead, it could merge re-extracted sections back into an existing `page-data.json`, preserving data for unmodified sections. This would enable incremental section updates without losing the full extraction context.
 
 4. **Builder dispatch error recovery could track failure history**: When a builder fails and is retried, the failure reason and retry count could be appended to a `docs/research/prompts/build-log.json` file. This would provide a persistent record of which sections are problematic and why, enabling smarter dispatch strategies on subsequent runs.
+
+## Discovered during Tier 4 Items 4.4, 4.5, 4.6 (2026-03-30)
+
+### Gaps
+
+1. **CSS scroll-timeline detection depends on browser support in Playwright's Chromium**: The `animation-timeline` CSS property may not be fully reflected in `getComputedStyle()` if the Playwright-bundled Chromium version lags behind the spec. Consider also scanning raw stylesheet text for `animation-timeline:` declarations as a fallback, similar to the keyframes rule scraper.
+
+2. **Framer Motion gesture props are not observable from DOM inspection**: Framer Motion's `whileHover`, `whileTap`, `drag`, and `variants` props are React-internal and not serialized to the DOM. The current detection relies on `data-framer-*` attributes (Framer Sites) and `--framer-*` CSS variables, which only exist on Framer-published sites — not on custom React apps using framer-motion directly. A more robust approach would require intercepting the `motion` component factory at runtime.
+
+3. **Hover tester selector deduplication is shallow**: The auto-detected selectors use `tag.class1.class2` format, which may not be unique on the page. Two different buttons with the same classes will produce the same selector, and `page.locator(selector).first()` will only test the first one. Consider appending `:nth-of-type(N)` or using a unique attribute (id, data-testid) when available.
+
+4. **CSS scroll-timeline fallback in component-gen is minimal**: The generated `@supports` fallback only adds an `in-view` class via IntersectionObserver. It does not replicate the scroll-progress-linked animation behavior. For scroll() timelines (where animation progress tracks scroll position), the fallback should use a scroll event listener that sets a CSS custom property (e.g., `--scroll-progress`) proportional to the element's position.
+
+### Opportunities
+
+1. **Framer Motion variant extraction via React DevTools protocol**: If the page uses React, Playwright can connect to the React DevTools protocol via `page.evaluate` to walk the Fiber tree and extract `motion` component props (initial, animate, exit, variants, transition). This would capture the full animation specification without relying on DOM attributes.
+
+2. **Hover test comparison between original and clone**: The current hover tester runs on a single page. A comparative mode could run hover tests on both the original URL and the clone URL, then diff the style changes to flag missing or incorrect hover effects. This would integrate naturally with the existing section comparison pipeline.
+
+3. **CSS scroll-timeline keyframe extraction from stylesheet rules**: When `animation-timeline` is used, the associated `@keyframes` rule may use percentage-based stops that map to scroll progress rather than time. Annotating the extracted keyframes with a `scrollDriven: true` flag would help the code generator and builder prompts treat them differently (no duration needed, progress-linked).
+
+4. **Hover test result visualization**: The hover tester captures before/after style diffs but not screenshots. Adding per-element screenshots (clipped to the element bounding box) before and after hover would enable visual diff reports, similar to the section comparison pipeline.
+
+## Discovered during Tier 4 Items 4.1, 4.2, 4.3 (2026-03-30)
+
+### Gaps
+
+1. **Multi-page shared layout detection uses shallow fingerprinting**: `detectSharedLayout` matches sections across pages by name and normalized class name. Sites that render the same header/footer with different class names per page (e.g., CSS modules with page-specific hashes) will not be detected as shared. A content-hash-based comparison (comparing the first N characters of `outerHTML` after stripping dynamic attributes) would be more robust.
+
+2. **Multi-page crawl does not follow JavaScript-rendered links**: `discoverPages` only collects `<a href>` elements present in the initial DOM. SPAs that render navigation links via client-side JavaScript after hydration will be missed. Consider waiting for network idle and re-querying links, or using Playwright's route interception to capture navigation requests.
+
+3. **Batched scanner re-discovers sections for each batch**: `scanPageBatched` calls `discoverSections` once to get all handles, then processes them in batches. However, the underlying `extractSection` function still runs a full `page.evaluate` per section. For truly large pages (200+ sections), the overhead of individual evaluate calls becomes significant. A future optimization could pass multiple section indices into a single evaluate call per batch.
+
+4. **Video scroll sync detection requires the scroll handler to be registered before monitoring begins**: The `addEventListener` wrapper for scroll events is injected via `addInitScript`, which runs before page scripts. However, if a scroll listener is added asynchronously (e.g., after a dynamic import), the `__drp_inScrollHandler` flag may not be set correctly because the original `addEventListener` reference was already captured before the wrapper was installed. The current implementation re-wraps `addEventListener` for video detection, but the earlier scroll listener tracker's wrap is still the one that fires for pre-existing listeners.
+
+5. **Video scroll sync mapping type detection is approximate**: The linearity check uses a simple average ratio deviation threshold (0.15). Custom easing functions that are "mostly linear" (e.g., ease-in-out with small deviation) may be misclassified. Capturing more data points during the scroll probe and fitting a curve would improve accuracy.
+
+### Opportunities
+
+1. **Multi-page extraction could reuse browser context for fonts and stylesheets**: When extracting multiple pages from the same domain, font files and global stylesheets are likely identical. A domain-level deduplication pass after extraction could merge font and stylesheet data, reducing redundant downloads and output size.
+
+2. **Route pattern detection could infer param names from content**: Currently all dynamic segments are named `[slug]`. Analyzing the page content (e.g., if the page contains a date, the param might be `[date]`; if it contains a category name, `[category]`) would produce more meaningful route patterns for Next.js code generation.
+
+3. **Batched scanner could emit progress events**: For very large pages, the batch processing loop could emit structured progress events (batch number, sections processed, estimated remaining time) that integrate with the `ProgressReporter` utility, giving users real-time feedback during long scans.
+
+4. **Video scroll sync data could inform section interaction model classification**: When a section contains a scroll-synced video, the section's `interactionModel` should be classified as `scroll-driven` even if no other scroll animations are detected. Currently the merge module classifies interaction models based on animation types, but video scroll syncs are just `scroll-listener` type animations and may not trigger the classification correctly.
+
+5. **Multi-page shared layout could generate a Next.js layout.tsx**: When shared header/footer/sidebar sections are detected across multiple pages, the generation pipeline could automatically produce a `layout.tsx` file that renders these shared components, with `{children}` for page-specific content. This would eliminate duplication across generated page components.
+
+---
+
+## Tier 4 Items 4.7–4.10 Gaps & Opportunities
+
+5. **Lottie animation data extraction from lottie-web instances (4.7)**: When `window.lottie` or `window.bodymovin` is detected but no `<lottie-player>` element exists, the engine flags it but cannot extract the animation JSON. A future improvement could intercept network requests for `.json` files during page load (via `page.route`) and auto-classify Lottie payloads by inspecting the JSON schema (`v`, `fr`, `ip`, `op`, `layers` keys).
+
+6. **Template matching with extraction-data scoring (4.8)**: The current `matchTemplate` only uses section name and element count. Enriching the heuristic with actual element tag distribution (e.g., "has `<video>` child" boosts hero-with-video confidence, "has `<form>` child" boosts contact-form confidence) would improve match accuracy and reduce false-positive template assignments.
+
+7. **Confidence score aggregation for full-page reporting (4.9)**: Individual section confidence scores are now available, but there is no page-level rollup. Adding a weighted average (by section height or element count) to `PageData` would give a single number for "extraction quality" that the CLI can gate on (e.g., refuse to generate if overall confidence < 70%).
+
+8. **DOM comparator semantic-role awareness (4.10)**: The current tree diff is purely structural (tag + text). Extending it to compare ARIA roles and landmark elements (`nav`, `main`, `footer`, `aside`) would catch cases where the clone uses `<div>` where the original uses semantic HTML, which affects accessibility but not visual output.
+
+9. **Lottie component code generation with actual asset paths (4.7)**: The Lottie hook in component-gen.ts currently emits a placeholder TODO for the animation JSON import. Once `LottieEntry.localPath` is populated, the generator could emit `import animationData from "../../public/animations/foo.json"` and pass it directly to the `<LottiePlayer>` component, eliminating the manual step.

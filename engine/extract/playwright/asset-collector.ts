@@ -16,7 +16,7 @@
  */
 
 import type { Page } from 'playwright';
-import type { AssetManifest, AssetEntry, SvgEntry, SvgSpriteSymbol } from '../../types/extraction';
+import type { AssetManifest, AssetEntry, SvgEntry, SvgSpriteSymbol, LottieEntry } from '../../types/extraction';
 import { writeFile, mkdir } from 'fs/promises';
 import { join, extname } from 'path';
 
@@ -70,6 +70,7 @@ export async function collectAssets(
     join(opts.outputDir, 'public', 'images'),
     join(opts.outputDir, 'public', 'videos'),
     join(opts.outputDir, 'public', 'seo'),
+    join(opts.outputDir, 'public', 'animations'),
   ];
   await Promise.all(dirs.map((d) => mkdir(d, { recursive: true })));
 
@@ -124,7 +125,7 @@ export async function collectAssets(
   }
 
   // Step 6: Assemble manifest.
-  const manifest = assembleManifest(downloadResults, svgEntries, spriteSymbols);
+  const manifest = assembleManifest(downloadResults, svgEntries, spriteSymbols, discovered.lottieAnimations);
 
   if (totalSize > 100 * 1024 * 1024) {
     errors.push(
@@ -199,6 +200,14 @@ interface DiscoveredSvgUseRef {
   height: string;
 }
 
+interface DiscoveredLottie {
+  src: string;
+  autoplay: boolean;
+  loop: boolean;
+  speed: string;
+  type?: string;
+}
+
 interface DiscoveredAssets {
   images: DiscoveredImage[];
   pictures: DiscoveredPicture[];
@@ -209,6 +218,7 @@ interface DiscoveredAssets {
   ogImage: string;
   svgSprites: DiscoveredSvgSprite[];
   svgUseRefs: DiscoveredSvgUseRef[];
+  lottieAnimations: DiscoveredLottie[];
 }
 
 async function discoverAssets(page: Page): Promise<DiscoveredAssets> {
@@ -321,7 +331,33 @@ async function discoverAssets(page: Page): Promise<DiscoveredAssets> {
       height: use.closest('svg')?.getAttribute('height') || '',
     }));
 
-    return { images, pictures, videos, backgrounds, inlineSvgs, favicons, ogImage, svgSprites, svgUseRefs };
+    // --- Lottie animations ---
+    const lottieAnimations: Array<{ src: string; autoplay: boolean; loop: boolean; speed: string; type?: string }> = [];
+    // Check for lottie-player / dotlottie-player custom elements
+    document.querySelectorAll('lottie-player, dotlottie-player').forEach((el) => {
+      lottieAnimations.push({
+        src: el.getAttribute('src') || '',
+        autoplay: el.hasAttribute('autoplay'),
+        loop: el.hasAttribute('loop'),
+        speed: el.getAttribute('speed') || '1',
+      });
+    });
+    // Check for lottie-web instances (window.bodymovin or lottie global)
+    if (
+      typeof (window as unknown as Record<string, unknown>).bodymovin !== 'undefined' ||
+      typeof (window as unknown as Record<string, unknown>).lottie !== 'undefined'
+    ) {
+      lottieAnimations.push({ src: '', autoplay: false, loop: false, speed: '1', type: 'lottie-web-detected' });
+    }
+    // Check for data attributes pointing to Lottie JSON files
+    document.querySelectorAll('[data-animation-path], [data-src*=".json"]').forEach((el) => {
+      const src = el.getAttribute('data-animation-path') || el.getAttribute('data-src') || '';
+      if (src.endsWith('.json')) {
+        lottieAnimations.push({ src, autoplay: false, loop: false, speed: '1', type: 'data-attribute' });
+      }
+    });
+
+    return { images, pictures, videos, backgrounds, inlineSvgs, favicons, ogImage, svgSprites, svgUseRefs, lottieAnimations };
   });
 }
 
@@ -490,7 +526,7 @@ function symbolIdToComponentName(id: string): string {
 // Download queue builder
 // ---------------------------------------------------------------------------
 
-type AssetCategory = 'images' | 'videos' | 'favicons' | 'ogImages';
+type AssetCategory = 'images' | 'videos' | 'favicons' | 'ogImages' | 'lottie';
 
 interface QueueItem {
   url: string;
@@ -591,6 +627,13 @@ function buildDownloadQueue(
     enqueue({ url: discovered.ogImage, category: 'ogImages' });
   }
 
+  // Lottie animations (JSON files).
+  for (const lottie of discovered.lottieAnimations) {
+    if (lottie.src && !lottie.type) {
+      enqueue({ url: lottie.src, category: 'lottie' });
+    }
+  }
+
   return queue;
 }
 
@@ -632,6 +675,8 @@ function categoryDir(category: AssetCategory): string {
     case 'favicons':
     case 'ogImages':
       return 'public/seo';
+    case 'lottie':
+      return 'public/animations';
   }
 }
 
@@ -657,7 +702,7 @@ function generateFilename(url: string, category: AssetCategory, index: number): 
 
     // No extension — guess from category.
     const defaultExt =
-      category === 'videos' ? '.mp4' : category === 'favicons' ? '.png' : '.png';
+      category === 'videos' ? '.mp4' : category === 'lottie' ? '.json' : category === 'favicons' ? '.png' : '.png';
     const baseName = lastSegment || `${category}-${index}`;
     return sanitizeFilename(baseName) + defaultExt;
   } catch {
@@ -789,7 +834,9 @@ function assembleManifest(
   downloadResults: DownloadResult[],
   svgEntries: SvgEntry[],
   spriteSymbols: SvgSpriteSymbol[] = [],
+  discoveredLotties: DiscoveredLottie[] = [],
 ): AssetManifest {
+  const lottieEntries: LottieEntry[] = [];
   const manifest: AssetManifest = {
     images: [],
     videos: [],
@@ -819,7 +866,23 @@ function assembleManifest(
       case 'ogImages':
         manifest.ogImages.push(entry);
         break;
+      case 'lottie': {
+        // Find the matching discovered lottie entry for metadata
+        const matchingLottie = discoveredLotties.find((l) => l.src === result.item.url);
+        lottieEntries.push({
+          originalUrl: result.item.url,
+          localPath: result.localPath,
+          autoplay: matchingLottie?.autoplay ?? false,
+          loop: matchingLottie?.loop ?? false,
+          speed: parseFloat(matchingLottie?.speed ?? '1') || 1,
+        });
+        break;
+      }
     }
+  }
+
+  if (lottieEntries.length > 0) {
+    manifest.lottieAnimations = lottieEntries;
   }
 
   return manifest;

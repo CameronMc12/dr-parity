@@ -146,6 +146,25 @@ export interface SectionSpec {
   className: string;
   /** Raw HTML structure for builders. */
   outerHTML?: string;
+  /** Confidence scores for this section's extraction quality (0-1 per dimension). */
+  confidence?: SectionConfidence;
+}
+
+// ---------------------------------------------------------------------------
+// Extraction confidence scoring
+// ---------------------------------------------------------------------------
+
+export interface SectionConfidence {
+  /** How many elements have complete computed style data (0-1). */
+  styleExtraction: number;
+  /** How well animations were captured with implementation notes (0-1). */
+  animationDetection: number;
+  /** How thoroughly interaction states were mapped (0-1). */
+  interactionMapping: number;
+  /** Whether all referenced assets were successfully downloaded (0-1). */
+  assetCoverage: number;
+  /** Weighted average of all dimensions (0-1). */
+  overall: number;
 }
 
 export interface ElementSpec {
@@ -272,6 +291,14 @@ export interface AnimationSpec {
   implementationNotes: string;
   /** Optional pre-generated code snippet to recreate this animation. */
   codeSnippet?: string;
+  /** Captured CSS scroll-driven animation configuration (animation-timeline). */
+  cssScrollTimeline?: {
+    type: 'view' | 'scroll' | 'named';
+    timeline: string;
+    range?: string;
+    axis?: string;
+    viewTimelineName?: string;
+  };
   /** Captured GSAP ScrollTrigger configuration when type is 'gsap'. */
   gsapScrollTriggerConfig?: {
     pin?: string | boolean;
@@ -497,6 +524,20 @@ export interface AssetManifest {
   other: AssetEntry[];
   /** Individual symbols extracted from SVG sprite sheets (`<svg>` with `<symbol>` children). */
   svgSprites?: SvgSpriteSymbol[];
+  /** Lottie animation files detected on the page. */
+  lottieAnimations?: LottieEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Lottie animations
+// ---------------------------------------------------------------------------
+
+export interface LottieEntry {
+  originalUrl: string;
+  localPath: string;
+  autoplay: boolean;
+  loop: boolean;
+  speed: number;
 }
 
 export interface AssetEntry {

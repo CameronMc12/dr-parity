@@ -14,7 +14,7 @@ import {
   injectAnimationMonitors,
   detectAnimations,
 } from '../engine/extract/playwright/animation-detector';
-import { scanPage } from '../engine/extract/playwright/page-scanner';
+import { scanPage, scanPageBatched } from '../engine/extract/playwright/page-scanner';
 import { extractFonts } from '../engine/extract/playwright/font-extractor';
 import { collectAssets } from '../engine/extract/playwright/asset-collector';
 import { mapInteractions } from '../engine/extract/playwright/interaction-mapper';
@@ -41,6 +41,7 @@ interface CliArgs {
   useCache: boolean;
   resume: boolean;
   dryRun: boolean;
+  batchMode: boolean;
   onlySections: string[] | null;
   fromCache: string | null;
 }
@@ -51,7 +52,7 @@ function parseArgs(): CliArgs {
   const url = args.find((a) => !a.startsWith('--'));
   if (!url) {
     console.error(
-      'Usage: npx tsx scripts/extract.ts <url> [--output docs/research] [--no-cache] [--resume] [--dry-run] [--only-sections=id1,id2] [--from-cache=dir]',
+      'Usage: npx tsx scripts/extract.ts <url> [--output docs/research] [--no-cache] [--resume] [--dry-run] [--batch] [--only-sections=id1,id2] [--from-cache=dir]',
     );
     process.exit(1);
   }
@@ -65,6 +66,7 @@ function parseArgs(): CliArgs {
   const useCache = !args.includes('--no-cache');
   const resume = args.includes('--resume');
   const dryRun = args.includes('--dry-run');
+  const batchMode = args.includes('--batch');
 
   const onlySectionsArg = args.find((a) => a.startsWith('--only-sections='));
   const onlySections = onlySectionsArg
@@ -80,6 +82,7 @@ function parseArgs(): CliArgs {
     useCache,
     resume,
     dryRun,
+    batchMode,
     onlySections,
     fromCache,
   };
@@ -186,12 +189,13 @@ const VIEWPORT = { width: 1440, height: 900 };
 const SCREENSHOT_BATCH_SIZE = 5;
 
 async function main(): Promise<void> {
-  const { url, outputDir, useCache, resume, dryRun, onlySections, fromCache } =
+  const { url, outputDir, useCache, resume, dryRun, batchMode, onlySections, fromCache } =
     parseArgs();
 
   console.log(`Extracting: ${url}`);
   console.log(`Output:     ${outputDir}`);
   if (dryRun) console.log('  Mode:    DRY RUN');
+  if (batchMode) console.log('  Batch:   enabled (--batch)');
   if (!useCache) console.log('  Cache:   disabled (--no-cache)');
   if (resume) console.log('  Resume:  enabled (--resume)');
   if (onlySections) console.log(`  Sections: ${onlySections.join(', ')}`);
@@ -261,7 +265,11 @@ async function main(): Promise<void> {
       );
     }
     if (!scan) {
-      scan = await scanPage(page, { maxDepth: 8 });
+      // Use batched scanner for large pages (auto-detects 50+ sections, or forced via --batch)
+      scan = await scanPageBatched(page, {
+        maxDepth: 8,
+        batchMode: batchMode || undefined,
+      });
       await checkpoint.markCompleted('scan', scan);
       if (useCache) await cache.set(url, 'scan', scan);
     }

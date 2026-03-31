@@ -17,6 +17,8 @@ import {
   type SectionInfo,
   type SectionCompareResult,
 } from '../engine/qa/section-comparator';
+import { testHoverStates, type HoverTestResult } from '../engine/qa/hover-tester';
+import { compareDomStructure } from '../engine/qa/dom-comparator';
 import { ProgressReporter } from '../engine/utils/progress';
 import type { PageData, SectionSpec } from '../engine/types/extraction';
 
@@ -29,6 +31,7 @@ interface SectionQAArgs {
   cloneUrl: string;
   threshold: number;
   outputDir: string;
+  testHover: boolean;
 }
 
 function parseArgs(): SectionQAArgs {
@@ -64,7 +67,9 @@ function parseArgs(): SectionQAArgs {
     outputDir = args[outIdx + 1];
   }
 
-  return { originalUrl, cloneUrl, threshold, outputDir: resolve(outputDir) };
+  const testHover = args.includes('--test-hover');
+
+  return { originalUrl, cloneUrl, threshold, outputDir: resolve(outputDir), testHover };
 }
 
 // ---------------------------------------------------------------------------
@@ -138,9 +143,9 @@ function printReport(
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const { originalUrl, cloneUrl, threshold, outputDir } = parseArgs();
+  const { originalUrl, cloneUrl, threshold, outputDir, testHover } = parseArgs();
 
-  const progress = new ProgressReporter(4);
+  const progress = new ProgressReporter(testHover ? 6 : 5);
 
   // Phase 1: Read page-data.json
   progress.startPhase('Loading page-data.json');
@@ -191,7 +196,75 @@ async function main(): Promise<void> {
     await writeFile(reportPath, JSON.stringify(results, null, 2), 'utf-8');
     progress.endPhase(reportPath);
 
-    // Phase 4: Format and print results
+    // Phase 4: Hover state testing (optional)
+    if (testHover) {
+      progress.startPhase('Testing hover states');
+      const clonePage = await browser.newPage();
+      await clonePage.goto(cloneUrl, { waitUntil: 'networkidle' });
+
+      const hoverResults = await testHoverStates(clonePage, {
+        outputDir,
+      });
+
+      await clonePage.close();
+
+      if (hoverResults.length > 0) {
+        console.log('');
+        console.log('Hover State Testing:');
+        for (const hr of hoverResults) {
+          const propCount = Object.keys(hr.styleChanges).length;
+          console.log(
+            `  ${hr.elementSelector}: ${propCount} propert${propCount === 1 ? 'y' : 'ies'} change on hover`,
+          );
+          for (const [prop, change] of Object.entries(hr.styleChanges)) {
+            console.log(`    ${prop}: ${change.before} \u2192 ${change.after}`);
+          }
+        }
+      } else {
+        console.log('\nHover State Testing: No hover effects detected.');
+      }
+
+      const hoverReportPath = join(outputDir, 'hover-test-report.json');
+      await writeFile(hoverReportPath, JSON.stringify(hoverResults, null, 2), 'utf-8');
+      progress.endPhase(`${hoverResults.length} elements with hover effects`);
+    }
+
+    // DOM structure comparison (Item 4.10)
+    progress.startPhase('DOM structure comparison');
+    {
+      const context = browser.contexts()[0] ?? await browser.newContext();
+      const origPage = await context.newPage();
+      const clPage = await context.newPage();
+      await Promise.all([
+        origPage.goto(originalUrl, { waitUntil: 'networkidle' }),
+        clPage.goto(cloneUrl, { waitUntil: 'networkidle' }),
+      ]);
+
+      const domDiff = await compareDomStructure(origPage, clPage);
+
+      console.log('');
+      console.log(
+        `DOM Structure: ${domDiff.totalElements.original} orig \u2192 ${domDiff.totalElements.clone} clone`,
+      );
+      if (domDiff.missingElements.length > 0) {
+        console.log(`  Missing: ${domDiff.missingElements.length} elements`);
+      }
+      if (domDiff.tagMismatches.length > 0) {
+        console.log(`  Tag mismatches: ${domDiff.tagMismatches.length}`);
+      }
+      if (domDiff.textDifferences.length > 0) {
+        console.log(`  Text diffs: ${domDiff.textDifferences.length}`);
+      }
+
+      const domReportPath = join(outputDir, 'dom-diff-report.json');
+      await writeFile(domReportPath, JSON.stringify(domDiff, null, 2), 'utf-8');
+
+      await origPage.close();
+      await clPage.close();
+    }
+    progress.endPhase('DOM comparison complete');
+
+    // Final phase: Format and print results
     progress.startPhase('Formatting results');
     const passed = printReport(results, threshold);
     progress.endPhase(passed ? 'ALL PASS' : 'SOME FAILURES');

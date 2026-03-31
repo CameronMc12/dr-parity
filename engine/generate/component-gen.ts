@@ -19,6 +19,7 @@ import type {
   StaggerPattern,
 } from '../types/extraction';
 import type { LenisConfig } from '../extract/playwright/animation-detector';
+import { matchTemplate, type TemplateContext } from './templates';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -47,7 +48,28 @@ export function generateComponent(
   node: ComponentNode,
   options: ComponentGenOptions,
 ): ComponentGenOutput {
-  const content = buildComponentSource(node, options.tokens, options.staggerPatterns ?? [], options.lenisConfig);
+  // Item 4.8: attempt to match a common-pattern template first
+  const template = matchTemplate(
+    node.spec.name,
+    node.spec.elements.length,
+    node.spec.animations.length > 0,
+  );
+
+  let content: string;
+  if (template) {
+    const templateCtx: TemplateContext = {
+      sectionName: node.spec.name,
+      componentName: node.name,
+      elements: node.spec.elements,
+      animations: node.spec.animations,
+      tokens: options.tokens,
+      assets: { images: [], videos: [], svgs: [], fonts: [], favicons: [], ogImages: [], other: [] },
+    };
+    content = template.generateCode(templateCtx);
+  } else {
+    content = buildComponentSource(node, options.tokens, options.staggerPatterns ?? [], options.lenisConfig);
+  }
+
   const filePath = join(options.projectDir, node.filePath);
 
   return { filePath, content, componentName: node.name };
@@ -161,15 +183,22 @@ function analyzeHookRequirements(spec: ComponentSpec, ctx: GenContext): void {
       anim.type === 'intersection-observer' ||
       anim.type === 'scroll-listener' ||
       anim.type === 'gsap' ||
-      anim.type === 'lenis'
+      anim.type === 'lenis' ||
+      anim.type === 'lottie'
     ) {
       ctx.needsUseEffect = true;
       ctx.needsUseRef = true;
     }
-    if (anim.type === 'css-scroll-timeline' || anim.type === 'raf-driven') {
+    // css-scroll-timeline is CSS-native; only needs useRef for the fallback IO
+    if (anim.type === 'css-scroll-timeline') {
       ctx.needsUseEffect = true;
       ctx.needsUseRef = true;
     }
+    if (anim.type === 'raf-driven') {
+      ctx.needsUseEffect = true;
+      ctx.needsUseRef = true;
+    }
+    // framer-motion does not need React hooks — uses <motion.div> props
   }
 
   // Check for stateful interaction models
@@ -268,6 +297,10 @@ function buildAnimationHooks(spec: ComponentSpec, ctx: GenContext): string {
   );
   const gsapAnims = spec.animations.filter((a) => a.type === 'gsap');
   const lenisAnims = spec.animations.filter((a) => a.type === 'lenis');
+  const lottieAnims = spec.animations.filter((a) => a.type === 'lottie');
+  const cssScrollTimelineAnims = spec.animations.filter(
+    (a) => a.type === 'css-scroll-timeline',
+  );
 
   // IntersectionObserver hook (enhanced with captured IO effects - Item 1.4)
   if (intersectionAnims.length > 0) {
@@ -303,8 +336,28 @@ function buildAnimationHooks(spec: ComponentSpec, ctx: GenContext): string {
     lines.push('  }, []);');
   }
 
-  // Scroll listener hook
-  if (scrollAnims.length > 0) {
+  // Video scroll sync hooks (Item 4.3) — emit codeSnippet for scroll-driven video
+  const videoScrollAnims = scrollAnims.filter(
+    (a) => a.codeSnippet && a.properties.some((p) => p.property === 'currentTime'),
+  );
+  const regularScrollAnims = scrollAnims.filter(
+    (a) => !videoScrollAnims.includes(a),
+  );
+
+  for (const videoAnim of videoScrollAnims) {
+    if (videoAnim.codeSnippet) {
+      lines.push('');
+      lines.push('  // Scroll-driven video playback');
+      const indented = videoAnim.codeSnippet
+        .split('\n')
+        .map((line) => `  ${line}`)
+        .join('\n');
+      lines.push(indented);
+    }
+  }
+
+  // Scroll listener hook (non-video)
+  if (regularScrollAnims.length > 0) {
     lines.push('');
     lines.push('  useEffect(() => {');
     lines.push('    const el = sectionRef.current;');
@@ -438,6 +491,57 @@ function buildAnimationHooks(spec: ComponentSpec, ctx: GenContext): string {
     lines.push('');
     lines.push('    initLenis();');
     lines.push('    return () => { lenis?.destroy(); };');
+    lines.push('  }, []);');
+  }
+
+  // Lottie hook (Item 4.7: dynamic import of lottie-react)
+  if (lottieAnims.length > 0) {
+    lines.push('');
+    lines.push('  /* Lottie animation — uses dynamic import to keep bundle lean */');
+    lines.push('  useEffect(() => {');
+    lines.push('    let mounted = true;');
+    lines.push('    async function loadLottie() {');
+    lines.push('      const LottiePlayer = (await import("lottie-react")).default;');
+    lines.push('      if (!mounted) return;');
+    lines.push('      // LottiePlayer component is now available for rendering');
+    lines.push('      // TODO: replace placeholder with actual animationData JSON import');
+    lines.push('      void LottiePlayer;');
+    lines.push('    }');
+    lines.push('    loadLottie();');
+    lines.push('    return () => { mounted = false; };');
+    lines.push('  }, []);');
+  }
+
+  // CSS scroll-timeline hook (Item 4.4): CSS-native, only needs IO fallback
+  if (cssScrollTimelineAnims.length > 0) {
+    lines.push('');
+    lines.push('  /* CSS scroll-driven animations — applied via CSS classes. */');
+    lines.push('  /* @supports fallback uses IntersectionObserver for older browsers. */');
+    lines.push('  useEffect(() => {');
+    lines.push('    const el = sectionRef.current;');
+    lines.push('    if (!el) return;');
+    lines.push('');
+    lines.push('    // Feature-detect CSS scroll-driven animations');
+    lines.push('    const supportsScrollTimeline = CSS.supports("animation-timeline", "view()");');
+    lines.push('    if (supportsScrollTimeline) return; // CSS handles it natively');
+    lines.push('');
+    lines.push('    // Fallback: use IntersectionObserver to toggle an "in-view" class');
+    lines.push('    const observer = new IntersectionObserver(');
+    lines.push('      (entries) => {');
+    lines.push('        for (const entry of entries) {');
+    lines.push('          if (entry.isIntersecting) {');
+    lines.push('            entry.target.classList.add("in-view");');
+    lines.push('          }');
+    lines.push('        }');
+    lines.push('      },');
+    lines.push('      { threshold: 0.1 },');
+    lines.push('    );');
+    lines.push('');
+    lines.push('    const targets = el.querySelectorAll("[data-scroll-animate]");');
+    lines.push('    if (targets.length === 0) observer.observe(el);');
+    lines.push('    else targets.forEach((t) => observer.observe(t));');
+    lines.push('');
+    lines.push('    return () => observer.disconnect();');
     lines.push('  }, []);');
   }
 

@@ -37,6 +37,15 @@ export interface ScanOptions {
   includeHidden?: boolean;
 }
 
+export interface BatchScanOptions extends ScanOptions {
+  /** Enable batch mode for pages with 50+ sections. Auto-detected if omitted. */
+  batchMode?: boolean;
+  /** Scan above-fold sections first. Default true. */
+  prioritizeAboveFold?: boolean;
+  /** Number of sections to process per batch. Default 20. */
+  sectionBatchSize?: number;
+}
+
 export interface PageScanResult {
   title: string;
   description: string;
@@ -102,6 +111,161 @@ export async function scanPage(
   for (let i = sections.length; i < sectionHandles.length; i++) {
     await sectionHandles[i].dispose();
   }
+
+  const scanDuration = Date.now() - startTime;
+
+  return {
+    title: meta.title,
+    description: meta.description,
+    bodyStyles,
+    sections,
+    totalElements,
+    scanDuration,
+  };
+}
+
+/**
+ * Scan a large page using batched section processing.
+ *
+ * Performs a quick section count first. If the page has fewer than 50 sections,
+ * delegates to `scanPage`. Otherwise, processes sections in configurable batches
+ * with optional above-fold prioritization.
+ */
+export async function scanPageBatched(
+  page: Page,
+  options?: BatchScanOptions,
+): Promise<PageScanResult> {
+  const sectionBatchSize = options?.sectionBatchSize ?? 20;
+  const prioritizeAboveFold = options?.prioritizeAboveFold !== false;
+
+  // Quick pass: count sections without extracting element trees
+  const quickCount = await page.evaluate(() => {
+    const sectionSelectors = 'section, [role="region"], main > div, main > section';
+    const sections = document.querySelectorAll(sectionSelectors);
+    const totalElements = document.querySelectorAll('*').length;
+    return { sections: sections.length, elements: totalElements };
+  });
+
+  // If batch mode is not explicitly requested, auto-detect
+  const shouldBatch = options?.batchMode ?? quickCount.sections > 50;
+
+  if (!shouldBatch) {
+    return scanPage(page, options);
+  }
+
+  console.log(
+    `  Large page detected (${quickCount.sections} sections, ${quickCount.elements} elements). Using batch mode.`,
+  );
+
+  const opts: Required<ScanOptions> = {
+    maxDepth: options?.maxDepth ?? DEFAULT_OPTIONS.maxDepth,
+    maxElements: options?.maxElements ?? DEFAULT_OPTIONS.maxElements,
+    batchSize: options?.batchSize ?? DEFAULT_OPTIONS.batchSize,
+    includeHidden: options?.includeHidden ?? DEFAULT_OPTIONS.includeHidden,
+  };
+  const startTime = Date.now();
+
+  // Grab page metadata
+  const meta = await page.evaluate(() => {
+    const metaDesc =
+      document.querySelector<HTMLMetaElement>('meta[name="description"]')
+        ?.content ?? '';
+    return {
+      title: document.title,
+      description: metaDesc,
+    };
+  });
+
+  // Get section positions for ordering
+  const sectionPositions = await page.evaluate(() => {
+    const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'BR', 'HR']);
+
+    function isSkippable(el: Element): boolean {
+      return SKIP_TAGS.has(el.tagName);
+    }
+
+    function isVisible(el: Element): boolean {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    }
+
+    let candidates: Element[] = [];
+    const sections = Array.from(document.querySelectorAll('section'));
+    if (sections.length > 0) {
+      candidates = sections;
+    }
+    if (candidates.length === 0) {
+      const main = document.querySelector('main');
+      if (main) {
+        candidates = Array.from(main.children).filter((c) => !isSkippable(c));
+      }
+    }
+    if (candidates.length === 0) {
+      const landmarks = document.querySelectorAll(
+        '[role="region"], [role="banner"], [role="contentinfo"], [role="navigation"], [role="main"]',
+      );
+      candidates = Array.from(landmarks);
+    }
+    if (candidates.length === 0) {
+      candidates = Array.from(document.body.children).filter((c) => !isSkippable(c));
+    }
+
+    const visible = candidates.filter(isVisible);
+    return visible.map((el, idx) => ({
+      index: idx,
+      top: Math.round((el as HTMLElement).getBoundingClientRect().top + window.scrollY),
+      height: Math.round((el as HTMLElement).getBoundingClientRect().height),
+    }));
+  });
+
+  // Optionally sort above-fold sections first
+  const sortedPositions = prioritizeAboveFold
+    ? [...sectionPositions].sort((a, b) => a.top - b.top)
+    : sectionPositions;
+
+  // Discover sections and body styles (full handle-based discovery)
+  const { sectionHandles, bodyStyles } = await discoverSections(page);
+
+  // Build an order mapping from sorted positions to handle indices
+  const handleOrder = sortedPositions.map((sp) => sp.index);
+
+  const sections: SectionSpec[] = [];
+  let totalElements = 0;
+
+  // Process sections in batches
+  for (let batchStart = 0; batchStart < handleOrder.length; batchStart += sectionBatchSize) {
+    const batchIndices = handleOrder.slice(batchStart, batchStart + sectionBatchSize);
+
+    if (totalElements >= opts.maxElements) break;
+
+    console.log(
+      `    Batch ${Math.floor(batchStart / sectionBatchSize) + 1}: sections ${batchStart + 1}-${Math.min(batchStart + sectionBatchSize, handleOrder.length)} of ${handleOrder.length}`,
+    );
+
+    for (const handleIdx of batchIndices) {
+      if (totalElements >= opts.maxElements) break;
+      if (handleIdx >= sectionHandles.length) continue;
+
+      const handle = sectionHandles[handleIdx];
+      const remaining = opts.maxElements - totalElements;
+      const sectionData = await extractSection(page, handle, handleIdx, opts, remaining);
+
+      if (sectionData !== null) {
+        totalElements += countElements(sectionData.elements);
+        sections.push(sectionData);
+      }
+    }
+  }
+
+  // Dispose all handles
+  for (const handle of sectionHandles) {
+    await handle.dispose();
+  }
+
+  // Re-sort sections by their original order for output consistency
+  sections.sort((a, b) => a.order - b.order);
 
   const scanDuration = Date.now() - startTime;
 

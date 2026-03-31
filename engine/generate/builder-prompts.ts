@@ -303,6 +303,23 @@ function buildPromptContent(ctx: PromptBuildContext): string {
   );
   lines.push('');
 
+  // Extraction confidence (Item 4.9)
+  if (section.confidence) {
+    const c = section.confidence;
+    lines.push('## Extraction Confidence');
+    lines.push('');
+    lines.push(`- Style extraction: ${Math.round(c.styleExtraction * 100)}%`);
+    lines.push(`- Animation detection: ${Math.round(c.animationDetection * 100)}%`);
+    lines.push(`- Interaction mapping: ${Math.round(c.interactionMapping * 100)}%`);
+    lines.push(`- Asset coverage: ${Math.round(c.assetCoverage * 100)}%`);
+    lines.push(`- Overall: ${Math.round(c.overall * 100)}%`);
+    if (c.overall < 0.85) {
+      lines.push('');
+      lines.push('> **Warning:** Low confidence — manually verify this section in Chrome MCP before building.');
+    }
+    lines.push('');
+  }
+
   // Builder instructions
   lines.push('## Instructions');
   lines.push('');

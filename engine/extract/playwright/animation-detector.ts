@@ -43,6 +43,17 @@ export interface LenisConfig {
   infinite?: boolean;
 }
 
+/** Captured video-to-scroll synchronization mapping. */
+export interface VideoScrollSync {
+  videoSelector: string;
+  videoSrc: string;
+  scrollContainer: string;
+  mappingType: 'linear' | 'custom';
+  scrollStart: number;
+  scrollEnd: number;
+  videoDuration: number;
+}
+
 export interface AnimationDetectionResult {
   animations: AnimationSpec[];
   libraries: LibraryInfo[];
@@ -51,6 +62,8 @@ export interface AnimationDetectionResult {
   staggerPatterns: StaggerPattern[];
   /** Captured Lenis smooth-scroll configuration, if detected. */
   lenisConfig?: LenisConfig;
+  /** Captured video elements whose currentTime is driven by scroll position. */
+  videoScrollSyncs: VideoScrollSync[];
   totalDetected: number;
   detectionDuration: number;
 }
@@ -452,6 +465,82 @@ const runtimeMonitoringScript = `(() => {
   setTimeout(__drpCaptureLenis, 1000);
   setTimeout(__drpCaptureLenis, 3000);
 
+  // ----- Framer Motion runtime detection (Item 4.5) -----
+  var __drp_detectedLibraries = [];
+
+  function __drpDetectFramerMotion() {
+    if (typeof window.__FRAMER_MOTION_LOADED !== "undefined" || document.querySelector("[data-framer-component-type]")) {
+      var alreadyDetected = __drp_detectedLibraries.some(function(l) { return l.name === "framer-motion"; });
+      if (!alreadyDetected) {
+        __drp_detectedLibraries.push({ name: "framer-motion", detected: true });
+      }
+    }
+  }
+  setTimeout(__drpDetectFramerMotion, 1500);
+  setTimeout(__drpDetectFramerMotion, 4000);
+
+  // ----- Video scroll sync detection (Item 4.3) -----
+  var __drp_videoScrollSync = [];
+  var __drp_inScrollHandler = false;
+
+  // Intercept HTMLMediaElement.currentTime setter to detect scroll-driven video
+  var ctDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime");
+  if (ctDesc && ctDesc.set) {
+    var origCurrentTimeSetter = ctDesc.set;
+    var origCurrentTimeGetter = ctDesc.get;
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      set: function(val) {
+        if (__drp_inScrollHandler) {
+          try {
+            var sel = __drpSelector(this);
+            var existing = null;
+            for (var vi = 0; vi < __drp_videoScrollSync.length; vi++) {
+              if (__drp_videoScrollSync[vi].selector === sel) {
+                existing = __drp_videoScrollSync[vi];
+                break;
+              }
+            }
+            if (!existing) {
+              __drp_videoScrollSync.push({
+                selector: sel,
+                src: this.src || "",
+                scrollY: window.scrollY,
+                time: val,
+                duration: this.duration || 0,
+                dataPoints: [{ scrollY: window.scrollY, time: val }]
+              });
+            } else {
+              existing.dataPoints = existing.dataPoints || [];
+              existing.dataPoints.push({ scrollY: window.scrollY, time: val });
+              if (this.duration && this.duration > 0) {
+                existing.duration = this.duration;
+              }
+            }
+          } catch(e) { /* never break the page */ }
+        }
+        return origCurrentTimeSetter.call(this, val);
+      },
+      get: origCurrentTimeGetter,
+      configurable: true
+    });
+  }
+
+  // Wrap scroll event listeners to track when inside a scroll handler
+  var __drp_origAELForVideo = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function(type, fn, opts) {
+    if (type === "scroll" && typeof fn === "function") {
+      var origFn = fn;
+      var wrappedFn = function(e) {
+        __drp_inScrollHandler = true;
+        try { origFn.call(this, e); } finally { __drp_inScrollHandler = false; }
+      };
+      return __drp_origAELForVideo.call(this, type, wrappedFn, opts);
+    }
+    return __drp_origAELForVideo.call(this, type, fn, opts);
+  };
+
+  window.__drp_getVideoScrollSync = function() { return JSON.stringify(__drp_videoScrollSync); };
+
   // ----- Public accessors -----
   window.__drp_getObserverData   = () => JSON.stringify(__drp_observers);
   window.__drp_getWebAnimations  = () => JSON.stringify(__drp_webAnims);
@@ -459,6 +548,8 @@ const runtimeMonitoringScript = `(() => {
   window.__drp_getScrollTriggers = () => JSON.stringify(__drp_scrollTriggers);
   window.__drp_getIOEffects      = () => JSON.stringify(__drp_ioEffects);
   window.__drp_getLenisConfig    = () => JSON.stringify(__drp_lenisConfig || {});
+  window.__drp_getDetectedLibraries = () => JSON.stringify(__drp_detectedLibraries);
+  window.__drp_getVideoScrollSync = window.__drp_getVideoScrollSync;
 })();`;
 
 // ---------------------------------------------------------------------------
@@ -482,13 +573,15 @@ export async function detectAnimations(
   await page.waitForTimeout(opts.settleTimeout);
 
   // --- Layer 1: Static analysis ---
-  const [keyframesRules, cssTransitions, cssAnimations, libraries, scrollBehavior] =
+  const [keyframesRules, cssTransitions, cssAnimations, libraries, scrollBehavior, cssScrollTimelines, framerMotionElements] =
     await Promise.all([
       extractKeyframes(page),
       extractCssTransitions(page),
       extractCssAnimations(page),
       detectLibraries(page),
       detectScrollBehavior(page),
+      detectCssScrollTimelines(page),
+      detectFramerMotionElements(page),
     ]);
 
   // --- Layer 2: Collect runtime monitoring data ---
@@ -497,6 +590,9 @@ export async function detectAnimations(
 
   // --- Lenis config capture (Item 2.1) ---
   const lenisConfig = await collectLenisConfig(page);
+
+  // --- Video scroll sync capture (Item 4.3) ---
+  const videoScrollSyncs = await collectVideoScrollSync(page);
 
   // --- Layer 3: Active probing ---
   const scrollAnimations = opts.scrollProbe
@@ -525,6 +621,9 @@ export async function detectAnimations(
     ...buildHoverSpecs(hoverAnimations),
     ...buildLibrarySpecificSpecs(libraries),
     ...buildScrollTriggerSpecs(scrollTriggerData),
+    ...buildCssScrollTimelineSpecs(cssScrollTimelines, keyframeMap),
+    ...buildFramerMotionSpecs(framerMotionElements, libraries),
+    ...buildVideoScrollSyncSpecs(videoScrollSyncs),
   ];
 
   // Deduplicate by elementSelector + type
@@ -537,6 +636,7 @@ export async function detectAnimations(
     globalScrollBehavior: scrollBehavior,
     staggerPatterns,
     lenisConfig: Object.keys(lenisConfig).length > 0 ? lenisConfig : undefined,
+    videoScrollSyncs,
     totalDetected: deduped.length,
     detectionDuration: Date.now() - start,
   };
@@ -842,6 +942,103 @@ async function collectLenisConfig(page: Page): Promise<LenisConfig> {
     return fn ? fn() : "{}";
   });
   return safeJsonParse<LenisConfig>(raw, {});
+}
+
+// ---------------------------------------------------------------------------
+// Video scroll sync collector (Item 4.3)
+// ---------------------------------------------------------------------------
+
+interface RawVideoScrollSyncEntry {
+  selector: string;
+  src: string;
+  scrollY: number;
+  time: number;
+  duration: number;
+  dataPoints?: Array<{ scrollY: number; time: number }>;
+}
+
+async function collectVideoScrollSync(page: Page): Promise<VideoScrollSync[]> {
+  const raw = await page.evaluate(() => {
+    const fn = (window as unknown as Record<string, unknown>).__drp_getVideoScrollSync as (() => string) | undefined;
+    return fn ? fn() : "[]";
+  });
+
+  const entries = safeJsonParse<RawVideoScrollSyncEntry[]>(raw, []);
+  if (entries.length === 0) return [];
+
+  return entries.map((entry) => {
+    const dataPoints = entry.dataPoints ?? [];
+    const scrollYs = dataPoints.map((dp) => dp.scrollY);
+    const scrollStart = scrollYs.length > 0 ? Math.min(...scrollYs) : 0;
+    const scrollEnd = scrollYs.length > 0 ? Math.max(...scrollYs) : 0;
+
+    // Detect if the mapping is linear (constant ratio between scroll and time)
+    let mappingType: 'linear' | 'custom' = 'linear';
+    if (dataPoints.length >= 3 && scrollEnd > scrollStart && entry.duration > 0) {
+      const expectedRatios = dataPoints.map(
+        (dp) => (dp.time / entry.duration) / ((dp.scrollY - scrollStart) / (scrollEnd - scrollStart || 1)),
+      );
+      const avgRatio = expectedRatios.reduce((a, b) => a + b, 0) / expectedRatios.length;
+      const deviation = expectedRatios.reduce(
+        (acc, r) => acc + Math.abs(r - avgRatio),
+        0,
+      ) / expectedRatios.length;
+      if (deviation > 0.15) {
+        mappingType = 'custom';
+      }
+    }
+
+    return {
+      videoSelector: entry.selector,
+      videoSrc: entry.src,
+      scrollContainer: 'window',
+      mappingType,
+      scrollStart,
+      scrollEnd,
+      videoDuration: entry.duration,
+    };
+  });
+}
+
+function buildVideoScrollSyncSpecs(syncs: VideoScrollSync[]): AnimationSpec[] {
+  return syncs.map((vs) => ({
+    id: nextId("video-scroll"),
+    type: "scroll-listener" as AnimationType,
+    trigger: { type: "scroll-progress" as const },
+    properties: [{
+      property: "currentTime",
+      from: "0",
+      to: String(vs.videoDuration),
+      unit: "s",
+    }],
+    duration: 0,
+    easing: "linear",
+    delay: 0,
+    iterations: 1,
+    direction: "normal" as AnimationDirection,
+    fillMode: "none" as AnimationFillMode,
+    elementSelector: vs.videoSelector,
+    humanDescription: `Scroll-driven video: video.currentTime mapped to scroll position (${vs.videoDuration.toFixed(1)}s video, ${vs.mappingType} mapping)`,
+    implementationNotes: "Add scroll listener that sets video.currentTime = scrollProgress * video.duration. Pause video autoplay.",
+    codeSnippet: buildVideoScrollCodeSnippet(vs),
+  }));
+}
+
+function buildVideoScrollCodeSnippet(vs: VideoScrollSync): string {
+  return `useEffect(() => {
+  const video = document.querySelector('${vs.videoSelector}') as HTMLVideoElement;
+  if (!video) return;
+  video.pause();
+
+  function onScroll() {
+    const rect = video.getBoundingClientRect();
+    const progress = Math.max(0, Math.min(1, 1 - rect.top / window.innerHeight));
+    video.currentTime = progress * video.duration;
+  }
+
+  window.addEventListener('scroll', onScroll, { passive: true });
+  return () => window.removeEventListener('scroll', onScroll);
+}, []);`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1647,6 +1844,325 @@ async function detectStaggerPatterns(page: Page): Promise<StaggerPattern[]> {
     ...p,
     animationType: p.animationType as AnimationType,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// CSS scroll-driven animation detection (Item 4.4)
+// ---------------------------------------------------------------------------
+
+interface CssScrollTimelineInfo {
+  selector: string;
+  animationName: string;
+  timeline: string;
+  duration: string;
+  direction: string;
+  range: string;
+  fillMode: string;
+  viewTimelineName?: string;
+  viewTimelineAxis?: string;
+}
+
+async function detectCssScrollTimelines(page: Page): Promise<CssScrollTimelineInfo[]> {
+  return page.evaluate(() => {
+    const results: Array<{
+      selector: string;
+      animationName: string;
+      timeline: string;
+      duration: string;
+      direction: string;
+      range: string;
+      fillMode: string;
+      viewTimelineName?: string;
+      viewTimelineAxis?: string;
+    }> = [];
+    const seen = new Set<string>();
+
+    const elements = document.querySelectorAll("*");
+    const limit = Math.min(elements.length, 2000);
+
+    for (let i = 0; i < limit; i++) {
+      const el = elements[i];
+      const cs = getComputedStyle(el);
+
+      // Build selector
+      let selector = el.tagName.toLowerCase();
+      if (el.id) {
+        selector = "#" + CSS.escape(el.id);
+      } else if (el.className && typeof el.className === "string") {
+        const cls = el.className.trim().split(/\s+/).slice(0, 2).join(".");
+        if (cls) selector += "." + cls;
+      }
+
+      // Check for animation-timeline
+      const timeline = cs.getPropertyValue("animation-timeline");
+      const animName = cs.getPropertyValue("animation-name");
+
+      if (timeline && timeline !== "auto" && timeline !== "none" && animName && animName !== "none") {
+        const key = selector + "|scroll-timeline|" + animName;
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push({
+            selector,
+            animationName: animName,
+            timeline,
+            duration: cs.getPropertyValue("animation-duration"),
+            direction: cs.getPropertyValue("animation-direction"),
+            range: cs.getPropertyValue("animation-range") || "",
+            fillMode: cs.getPropertyValue("animation-fill-mode"),
+          });
+        }
+      }
+
+      // Check for view-timeline-name (element defines a named view timeline)
+      const viewTimeline = cs.getPropertyValue("view-timeline-name");
+      if (viewTimeline && viewTimeline !== "none") {
+        const key = selector + "|view-timeline|" + viewTimeline;
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push({
+            selector,
+            animationName: animName || "",
+            timeline: viewTimeline,
+            duration: "",
+            direction: "",
+            range: "",
+            fillMode: "",
+            viewTimelineName: viewTimeline,
+            viewTimelineAxis: cs.getPropertyValue("view-timeline-axis") || "block",
+          });
+        }
+      }
+    }
+
+    return results;
+  });
+}
+
+function classifyCssScrollTimeline(timeline: string): "view" | "scroll" | "named" {
+  if (timeline.startsWith("view(") || timeline === "view()") return "view";
+  if (timeline.startsWith("scroll(") || timeline === "scroll()") return "scroll";
+  return "named";
+}
+
+function buildCssScrollTimelineSpecs(
+  infos: CssScrollTimelineInfo[],
+  keyframeMap: Map<string, AnimationKeyframe[]>,
+): AnimationSpec[] {
+  return infos.map((info) => {
+    const timelineType = classifyCssScrollTimeline(info.timeline);
+    const keyframes = keyframeMap.get(info.animationName);
+    const properties = keyframes ? extractPropertiesFromKeyframes(keyframes) : [];
+
+    return {
+      id: nextId("css-scroll-tl"),
+      type: "css-scroll-timeline" as AnimationType,
+      trigger: {
+        type: "scroll-progress" as const,
+      },
+      properties,
+      duration: parseCssDuration(info.duration),
+      easing: "linear",
+      delay: 0,
+      iterations: 1,
+      direction: normalizeDirection(info.direction || "normal"),
+      fillMode: normalizeFillMode(info.fillMode || "both"),
+      keyframes,
+      elementSelector: info.selector,
+      cssScrollTimeline: {
+        type: timelineType,
+        timeline: info.timeline,
+        range: info.range || undefined,
+        axis: info.viewTimelineAxis || undefined,
+        viewTimelineName: info.viewTimelineName || undefined,
+      },
+      humanDescription: describeCssScrollTimeline(info, timelineType),
+      implementationNotes: notesForCssScrollTimeline(info, timelineType),
+    };
+  });
+}
+
+function describeCssScrollTimeline(
+  info: CssScrollTimelineInfo,
+  timelineType: "view" | "scroll" | "named",
+): string {
+  const animPart = info.animationName ? ` "${info.animationName}"` : "";
+  const rangePart = info.range ? `, range: ${info.range}` : "";
+
+  if (timelineType === "view") {
+    return `CSS scroll-driven animation${animPart} using view() timeline${rangePart}`;
+  }
+  if (timelineType === "scroll") {
+    return `CSS scroll-driven animation${animPart} using scroll() timeline${rangePart}`;
+  }
+  return `CSS scroll-driven animation${animPart} using named timeline "${info.timeline}"${rangePart}`;
+}
+
+function notesForCssScrollTimeline(
+  info: CssScrollTimelineInfo,
+  timelineType: "view" | "scroll" | "named",
+): string {
+  const parts: string[] = [
+    "CSS-native scroll-driven animation (no JS needed).",
+    `Apply animation-timeline: ${info.timeline}; on the element.`,
+  ];
+
+  if (info.range) {
+    parts.push(`Set animation-range: ${info.range};`);
+  }
+
+  if (info.viewTimelineName) {
+    parts.push(
+      `Element defines view-timeline-name: ${info.viewTimelineName}; (axis: ${info.viewTimelineAxis || "block"}).`,
+    );
+  }
+
+  parts.push(
+    "Add @supports (animation-timeline: view()) fallback using IntersectionObserver for browsers without scroll-driven animation support.",
+  );
+
+  return parts.join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// Framer Motion detection (Item 4.5)
+// ---------------------------------------------------------------------------
+
+interface FramerMotionElementInfo {
+  selector: string;
+  componentType?: string;
+  name?: string;
+  framerAttrs: Record<string, string>;
+  isMotionElement: boolean;
+  inlineStyle?: string;
+}
+
+async function detectFramerMotionElements(page: Page): Promise<FramerMotionElementInfo[]> {
+  return page.evaluate(() => {
+    const results: Array<{
+      selector: string;
+      componentType?: string;
+      name?: string;
+      framerAttrs: Record<string, string>;
+      isMotionElement: boolean;
+      inlineStyle?: string;
+    }> = [];
+    const seen = new Set<string>();
+
+    /** Build a minimal CSS selector for an element. */
+    function miniSel(el: Element): string {
+      if (el.id) return "#" + CSS.escape(el.id);
+      const tag = el.tagName.toLowerCase();
+      if (el.className && typeof el.className === "string") {
+        const cls = el.className.trim().split(/\s+/).slice(0, 2).join(".");
+        if (cls) return tag + "." + cls;
+      }
+      return tag;
+    }
+
+    // Detect elements with data-framer-* attributes
+    const framerElements = document.querySelectorAll(
+      "[data-framer-component-type], [data-framer-name], [data-motion-pop-id]",
+    );
+
+    for (const el of Array.from(framerElements)) {
+      const selector = miniSel(el);
+      if (seen.has(selector)) continue;
+      seen.add(selector);
+
+      const attrs: Record<string, string> = {};
+      for (const attr of Array.from(el.attributes)) {
+        if (attr.name.startsWith("data-framer") || attr.name.startsWith("data-motion")) {
+          attrs[attr.name] = attr.value;
+        }
+      }
+
+      results.push({
+        selector,
+        componentType: el.getAttribute("data-framer-component-type") || undefined,
+        name: el.getAttribute("data-framer-name") || undefined,
+        framerAttrs: attrs,
+        isMotionElement: true,
+      });
+    }
+
+    // Detect motion.div patterns via Framer Motion-specific style patterns
+    const styledElements = document.querySelectorAll('[style*="--framer"], [style*="willChange"]');
+    for (const el of Array.from(styledElements)) {
+      const selector = miniSel(el);
+      if (seen.has(selector)) continue;
+      seen.add(selector);
+
+      const style = el.getAttribute("style") || "";
+      if (style.includes("--framer") || style.includes("willChange")) {
+        results.push({
+          selector,
+          framerAttrs: {},
+          isMotionElement: true,
+          inlineStyle: style.slice(0, 500),
+        });
+      }
+    }
+
+    return results;
+  });
+}
+
+function buildFramerMotionSpecs(
+  elements: FramerMotionElementInfo[],
+  libraries: LibraryInfo[],
+): AnimationSpec[] {
+  const framerLib = libraries.find((l) => l.name === "Framer Motion");
+
+  return elements.map((el) => {
+    const namePart = el.name ? ` "${el.name}"` : "";
+    const typePart = el.componentType ? ` (${el.componentType})` : "";
+
+    return {
+      id: nextId("framer"),
+      type: "framer-motion" as AnimationType,
+      trigger: { type: "load" as const },
+      properties: [],
+      duration: 0,
+      easing: "ease",
+      delay: 0,
+      iterations: 1,
+      direction: "normal" as AnimationDirection,
+      fillMode: "none" as AnimationFillMode,
+      library: framerLib,
+      elementSelector: el.selector,
+      humanDescription: `Framer Motion element${namePart}${typePart} detected. Properties are set via motion component props (initial, animate, whileHover, etc.).`,
+      implementationNotes: buildFramerMotionNotes(el),
+    };
+  });
+}
+
+function buildFramerMotionNotes(el: FramerMotionElementInfo): string {
+  const parts: string[] = [
+    "Install framer-motion. Use <motion.div> with declarative animation props.",
+  ];
+
+  if (el.componentType) {
+    parts.push(`Component type: ${el.componentType}.`);
+  }
+
+  if (el.name) {
+    parts.push(`Named: "${el.name}".`);
+  }
+
+  const attrEntries = Object.entries(el.framerAttrs);
+  if (attrEntries.length > 0) {
+    const attrSummary = attrEntries
+      .slice(0, 5)
+      .map(([k, v]) => `${k}="${v}"`)
+      .join(", ");
+    parts.push(`Data attributes: ${attrSummary}.`);
+  }
+
+  parts.push(
+    "Inspect the React DevTools for exact motion prop values (initial, animate, exit, variants, transition).",
+  );
+
+  return parts.join(" ");
 }
 
 // ---------------------------------------------------------------------------

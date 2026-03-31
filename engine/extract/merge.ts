@@ -10,6 +10,7 @@ import type {
   PageData,
   GlobalBehavior,
   SectionSpec,
+  SectionConfidence,
   AnimationSpec,
   InteractionModel,
   TechStackAnalysis,
@@ -122,13 +123,128 @@ function enrichSection(
     interactions.sectionInteractionModels.get(section.id) ??
     classifyFromContent(sectionAnimations, enrichedElements);
 
+  // Item 4.9: calculate extraction confidence for this section
+  const confidence = calculateSectionConfidence(
+    enrichedElements,
+    sectionAnimations,
+    interactions,
+    section,
+  );
+
   return {
     ...section,
     elements: enrichedElements,
     animations: [...section.animations, ...sectionAnimations],
     responsiveBreakpoints: sectionBreakpoints,
     interactionModel,
+    confidence,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Confidence scoring (Item 4.9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Score how confidently each extraction dimension captured this section's data.
+ * Each dimension is scored 0-1; the overall score is a weighted average.
+ */
+function calculateSectionConfidence(
+  elements: ElementSpec[],
+  sectionAnimations: AnimationSpec[],
+  interactions: InteractionMapResult,
+  section: SectionSpec,
+): SectionConfidence {
+  // Style extraction: ratio of elements with at least one computed style
+  const { withStyles, total } = countElementStyles(elements);
+  const styleExtraction = total > 0 ? withStyles / total : 0;
+
+  // Animation detection: if no animations exist, confidence is full (nothing to miss).
+  // Otherwise, score by how many have substantive implementation notes.
+  const animationDetection =
+    sectionAnimations.length === 0
+      ? 1
+      : sectionAnimations.filter(
+          (a) => a.implementationNotes && a.implementationNotes.length > 20,
+        ).length / sectionAnimations.length;
+
+  // Interaction mapping: did the mapper classify this section?
+  const hasSectionModel = interactions.sectionInteractionModels.has(section.id);
+  const interactiveElementCount = countInteractiveElements(elements);
+  const interactionMapping =
+    interactiveElementCount === 0
+      ? 1
+      : hasSectionModel
+        ? 0.9
+        : 0.5;
+
+  // Asset coverage: ratio of elements with media that have a localPath
+  const { withLocal, totalMedia } = countMediaCoverage(elements);
+  const assetCoverage = totalMedia > 0 ? withLocal / totalMedia : 1;
+
+  // Weighted average (style 40%, animation 30%, interaction 15%, assets 15%)
+  const overall =
+    styleExtraction * 0.4 +
+    animationDetection * 0.3 +
+    interactionMapping * 0.15 +
+    assetCoverage * 0.15;
+
+  return {
+    styleExtraction: round2(styleExtraction),
+    animationDetection: round2(animationDetection),
+    interactionMapping: round2(interactionMapping),
+    assetCoverage: round2(assetCoverage),
+    overall: round2(overall),
+  };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function countElementStyles(elements: ElementSpec[]): { withStyles: number; total: number } {
+  let withStyles = 0;
+  let total = 0;
+
+  for (const el of elements) {
+    total++;
+    if (Object.keys(el.computedStyles).length > 0) {
+      withStyles++;
+    }
+    const childCounts = countElementStyles(el.children);
+    withStyles += childCounts.withStyles;
+    total += childCounts.total;
+  }
+
+  return { withStyles, total };
+}
+
+function countInteractiveElements(elements: ElementSpec[]): number {
+  let count = 0;
+  for (const el of elements) {
+    if (el.states.length > 0) count++;
+    count += countInteractiveElements(el.children);
+  }
+  return count;
+}
+
+function countMediaCoverage(elements: ElementSpec[]): { withLocal: number; totalMedia: number } {
+  let withLocal = 0;
+  let totalMedia = 0;
+
+  for (const el of elements) {
+    if (el.media) {
+      totalMedia++;
+      if (el.media.localPath) {
+        withLocal++;
+      }
+    }
+    const childCounts = countMediaCoverage(el.children);
+    withLocal += childCounts.withLocal;
+    totalMedia += childCounts.totalMedia;
+  }
+
+  return { withLocal, totalMedia };
 }
 
 // ---------------------------------------------------------------------------
