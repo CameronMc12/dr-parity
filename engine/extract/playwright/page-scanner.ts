@@ -319,6 +319,17 @@ async function extractSection(
           }
         }
 
+        // Capture container query properties (may not be in the enumerated list
+        // on older engines, so check explicitly).
+        const containerType = computed.getPropertyValue('container-type');
+        if (containerType && containerType !== 'normal' && !diff['container-type']) {
+          diff['container-type'] = containerType;
+        }
+        const containerName = computed.getPropertyValue('container-name');
+        if (containerName && containerName !== 'none' && !diff['container-name']) {
+          diff['container-name'] = containerName;
+        }
+
         return diff;
       }
 

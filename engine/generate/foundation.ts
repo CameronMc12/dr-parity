@@ -6,7 +6,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import type { PageData, FontSpec, FontMetrics, SvgEntry, AnimationSpec } from '../types/extraction';
+import type { PageData, FontSpec, FontMetrics, SvgEntry, SvgSpriteSymbol, AnimationSpec } from '../types/extraction';
 import type { DesignTokens, TopologyMap } from '../types/component';
 
 // ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ export async function generateFoundation(
 
   const globalsCss = buildGlobalsCss(tokens, topology, pageData);
   const layoutTsx = buildLayoutTsx(tokens, pageData);
-  const iconsTsx = buildIconsTsx(pageData.assets.svgs);
+  const iconsTsx = buildIconsTsx(pageData.assets.svgs, pageData.assets.svgSprites);
 
   const files: { path: string; content: string }[] = [
     { path: join(projectDir, 'src/app/globals.css'), content: globalsCss },
@@ -390,13 +390,15 @@ function buildLayoutTsx(tokens: DesignTokens, pageData: PageData): string {
 // icons.tsx
 // ---------------------------------------------------------------------------
 
-function buildIconsTsx(svgs: SvgEntry[]): string {
+function buildIconsTsx(svgs: SvgEntry[], spriteSymbols?: SvgSpriteSymbol[]): string {
   const lines: string[] = [];
 
   lines.push('import type { SVGAttributes } from "react";');
   lines.push('');
 
-  if (svgs.length === 0) {
+  const hasSprites = spriteSymbols && spriteSymbols.length > 0;
+
+  if (svgs.length === 0 && !hasSprites) {
     lines.push('// No SVG icons extracted from target site.');
     lines.push('export {};');
     lines.push('');
@@ -405,6 +407,7 @@ function buildIconsTsx(svgs: SvgEntry[]): string {
 
   const usedNames = new Set<string>();
 
+  // Inline SVGs
   for (const svg of svgs) {
     const baseName = svg.componentName ?? 'Icon';
     const name = deduplicateName(baseName, usedNames);
@@ -421,6 +424,31 @@ function buildIconsTsx(svgs: SvgEntry[]): string {
     lines.push('  );');
     lines.push('}');
     lines.push('');
+  }
+
+  // Sprite symbols — each rendered as a standalone SVG component
+  if (hasSprites) {
+    lines.push('// --- SVG sprite symbols (extracted from <symbol> elements) ---');
+    lines.push('');
+
+    for (const sym of spriteSymbols!) {
+      const name = deduplicateName(sym.componentName, usedNames);
+      usedNames.add(name);
+
+      const viewBoxAttr = sym.viewBox ? ` viewBox="${sym.viewBox}"` : '';
+
+      lines.push(`export function ${name}({`);
+      lines.push('  className,');
+      lines.push('  ...props');
+      lines.push('}: { className?: string } & SVGAttributes<SVGSVGElement>) {');
+      lines.push('  return (');
+      lines.push(`    <svg${viewBoxAttr} fill="currentColor" className={className} {...props}>`);
+      lines.push(`      ${sym.content}`);
+      lines.push('    </svg>');
+      lines.push('  );');
+      lines.push('}');
+      lines.push('');
+    }
   }
 
   return lines.join('\n');
@@ -481,10 +509,19 @@ function buildFontImports(fonts: FontSpec[]): FontImportResult {
       );
       const hasMetrics = filesWithPaths.some((f) => f.metrics);
       const adjustLine = hasMetrics ? `  adjustFontFallback: false,\n` : '';
+
+      // Variable font weight range (Item 2.4)
+      let weightLine = '';
+      if (font.isVariable && font.variableAxes?.['wght']) {
+        const wghtAxis = font.variableAxes['wght'];
+        weightLine = `  weight: "${wghtAxis.min} ${wghtAxis.max}",\n`;
+      }
+
       declarations.push(
         `const ${jsVarName} = localFont({\n` +
         `  variable: "${cssVarName}",\n` +
         `  src: [\n${srcEntries.join(',\n')}\n  ],\n` +
+        weightLine +
         `  display: "swap",\n` +
         adjustLine +
         `});`,
@@ -683,7 +720,10 @@ function contrastForeground(bgColor: string): string {
 function parseSimpleRgb(
   color: string,
 ): { r: number; g: number; b: number } | null {
-  const rgbMatch = color.match(
+  const trimmed = color.trim().toLowerCase();
+
+  // rgb/rgba
+  const rgbMatch = trimmed.match(
     /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/,
   );
   if (rgbMatch) {
@@ -693,7 +733,9 @@ function parseSimpleRgb(
       b: Number(rgbMatch[3]),
     };
   }
-  const hexMatch = color.match(/^#([0-9a-f]{3,8})$/i);
+
+  // hex
+  const hexMatch = trimmed.match(/^#([0-9a-f]{3,8})$/);
   if (hexMatch) {
     const hex = hexMatch[1];
     if (hex.length === 3) {
@@ -711,7 +753,113 @@ function parseSimpleRgb(
       };
     }
   }
+
+  // hsl/hsla
+  const hslMatch = trimmed.match(
+    /hsla?\(\s*([\d.]+)(?:deg)?\s*[,\s]\s*([\d.]+)%\s*[,\s]\s*([\d.]+)%/,
+  );
+  if (hslMatch) {
+    return hslToSrgb(
+      parseFloat(hslMatch[1]),
+      parseFloat(hslMatch[2]),
+      parseFloat(hslMatch[3]),
+    );
+  }
+
+  // oklch
+  const oklchMatch = trimmed.match(
+    /oklch\(\s*([\d.]+)%?\s+([\d.]+)\s+([\d.]+)/,
+  );
+  if (oklchMatch) {
+    return oklchToSrgb(
+      parseFloat(oklchMatch[1]),
+      parseFloat(oklchMatch[2]),
+      parseFloat(oklchMatch[3]),
+    );
+  }
+
+  // lab
+  const labMatch = trimmed.match(
+    /lab\(\s*([\d.]+)%?\s+([\d.-]+)\s+([\d.-]+)/,
+  );
+  if (labMatch) {
+    return labToSrgb(
+      parseFloat(labMatch[1]),
+      parseFloat(labMatch[2]),
+      parseFloat(labMatch[3]),
+    );
+  }
+
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Color space conversions (foundation-local, for contrastForeground)
+// ---------------------------------------------------------------------------
+
+function hslToSrgb(
+  h: number,
+  s: number,
+  l: number,
+): { r: number; g: number; b: number } {
+  const sN = s / 100;
+  const lN = l / 100;
+  const a = sN * Math.min(lN, 1 - lN);
+  const f = (n: number): number => {
+    const k = (n + h / 30) % 12;
+    return lN - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+  };
+  return { r: Math.round(f(0) * 255), g: Math.round(f(8) * 255), b: Math.round(f(4) * 255) };
+}
+
+function oklchToSrgb(
+  l: number,
+  c: number,
+  h: number,
+): { r: number; g: number; b: number } {
+  const lN = l > 1 ? l / 100 : l;
+  const hRad = (h * Math.PI) / 180;
+  const a = c * Math.cos(hRad);
+  const b = c * Math.sin(hRad);
+  const l_ = lN + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = lN - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = lN - 0.0894841775 * a - 1.2914855480 * b;
+  const lr = l_ * l_ * l_;
+  const mr = m_ * m_ * m_;
+  const sr = s_ * s_ * s_;
+  const toS = (v: number): number =>
+    Math.round(Math.max(0, Math.min(255,
+      v <= 0.0031308 ? v * 12.92 * 255 : (1.055 * Math.pow(v, 1 / 2.4) - 0.055) * 255,
+    )));
+  return {
+    r: toS(4.0767416621 * lr - 3.3077115913 * mr + 0.2309699292 * sr),
+    g: toS(-1.2684380046 * lr + 2.6097574011 * mr - 0.3413193965 * sr),
+    b: toS(-0.0041960863 * lr - 0.7034186147 * mr + 1.7076147010 * sr),
+  };
+}
+
+function labToSrgb(
+  l: number,
+  a: number,
+  b: number,
+): { r: number; g: number; b: number } {
+  const fy = (l + 16) / 116;
+  const fx = a / 500 + fy;
+  const fz = fy - b / 200;
+  const delta = 6 / 29;
+  const cube = (t: number): number =>
+    t > delta ? t * t * t : 3 * delta * delta * (t - 4 / 29);
+  const x = cube(fx) * 0.95047;
+  const y = cube(fy) * 1.0;
+  const z = cube(fz) * 1.08883;
+  const rl = 3.2404542 * x - 1.5371385 * y - 0.4985314 * z;
+  const gl = -0.969266 * x + 1.8760108 * y + 0.041556 * z;
+  const bl = 0.0556434 * x - 0.2040259 * y + 1.0572252 * z;
+  const toS = (v: number): number =>
+    Math.round(Math.max(0, Math.min(255,
+      v <= 0.0031308 ? v * 12.92 * 255 : (1.055 * Math.pow(v, 1 / 2.4) - 0.055) * 255,
+    )));
+  return { r: toS(rl), g: toS(gl), b: toS(bl) };
 }
 
 function collectKeyframeAnimations(pageData: PageData): AnimationSpec[] {

@@ -721,6 +721,7 @@ function generateCssVariables(
 function parseColorToRgb(color: string): Rgb | null {
   const trimmed = color.trim().toLowerCase();
 
+  // rgb/rgba
   const rgbMatch = trimmed.match(
     /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/,
   );
@@ -732,6 +733,7 @@ function parseColorToRgb(color: string): Rgb | null {
     };
   }
 
+  // hex
   const hexMatch = trimmed.match(/^#([0-9a-f]{3,8})$/);
   if (hexMatch) {
     const hex = hexMatch[1];
@@ -751,5 +753,140 @@ function parseColorToRgb(color: string): Rgb | null {
     }
   }
 
+  // hsl/hsla
+  const hslMatch = trimmed.match(
+    /hsla?\(\s*([\d.]+)(?:deg)?\s*[,\s]\s*([\d.]+)%\s*[,\s]\s*([\d.]+)%/,
+  );
+  if (hslMatch) {
+    return hslToRgb(
+      parseFloat(hslMatch[1]),
+      parseFloat(hslMatch[2]),
+      parseFloat(hslMatch[3]),
+    );
+  }
+
+  // oklch
+  const oklchMatch = trimmed.match(
+    /oklch\(\s*([\d.]+)%?\s+([\d.]+)\s+([\d.]+)/,
+  );
+  if (oklchMatch) {
+    return oklchToRgb(
+      parseFloat(oklchMatch[1]),
+      parseFloat(oklchMatch[2]),
+      parseFloat(oklchMatch[3]),
+    );
+  }
+
+  // lab
+  const labMatch = trimmed.match(
+    /lab\(\s*([\d.]+)%?\s+([\d.-]+)\s+([\d.-]+)/,
+  );
+  if (labMatch) {
+    return labToRgb(
+      parseFloat(labMatch[1]),
+      parseFloat(labMatch[2]),
+      parseFloat(labMatch[3]),
+    );
+  }
+
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Color space conversion helpers
+// ---------------------------------------------------------------------------
+
+/** HSL to sRGB (h in degrees, s and l in 0-100 range). */
+function hslToRgb(h: number, s: number, l: number): Rgb {
+  const sNorm = s / 100;
+  const lNorm = l / 100;
+  const a = sNorm * Math.min(lNorm, 1 - lNorm);
+  const f = (n: number): number => {
+    const k = (n + h / 30) % 12;
+    return lNorm - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+  };
+  return {
+    r: Math.round(f(0) * 255),
+    g: Math.round(f(8) * 255),
+    b: Math.round(f(4) * 255),
+  };
+}
+
+/**
+ * OKLCH to sRGB (approximate conversion).
+ * L: 0-1 (or 0-100 if percentage), C: chroma, H: hue in degrees.
+ */
+function oklchToRgb(l: number, c: number, h: number): Rgb {
+  // Normalize L if it was given as a percentage (> 1).
+  const lNorm = l > 1 ? l / 100 : l;
+  const hRad = (h * Math.PI) / 180;
+  const a = c * Math.cos(hRad);
+  const b = c * Math.sin(hRad);
+
+  // OKLAB to approximate linear sRGB via the LMS cube-root path.
+  const lms_l = lNorm + 0.3963377774 * a + 0.2158037573 * b;
+  const lms_m = lNorm - 0.1055613458 * a - 0.0638541728 * b;
+  const lms_s = lNorm - 0.0894841775 * a - 1.2914855480 * b;
+
+  const lr = lms_l * lms_l * lms_l;
+  const mr = lms_m * lms_m * lms_m;
+  const sr = lms_s * lms_s * lms_s;
+
+  const linearToSrgb = (v: number): number =>
+    Math.round(
+      Math.max(
+        0,
+        Math.min(
+          255,
+          v <= 0.0031308
+            ? v * 12.92 * 255
+            : (1.055 * Math.pow(v, 1 / 2.4) - 0.055) * 255,
+        ),
+      ),
+    );
+
+  return {
+    r: linearToSrgb(4.0767416621 * lr - 3.3077115913 * mr + 0.2309699292 * sr),
+    g: linearToSrgb(-1.2684380046 * lr + 2.6097574011 * mr - 0.3413193965 * sr),
+    b: linearToSrgb(-0.0041960863 * lr - 0.7034186147 * mr + 1.7076147010 * sr),
+  };
+}
+
+/**
+ * CIE Lab to sRGB (simplified via XYZ intermediate).
+ * L: 0-100, a/b: typically -128 to 127.
+ */
+function labToRgb(l: number, a: number, b: number): Rgb {
+  const fy = (l + 16) / 116;
+  const fx = a / 500 + fy;
+  const fz = fy - b / 200;
+
+  const delta = 6 / 29;
+  const cube = (t: number): number =>
+    t > delta ? t * t * t : 3 * delta * delta * (t - 4 / 29);
+
+  // D65 illuminant reference white.
+  const x = cube(fx) * 0.95047;
+  const y = cube(fy) * 1.0;
+  const z = cube(fz) * 1.08883;
+
+  // XYZ to linear sRGB.
+  const rl = 3.2404542 * x - 1.5371385 * y - 0.4985314 * z;
+  const gl = -0.969266 * x + 1.8760108 * y + 0.041556 * z;
+  const bl = 0.0556434 * x - 0.2040259 * y + 1.0572252 * z;
+
+  const linearToSrgb = (v: number): number =>
+    Math.round(
+      Math.max(
+        0,
+        Math.min(
+          255,
+          v <= 0.0031308
+            ? v * 12.92 * 255
+            : (1.055 * Math.pow(v, 1 / 2.4) - 0.055) * 255,
+        ),
+      ),
+    );
+
+  return { r: linearToSrgb(rl), g: linearToSrgb(gl), b: linearToSrgb(bl) };
 }

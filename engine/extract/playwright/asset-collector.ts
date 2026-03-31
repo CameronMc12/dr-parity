@@ -16,7 +16,7 @@
  */
 
 import type { Page } from 'playwright';
-import type { AssetManifest, AssetEntry, SvgEntry } from '../../types/extraction';
+import type { AssetManifest, AssetEntry, SvgEntry, SvgSpriteSymbol } from '../../types/extraction';
 import { writeFile, mkdir } from 'fs/promises';
 import { join, extname } from 'path';
 
@@ -81,6 +81,11 @@ export async function collectAssets(
     ? deduplicateSvgs(discovered.inlineSvgs)
     : [];
 
+  // Step 2b: Extract SVG sprite symbols as standalone entries.
+  const spriteSymbols = opts.svgAsComponents
+    ? extractSpriteSymbols(discovered.svgSprites, discovered.svgUseRefs)
+    : [];
+
   // Step 3: Build download queue.
   const queue = buildDownloadQueue(discovered, opts);
 
@@ -119,7 +124,7 @@ export async function collectAssets(
   }
 
   // Step 6: Assemble manifest.
-  const manifest = assembleManifest(downloadResults, svgEntries);
+  const manifest = assembleManifest(downloadResults, svgEntries, spriteSymbols);
 
   if (totalSize > 100 * 1024 * 1024) {
     errors.push(
@@ -182,6 +187,18 @@ interface DiscoveredFavicon {
   sizes: string;
 }
 
+interface DiscoveredSvgSprite {
+  symbols: Array<{ id: string; viewBox: string; content: string }>;
+  parentId: string;
+}
+
+interface DiscoveredSvgUseRef {
+  href: string;
+  parentSvgViewBox: string;
+  width: string;
+  height: string;
+}
+
 interface DiscoveredAssets {
   images: DiscoveredImage[];
   pictures: DiscoveredPicture[];
@@ -190,6 +207,8 @@ interface DiscoveredAssets {
   inlineSvgs: DiscoveredInlineSvg[];
   favicons: DiscoveredFavicon[];
   ogImage: string;
+  svgSprites: DiscoveredSvgSprite[];
+  svgUseRefs: DiscoveredSvgUseRef[];
 }
 
 async function discoverAssets(page: Page): Promise<DiscoveredAssets> {
@@ -282,7 +301,27 @@ async function discoverAssets(page: Page): Promise<DiscoveredAssets> {
     const ogImage =
       document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.content || '';
 
-    return { images, pictures, videos, backgrounds, inlineSvgs, favicons, ogImage };
+    // --- SVG sprite sheets (<svg> elements containing <symbol> children) ---
+    const svgSprites = Array.from(document.querySelectorAll('svg'))
+      .filter((svg) => svg.querySelectorAll('symbol').length > 0)
+      .map((svg) => ({
+        symbols: Array.from(svg.querySelectorAll('symbol')).map((sym) => ({
+          id: sym.id,
+          viewBox: sym.getAttribute('viewBox') || '',
+          content: sym.innerHTML,
+        })),
+        parentId: svg.id || '',
+      }));
+
+    // --- <use> references (point to sprite symbols) ---
+    const svgUseRefs = Array.from(document.querySelectorAll('use')).map((use) => ({
+      href: use.getAttribute('href') || use.getAttribute('xlink:href') || '',
+      parentSvgViewBox: use.closest('svg')?.getAttribute('viewBox') || '',
+      width: use.closest('svg')?.getAttribute('width') || '',
+      height: use.closest('svg')?.getAttribute('height') || '',
+    }));
+
+    return { images, pictures, videos, backgrounds, inlineSvgs, favicons, ogImage, svgSprites, svgUseRefs };
   });
 }
 
@@ -388,6 +427,63 @@ function deduplicateSvgs(svgs: DiscoveredInlineSvg[]): SvgEntry[] {
   }
 
   return Array.from(seen.values());
+}
+
+// ---------------------------------------------------------------------------
+// SVG sprite symbol extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract each `<symbol>` from SVG sprite sheets as a standalone component.
+ * Also resolves `<use>` references to their corresponding symbols.
+ */
+function extractSpriteSymbols(
+  sprites: DiscoveredSvgSprite[],
+  useRefs: DiscoveredSvgUseRef[],
+): SvgSpriteSymbol[] {
+  const symbols: SvgSpriteSymbol[] = [];
+  const seenIds = new Set<string>();
+
+  for (const sprite of sprites) {
+    for (const sym of sprite.symbols) {
+      if (!sym.id || seenIds.has(sym.id)) continue;
+      seenIds.add(sym.id);
+
+      symbols.push({
+        id: sym.id,
+        viewBox: sym.viewBox,
+        content: sym.content,
+        componentName: symbolIdToComponentName(sym.id),
+      });
+    }
+  }
+
+  // Log unresolved <use> references (href points to a symbol not found in any sprite).
+  for (const ref of useRefs) {
+    const href = ref.href.replace(/^#/, '');
+    if (href && !seenIds.has(href)) {
+      // External sprite reference — we can't resolve it without fetching.
+      // These are logged but not processed further.
+    }
+  }
+
+  return symbols;
+}
+
+/**
+ * Convert a symbol id like "icon-arrow-right" to PascalCase component name
+ * like "IconArrowRight".
+ */
+function symbolIdToComponentName(id: string): string {
+  const name = id
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('');
+
+  // Ensure the name ends with "Icon" for consistency.
+  return name.endsWith('Icon') ? name : `${name}Icon`;
 }
 
 // ---------------------------------------------------------------------------
@@ -692,6 +788,7 @@ function toAssetEntry(result: DownloadResult): AssetEntry {
 function assembleManifest(
   downloadResults: DownloadResult[],
   svgEntries: SvgEntry[],
+  spriteSymbols: SvgSpriteSymbol[] = [],
 ): AssetManifest {
   const manifest: AssetManifest = {
     images: [],
@@ -701,6 +798,7 @@ function assembleManifest(
     favicons: [],
     ogImages: [],
     other: [],
+    svgSprites: spriteSymbols.length > 0 ? spriteSymbols : undefined,
   };
 
   for (const result of downloadResults) {

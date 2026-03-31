@@ -84,3 +84,68 @@ Gaps and opportunities discovered during implementation of the roadmap features.
 
 2. **Pseudo-element content in text extraction**: Currently `collectTextContent` in builder-prompts only captures element text. Pseudo-element `content` values (especially decorative characters like arrows, bullets, or quotes) could be listed separately to ensure builders reproduce them faithfully.
 
+## Discovered during Tier 2 Items 2.5, 2.6 & 2.7 (2026-03-30)
+
+### Gaps
+
+1. **Asset waiter does not detect dynamically injected images**: `waitForAssetsToLoad` queries `document.querySelectorAll('img')` once. If JavaScript injects images after the initial query (e.g., lazy-load libraries that swap `data-src` to `src`), those images may not be awaited. Consider using a MutationObserver to watch for new `<img>` elements during the wait period.
+
+2. **Content masker regex runs twice per text node**: The `regexMasks` loop calls `regex.test(text)` and then `text.replace(regex)`. Since `RegExp` with the `g` flag is stateful (`lastIndex`), the `test` call advances the internal cursor, which can cause `replace` to miss the first match on even-count occurrences. The current implementation works around this by constructing a fresh `RegExp` for `replace`, but this pattern is fragile. Consider using only `replace` and checking if the result differs.
+
+3. **Spatial diff analysis in fix-loop lacks raw pixel data**: `generateFixSuggestions` in the viewport-level path does not have access to the actual diff image pixel buffer (only `PixelDiffResult` metadata). The `analyzeDiffRegions` function exists but cannot be called without reading the diff PNG back from disk. Consider passing the diff `PNG` data through `ViewportDiff` or reading the file lazily.
+
+4. **Content masks are not applied in fix-loop's `captureScreenshots` call**: `runFixLoop` calls `captureScreenshots` but does not forward content mask options. Users must pass `contentMasks` via `ScreenshotOptions` manually. Consider adding `contentMasks` to `FixLoopOptions` and threading it through.
+
+### Opportunities
+
+1. **Per-section content masks**: Different sections may have different dynamic content (e.g., a "latest posts" section has dates, a pricing section has currency amounts). Allowing `ContentMask` to be specified per `SectionInfo` would enable more precise masking without over-suppressing.
+
+2. **Asset wait telemetry**: `waitForAssetsToLoad` could return a report of how many assets were waited on and how many timed out, enabling QA reports to flag pages with broken asset loading as a separate concern from styling differences.
+
+3. **Diff image spatial analysis as a shared utility**: `analyzeDiffRegions` and the quadrant analysis in `section-comparator.ts` (`analyzeQuadrants`) perform overlapping work. These could be unified into a single `diff-analysis.ts` module that both `fix-loop.ts` and `section-comparator.ts` consume, reducing duplication and ensuring consistent spatial heuristics.
+
+4. **Auto-suggest component file from section ID**: The fix suggestion currently guesses `src/components/{sectionId}.tsx` as the component file. Cross-referencing with the project's actual file listing (via glob) would produce accurate file paths and could even include the relevant line range.
+
+## Discovered during Tier 2 Items 2.8, 2.9, 2.10 (2026-03-30)
+
+### Gaps
+
+1. **SVG sprite external references unresolved**: When `<use href="/sprites.svg#icon-name">` references an external SVG file (not inline on the page), the sprite symbols cannot be resolved without fetching the external file. The asset collector currently only handles inline sprite sheets. Consider adding a fetch step for external sprite URLs discovered via `<use>` `href` attributes.
+
+## Discovered during Tier 2 Items 2.1, 2.2, 2.3, 2.4 (2026-03-30)
+
+### Gaps
+
+1. **Lenis easing function capture is lossy**: The Lenis config capture calls `easing.toString()` on the easing function, which for arrow functions yields the source code string but for native/minified functions yields `"function() { [native code] }"`. A future enhancement could detect common easing curves (e.g., cubic-bezier equivalents) by sampling the function at several points and matching against known curves.
+
+2. **CSS-in-JS extraction regex parser is shallow**: The `parseCssTextToRules` regex parser handles single-level `selector { properties }` blocks but does not parse nested at-rules (`@media`, `@keyframes`, `@container`) within CSS-in-JS output. Styled-components and Emotion can emit media queries and keyframes inside their `<style>` elements. Consider a recursive parsing approach or reusing the CSSOM via `CSSStyleSheet.replace()` for more accurate extraction.
+
+3. **CSS Grid `grid-template-areas` not roundtripped to Tailwind**: `grid-template-areas` is emitted as an inline style since Tailwind has no direct utility class. However, the corresponding `grid-area` on child elements is not captured in the Tailwind mapper either. Adding `grid-area` mapping (e.g., `[grid-area:header]`) would make the grid area system usable in generated components.
+
+4. **Variable font `ital` axis not captured**: The `parseFontFaces` function detects `wght` ranges from `font-weight` and generic axes from `font-variation-settings`, but the `ital` axis (italic) is often expressed via `font-style: oblique 0deg 12deg` rather than `font-variation-settings`. This pattern is not yet parsed.
+
+### Opportunities
+
+1. **Lenis config propagation to GlobalBehavior**: The captured `LenisConfig` could be stored on the `GlobalBehavior` entry (where `type === 'smooth-scroll'`) as its `config` field, making it available to the foundation generator for more accurate Lenis CSS and initialization code in `layout.tsx`.
+
+2. **CSS-in-JS class name deobfuscation**: Styled-components and Emotion generate hashed class names (e.g., `.sc-bdnylx`, `.css-1a2b3c`). Cross-referencing these with the extracted `CSSRuleData` selectors and DOM element class lists could map hashed classes to semantic component roles, improving builder prompt quality.
+
+3. **Grid auto-fit/auto-fill responsive pattern detection**: When `grid-template-columns` uses `repeat(auto-fit, minmax(Xpx, 1fr))`, this is a responsive grid that needs no media queries. Detecting this pattern and generating the appropriate Tailwind arbitrary class (already supported) with a comment explaining the responsive behavior would improve generated code readability.
+
+4. **Variable font `opsz` axis for optical sizing**: Many variable fonts include an `opsz` (optical size) axis. When detected, the generated CSS could include `font-optical-sizing: auto` and appropriate `font-variation-settings` for different text sizes (headings vs body), improving typographic quality.
+
+2. **Container query Tailwind mapping is simplified**: The `container-type` and `container-name` mappings in `component-gen.ts` produce `@container` and `@container/{name}` classes, but Tailwind v4's container query utilities use `@container` as a class on the parent and `@sm:`, `@md:`, `@lg:` as responsive variants on children. The current mapping only handles the container definition side, not the responsive child selectors inside `@container` blocks.
+
+3. **Container query rules not consumed downstream**: The `ContainerQueryData` captured in `StylesheetData.containerQueries` is extracted but not yet consumed by the component generator or builder prompts. A future pass should map these rules to Tailwind container query variant classes (`@sm:`, `@md:`, etc.).
+
+4. **OKLCH/Lab to RGB conversion is approximate**: The `oklchToRgb` and `labToRgb` functions use simplified matrix math. Edge cases with very high chroma values or out-of-gamut colors may produce clamped or slightly inaccurate RGB results. For production-grade fidelity, consider using the `culori` npm package.
+
+5. **Modern color space original values not preserved in globals.css**: The `buildGlobalsCss` function emits color token values as-is (which may already be oklch if the target site used it), but does not emit a paired RGB fallback variable (e.g. `--color-primary-rgb`) for browsers that do not support oklch. Consider adding `@supports` blocks or fallback variables.
+
+### Opportunities
+
+1. **SVG sprite deduplication with inline SVGs**: Some sites use both inline SVGs and `<use>` references to the same icons. Cross-referencing sprite symbol content hashes with inline SVG content hashes could eliminate duplicate icon components in `icons.tsx`.
+
+2. **Container query breakpoint extraction**: When container queries include size conditions like `(min-width: 400px)`, these breakpoints could be collected alongside viewport breakpoints to give the generation pipeline a complete picture of responsive behavior.
+
+3. **HSL/OKLCH color token preservation**: When the target site uses oklch or hsl natively, the design token system could preserve the original color space in `ColorToken.value` and add an `originalColorSpace` field. This would enable the foundation generator to emit tokens in the same color space the designers intended, rather than converting everything to RGB for deduplication.

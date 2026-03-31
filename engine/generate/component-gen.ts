@@ -18,6 +18,7 @@ import type {
   StateSpec,
   StaggerPattern,
 } from '../types/extraction';
+import type { LenisConfig } from '../extract/playwright/animation-detector';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -34,6 +35,8 @@ export interface ComponentGenOptions {
   tokens: DesignTokens;
   /** Stagger patterns detected across the page, used for child animation delays. */
   staggerPatterns?: StaggerPattern[];
+  /** Captured Lenis smooth-scroll configuration, used for Lenis initialization code gen. */
+  lenisConfig?: LenisConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +47,7 @@ export function generateComponent(
   node: ComponentNode,
   options: ComponentGenOptions,
 ): ComponentGenOutput {
-  const content = buildComponentSource(node, options.tokens, options.staggerPatterns ?? []);
+  const content = buildComponentSource(node, options.tokens, options.staggerPatterns ?? [], options.lenisConfig);
   const filePath = join(options.projectDir, node.filePath);
 
   return { filePath, content, componentName: node.name };
@@ -77,10 +80,11 @@ function buildComponentSource(
   node: ComponentNode,
   tokens: DesignTokens,
   staggerPatterns: StaggerPattern[] = [],
+  lenisConfig?: LenisConfig,
 ): string {
   const { spec } = node;
   const lines: string[] = [];
-  const ctx: GenContext = { tokens, indent: 0, needsUseEffect: false, needsUseRef: false, needsUseState: false };
+  const ctx: GenContext = { tokens, indent: 0, needsUseEffect: false, needsUseRef: false, needsUseState: false, lenisConfig };
 
   // Determine hooks needed from animations and stagger patterns
   analyzeHookRequirements(spec, ctx);
@@ -148,6 +152,7 @@ interface GenContext {
   needsUseEffect: boolean;
   needsUseRef: boolean;
   needsUseState: boolean;
+  lenisConfig?: LenisConfig;
 }
 
 function analyzeHookRequirements(spec: ComponentSpec, ctx: GenContext): void {
@@ -388,15 +393,42 @@ function buildAnimationHooks(spec: ComponentSpec, ctx: GenContext): string {
     lines.push('  }, []);');
   }
 
-  // Lenis hook
+  // Lenis hook (Item 2.1: uses captured config when available)
   if (lenisAnims.length > 0) {
+    const lc = ctx.lenisConfig;
+    const hasConfig = lc && Object.keys(lc).length > 0;
+
     lines.push('');
     lines.push('  useEffect(() => {');
     lines.push('    let lenis: InstanceType<typeof import("lenis").default> | null = null;');
     lines.push('');
     lines.push('    async function initLenis() {');
     lines.push('      const Lenis = (await import("lenis")).default;');
-    lines.push('      lenis = new Lenis();');
+
+    if (hasConfig) {
+      const configParts: string[] = [];
+      if (lc.lerp != null) configParts.push(`lerp: ${lc.lerp}`);
+      if (lc.duration != null) configParts.push(`duration: ${lc.duration}`);
+      if (lc.orientation && lc.orientation !== 'vertical') configParts.push(`orientation: "${lc.orientation}"`);
+      if (lc.gestureOrientation && lc.gestureOrientation !== 'vertical') configParts.push(`gestureOrientation: "${lc.gestureOrientation}"`);
+      if (lc.smoothWheel === false) configParts.push('smoothWheel: false');
+      if (lc.wheelMultiplier != null && lc.wheelMultiplier !== 1) configParts.push(`wheelMultiplier: ${lc.wheelMultiplier}`);
+      if (lc.touchMultiplier != null && lc.touchMultiplier !== 2) configParts.push(`touchMultiplier: ${lc.touchMultiplier}`);
+      if (lc.infinite) configParts.push('infinite: true');
+
+      if (configParts.length > 0) {
+        lines.push(`      lenis = new Lenis({`);
+        for (const part of configParts) {
+          lines.push(`        ${part},`);
+        }
+        lines.push('      });');
+      } else {
+        lines.push('      lenis = new Lenis();');
+      }
+    } else {
+      lines.push('      lenis = new Lenis();');
+    }
+
     lines.push('      function raf(time: number) {');
     lines.push('        lenis?.raf(time);');
     lines.push('        requestAnimationFrame(raf);');
@@ -696,6 +728,57 @@ const TAILWIND_MAP: Record<string, (value: string, tokens: DesignTokens) => stri
     };
     return map[n] ?? `z-[${v}]`;
   },
+  // CSS Grid properties (Item 2.3)
+  'grid-template-columns': (v) => {
+    const repeatMatch = v.match(/repeat\((\d+),\s*1fr\)/);
+    if (repeatMatch) return `grid-cols-${repeatMatch[1]}`;
+    if (v === 'none') return null;
+    return `grid-cols-[${v.replace(/\s+/g, '_')}]`;
+  },
+  'grid-template-rows': (v) => {
+    const repeatMatch = v.match(/repeat\((\d+),\s*1fr\)/);
+    if (repeatMatch) return `grid-rows-${repeatMatch[1]}`;
+    if (v === 'none') return null;
+    return `grid-rows-[${v.replace(/\s+/g, '_')}]`;
+  },
+  'grid-auto-flow': (v) => {
+    const map: Record<string, string> = {
+      'row': 'grid-flow-row', 'column': 'grid-flow-col', 'dense': 'grid-flow-dense',
+      'row dense': 'grid-flow-row-dense', 'column dense': 'grid-flow-col-dense',
+    };
+    return map[v] ?? null;
+  },
+  'grid-column': (v) => {
+    if (v === 'span 2 / span 2') return 'col-span-2';
+    if (v === 'span 3 / span 3') return 'col-span-3';
+    if (v === '1 / -1') return 'col-span-full';
+    const spanMatch = v.match(/^span\s+(\d+)\s*\/\s*span\s+\1$/);
+    if (spanMatch) return `col-span-${spanMatch[1]}`;
+    return `col-[${v.replace(/\s+/g, '_')}]`;
+  },
+  'grid-row': (v) => {
+    if (v === 'span 2 / span 2') return 'row-span-2';
+    if (v === 'span 3 / span 3') return 'row-span-3';
+    if (v === '1 / -1') return 'row-span-full';
+    const spanMatch = v.match(/^span\s+(\d+)\s*\/\s*span\s+\1$/);
+    if (spanMatch) return `row-span-${spanMatch[1]}`;
+    return `row-[${v.replace(/\s+/g, '_')}]`;
+  },
+  'place-items': (v) => {
+    const map: Record<string, string> = {
+      center: 'place-items-center', start: 'place-items-start',
+      end: 'place-items-end', stretch: 'place-items-stretch',
+    };
+    return map[v] ?? null;
+  },
+  'place-content': (v) => {
+    const map: Record<string, string> = {
+      center: 'place-content-center', start: 'place-content-start',
+      end: 'place-content-end', stretch: 'place-content-stretch',
+      'space-between': 'place-content-between',
+    };
+    return map[v] ?? null;
+  },
   cursor: (v) => (v === 'pointer' ? 'cursor-pointer' : v === 'default' ? 'cursor-default' : null),
   'pointer-events': (v) => (v === 'none' ? 'pointer-events-none' : null),
   'object-fit': (v) => {
@@ -704,6 +787,16 @@ const TAILWIND_MAP: Record<string, (value: string, tokens: DesignTokens) => stri
       fill: 'object-fill', none: 'object-none',
     };
     return map[v] ?? null;
+  },
+  // Container query properties (Item 2.9)
+  'container-type': (v) => {
+    if (v === 'inline-size') return '@container';
+    if (v === 'size') return '@container/size';
+    return null;
+  },
+  'container-name': (v) => {
+    if (v === 'none' || !v) return null;
+    return `@container/${v}`;
   },
 };
 
@@ -784,6 +877,14 @@ const SKIP_INLINE = new Set([
   'paddingLeft', 'paddingInline', 'paddingBlock', 'marginTop', 'marginRight',
   'marginBottom', 'marginLeft', 'borderRadius', 'zIndex', 'pointerEvents',
   'objectFit',
+  // Grid camelCase duplicates (Item 2.3)
+  'gridTemplateColumns', 'gridTemplateRows', 'gridAutoFlow',
+  'gridColumn', 'gridRow', 'placeItems', 'placeContent',
+]);
+
+/** Properties that must be emitted as inline styles (no Tailwind equivalent). */
+const FORCE_INLINE = new Set([
+  'grid-template-areas', 'gridTemplateAreas',
 ]);
 
 function stylesToTailwind(
@@ -839,6 +940,14 @@ function stylesToInline(
 
   for (const [prop, value] of Object.entries(styles)) {
     const kebab = camelToKebab(prop);
+
+    // Force-inline properties that have no Tailwind equivalent (Item 2.3)
+    if (FORCE_INLINE.has(prop) || FORCE_INLINE.has(kebab)) {
+      const camelProp = kebabToCamel(kebab);
+      result[camelProp] = value;
+      continue;
+    }
+
     if (SKIP_INLINE.has(prop) || SKIP_INLINE.has(kebab)) continue;
 
     // Only include non-trivial properties

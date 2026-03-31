@@ -57,6 +57,17 @@ export interface StylesheetData {
   mediaQueries: MediaQueryData[];
   keyframes: KeyframeData[];
   cssVariables: CSSVariableData[];
+  /** Container queries (`@container`) detected in this stylesheet. */
+  containerQueries?: ContainerQueryData[];
+}
+
+export interface ContainerQueryData {
+  /** Named container (empty string if unnamed). */
+  name: string;
+  /** The condition inside the parentheses, e.g. `min-width: 400px`. */
+  condition: string;
+  /** Rules nested inside the container query block. */
+  rules: CSSRuleData[];
 }
 
 export interface CSSRuleData {
@@ -484,6 +495,8 @@ export interface AssetManifest {
   favicons: AssetEntry[];
   ogImages: AssetEntry[];
   other: AssetEntry[];
+  /** Individual symbols extracted from SVG sprite sheets (`<svg>` with `<symbol>` children). */
+  svgSprites?: SvgSpriteSymbol[];
 }
 
 export interface AssetEntry {
@@ -502,6 +515,21 @@ export interface SvgEntry extends AssetEntry {
   content: string;
   /** PascalCase name suitable for a React component. */
   componentName?: string;
+}
+
+// ---------------------------------------------------------------------------
+// SVG sprite symbols
+// ---------------------------------------------------------------------------
+
+export interface SvgSpriteSymbol {
+  /** The symbol's `id` attribute (e.g. "icon-arrow", "icon-search"). */
+  id: string;
+  /** The symbol's `viewBox` attribute. */
+  viewBox: string;
+  /** Inner HTML of the `<symbol>` element. */
+  content: string;
+  /** PascalCase component name derived from the symbol id. */
+  componentName: string;
 }
 
 // ---------------------------------------------------------------------------

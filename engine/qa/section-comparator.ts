@@ -12,6 +12,8 @@ import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { PNG } from 'pngjs';
 import pixelmatch from 'pixelmatch';
+import { waitForAssetsToLoad, type AssetWaitOptions } from './asset-waiter';
+import { applyContentMasks, type ContentMask } from './content-masker';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -38,6 +40,10 @@ export interface SectionCompareOptions {
   threshold?: number;
   /** pixelmatch color-distance threshold 0-1 (default 0.1). */
   pixelmatchThreshold?: number;
+  /** Options for asset-load waiting before captures. */
+  assetWaitOptions?: AssetWaitOptions;
+  /** Content masks to apply before capturing (hides dynamic content). */
+  contentMasks?: ContentMask;
 }
 
 export interface SectionInfo {
@@ -189,6 +195,7 @@ async function openAndNavigate(
   browser: Browser,
   url: string,
   viewportHeight: number,
+  assetWaitOptions?: AssetWaitOptions,
 ): Promise<Page> {
   const context = await browser.newContext({
     viewport: { width: VIEWPORT_WIDTH, height: viewportHeight },
@@ -198,8 +205,8 @@ async function openAndNavigate(
     waitUntil: 'networkidle',
     timeout: NETWORK_IDLE_TIMEOUT,
   });
-  // Let post-load animations settle
-  await page.waitForTimeout(1000);
+  // Wait for fonts, images, and videos to finish loading
+  await waitForAssetsToLoad(page, assetWaitOptions);
   return page;
 }
 
@@ -236,6 +243,8 @@ export async function compareSections(
     outputDir,
     threshold = DEFAULT_THRESHOLD,
     pixelmatchThreshold = DEFAULT_PIXELMATCH_THRESHOLD,
+    assetWaitOptions,
+    contentMasks,
   } = options;
 
   await mkdir(outputDir, { recursive: true });
@@ -245,8 +254,14 @@ export async function compareSections(
     sections[0]?.viewportHeight ?? VIEWPORT_HEIGHT;
 
   const [originalPage, clonePage] = await Promise.all([
-    openAndNavigate(browser, originalUrl, defaultVpHeight),
-    openAndNavigate(browser, cloneUrl, defaultVpHeight),
+    openAndNavigate(browser, originalUrl, defaultVpHeight, assetWaitOptions),
+    openAndNavigate(browser, cloneUrl, defaultVpHeight, assetWaitOptions),
+  ]);
+
+  // Apply content masks to both pages before capturing any sections
+  const [restoreOriginal, restoreClone] = await Promise.all([
+    applyContentMasks(originalPage, contentMasks),
+    applyContentMasks(clonePage, contentMasks),
   ]);
 
   const results: SectionCompareResult[] = [];
@@ -322,7 +337,10 @@ export async function compareSections(
       });
     }
   } finally {
-    // Close the browser contexts (pages are owned by contexts)
+    // Restore masked content, then close the browser contexts
+    await Promise.all([restoreOriginal(), restoreClone()]).catch(() => {
+      /* best-effort restore before close */
+    });
     await Promise.all([
       originalPage.context().close(),
       clonePage.context().close(),

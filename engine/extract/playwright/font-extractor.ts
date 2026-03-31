@@ -83,6 +83,11 @@ export async function extractFonts(
 // Raw data gathering (single page.evaluate)
 // ---------------------------------------------------------------------------
 
+interface VariableAxisRange {
+  min: number;
+  max: number;
+}
+
 interface RawFontFace {
   family: string;
   weight: string;
@@ -92,6 +97,8 @@ interface RawFontFace {
   unicodeRange: string;
   isVariable: boolean;
   variationSettings: string;
+  /** Parsed variable font axes from weight ranges and font-variation-settings. */
+  variableAxes?: Record<string, VariableAxisRange>;
 }
 
 interface RawFontUsage {
@@ -299,15 +306,48 @@ function parseFontFaces(cssTexts: string[]): RawFontFace[] {
     const rangeMatch = UNICODE_RANGE_RE.exec(block);
     const variationMatch = VARIATION_RE.exec(block);
 
+    // Detect variable font axes (Item 2.4)
+    const weightStr = weightMatch ? weightMatch[1].trim() : '400';
+    const isVar = variationMatch !== null || /\d+\s+\d+/.test(weightStr);
+    let varAxes: Record<string, VariableAxisRange> | undefined;
+
+    if (isVar) {
+      varAxes = {};
+      // Weight range detection (e.g., "100 900")
+      const weightRange = weightStr.match(/^(\d+)\s+(\d+)$/);
+      if (weightRange) {
+        varAxes['wght'] = { min: parseInt(weightRange[1], 10), max: parseInt(weightRange[2], 10) };
+      }
+
+      // Parse font-variation-settings (e.g., "wght" 400, "opsz" 14)
+      if (variationMatch) {
+        const vsText = variationMatch[1].trim();
+        const axisRe = /["'](\w+)["']\s+([\d.]+)/g;
+        let axisMatch: RegExpExecArray | null;
+        while ((axisMatch = axisRe.exec(vsText)) !== null) {
+          const axisTag = axisMatch[1];
+          const axisVal = parseFloat(axisMatch[2]);
+          if (!varAxes[axisTag]) {
+            varAxes[axisTag] = { min: axisVal, max: axisVal };
+          }
+        }
+      }
+
+      if (Object.keys(varAxes).length === 0) {
+        varAxes = undefined;
+      }
+    }
+
     results.push({
       family: familyMatch[1].trim(),
-      weight: weightMatch ? weightMatch[1].trim() : '400',
+      weight: weightStr,
       style: styleMatch ? styleMatch[1].trim() : 'normal',
       url: srcMatch[1],
       format: srcMatch[2] ? normalizeFormat(srcMatch[2]) : inferFormat(srcMatch[1]),
       unicodeRange: rangeMatch ? rangeMatch[1].trim() : '',
-      isVariable: variationMatch !== null || /\d+\s+\d+/.test(weightMatch?.[1] ?? ''),
+      isVariable: isVar,
       variationSettings: variationMatch ? variationMatch[1].trim() : '',
+      variableAxes: varAxes,
     });
   }
 
@@ -462,8 +502,32 @@ function buildFontMap(
       existing.files.push(file);
       if (ff.isVariable) {
         existing.isVariable = true;
+        // Merge variable axes (Item 2.4)
+        if (ff.variableAxes) {
+          if (!existing.variableAxes) {
+            existing.variableAxes = {};
+          }
+          for (const [axis, range] of Object.entries(ff.variableAxes)) {
+            const existingAxis = existing.variableAxes[axis];
+            if (existingAxis) {
+              existingAxis.min = Math.min(existingAxis.min, range.min);
+              existingAxis.max = Math.max(existingAxis.max, range.max);
+            } else {
+              existing.variableAxes[axis] = { ...range, default: range.min };
+            }
+          }
+        }
       }
     } else {
+      // Build variableAxes with default values for FontSpec shape
+      let specAxes: Record<string, { min: number; max: number; default: number }> | undefined;
+      if (ff.variableAxes) {
+        specAxes = {};
+        for (const [axis, range] of Object.entries(ff.variableAxes)) {
+          specAxes[axis] = { min: range.min, max: range.max, default: range.min };
+        }
+      }
+
       map.set(key, {
         family: ff.family,
         weights: [...weights],
@@ -473,6 +537,7 @@ function buildFontMap(
         fallbacks: [],
         usedIn: [],
         isVariable: ff.isVariable,
+        variableAxes: specAxes,
       });
     }
   }

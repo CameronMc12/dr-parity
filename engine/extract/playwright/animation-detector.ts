@@ -30,12 +30,27 @@ import type {
 // Public types
 // ---------------------------------------------------------------------------
 
+/** Captured Lenis smooth-scroll instance configuration. */
+export interface LenisConfig {
+  lerp?: number;
+  duration?: number;
+  easing?: string | null;
+  orientation?: string;
+  gestureOrientation?: string;
+  smoothWheel?: boolean;
+  wheelMultiplier?: number;
+  touchMultiplier?: number;
+  infinite?: boolean;
+}
+
 export interface AnimationDetectionResult {
   animations: AnimationSpec[];
   libraries: LibraryInfo[];
   globalScrollBehavior: "native" | "lenis" | "locomotive" | "custom";
   /** Detected stagger patterns among sibling elements. */
   staggerPatterns: StaggerPattern[];
+  /** Captured Lenis smooth-scroll configuration, if detected. */
+  lenisConfig?: LenisConfig;
   totalDetected: number;
   detectionDuration: number;
 }
@@ -416,12 +431,34 @@ const runtimeMonitoringScript = `(() => {
   window.IntersectionObserver.prototype = _PrevIO.prototype;
   Object.defineProperty(window.IntersectionObserver, "name", { value: "IntersectionObserver" });
 
+  // ----- Lenis smooth scroll config capture (Item 2.1) -----
+  var __drp_lenisConfig = null;
+  function __drpCaptureLenis() {
+    var lenis = window.lenis || window.__lenis;
+    if (lenis && lenis.options) {
+      __drp_lenisConfig = {
+        lerp: lenis.options.lerp,
+        duration: lenis.options.duration,
+        easing: lenis.options.easing && lenis.options.easing.toString ? lenis.options.easing.toString() : null,
+        orientation: lenis.options.orientation || "vertical",
+        gestureOrientation: lenis.options.gestureOrientation || "vertical",
+        smoothWheel: lenis.options.smoothWheel !== false,
+        wheelMultiplier: lenis.options.wheelMultiplier || 1,
+        touchMultiplier: lenis.options.touchMultiplier || 2,
+        infinite: lenis.options.infinite || false
+      };
+    }
+  }
+  setTimeout(__drpCaptureLenis, 1000);
+  setTimeout(__drpCaptureLenis, 3000);
+
   // ----- Public accessors -----
   window.__drp_getObserverData   = () => JSON.stringify(__drp_observers);
   window.__drp_getWebAnimations  = () => JSON.stringify(__drp_webAnims);
   window.__drp_getScrollListeners = () => JSON.stringify(__drp_scrollLsns);
   window.__drp_getScrollTriggers = () => JSON.stringify(__drp_scrollTriggers);
   window.__drp_getIOEffects      = () => JSON.stringify(__drp_ioEffects);
+  window.__drp_getLenisConfig    = () => JSON.stringify(__drp_lenisConfig || {});
 })();`;
 
 // ---------------------------------------------------------------------------
@@ -457,6 +494,9 @@ export async function detectAnimations(
   // --- Layer 2: Collect runtime monitoring data ---
   const [observerData, webAnimData, scrollListenerData, scrollTriggerData, ioEffects] =
     await collectRuntimeData(page);
+
+  // --- Lenis config capture (Item 2.1) ---
+  const lenisConfig = await collectLenisConfig(page);
 
   // --- Layer 3: Active probing ---
   const scrollAnimations = opts.scrollProbe
@@ -496,6 +536,7 @@ export async function detectAnimations(
     libraries,
     globalScrollBehavior: scrollBehavior,
     staggerPatterns,
+    lenisConfig: Object.keys(lenisConfig).length > 0 ? lenisConfig : undefined,
     totalDetected: deduped.length,
     detectionDuration: Date.now() - start,
   };
@@ -789,6 +830,18 @@ async function collectRuntimeData(
     safeJsonParse<ScrollTriggerRecord[]>(rawScrollTriggers, []),
     safeJsonParse<IOEffectRecord[]>(rawIOEffects, []),
   ];
+}
+
+// ---------------------------------------------------------------------------
+// Lenis config collector (Item 2.1)
+// ---------------------------------------------------------------------------
+
+async function collectLenisConfig(page: Page): Promise<LenisConfig> {
+  const raw = await page.evaluate(() => {
+    const fn = (window as unknown as Record<string, unknown>).__drp_getLenisConfig as (() => string) | undefined;
+    return fn ? fn() : "{}";
+  });
+  return safeJsonParse<LenisConfig>(raw, {});
 }
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,8 @@
 import type { Browser, Page } from 'playwright';
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
+import { waitForAssetsToLoad, type AssetWaitOptions } from './asset-waiter';
+import { applyContentMasks, type ContentMask } from './content-masker';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -30,6 +32,10 @@ export interface ScreenshotOptions {
   outputDir: string;
   viewports?: ViewportConfig[];
   fullPage?: boolean;
+  /** Options for asset-load waiting before each capture. */
+  assetWaitOptions?: AssetWaitOptions;
+  /** Content masks to apply before capturing (hides dynamic content). */
+  contentMasks?: ContentMask;
 }
 
 export interface ViewportConfig {
@@ -64,6 +70,8 @@ async function takeScreenshot(
   viewport: ViewportConfig,
   outputPath: string,
   fullPage: boolean,
+  assetWaitOptions?: AssetWaitOptions,
+  contentMasks?: ContentMask,
 ): Promise<string> {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
@@ -76,10 +84,17 @@ async function takeScreenshot(
       timeout: NETWORK_IDLE_TIMEOUT,
     });
 
-    // Allow any post-load animations to settle
-    await page.waitForTimeout(1000);
+    // Wait for fonts, images, and videos to finish loading
+    await waitForAssetsToLoad(page, assetWaitOptions);
 
-    await page.screenshot({ path: outputPath, fullPage });
+    // Mask dynamic content (timestamps, cookie banners, etc.)
+    const restoreMasks = await applyContentMasks(page, contentMasks);
+
+    try {
+      await page.screenshot({ path: outputPath, fullPage });
+    } finally {
+      await restoreMasks();
+    }
   } finally {
     await context.close();
   }
@@ -107,6 +122,8 @@ export async function captureScreenshots(
     outputDir,
     viewports = DEFAULT_VIEWPORTS,
     fullPage = true,
+    assetWaitOptions,
+    contentMasks,
   } = options;
 
   await mkdir(outputDir, { recursive: true });
@@ -121,8 +138,8 @@ export async function captureScreenshots(
 
     // Capture original and clone in parallel for the same viewport
     const [origResult, cloneResult] = await Promise.all([
-      takeScreenshot(browser, originalUrl, vp, originalPath, fullPage),
-      takeScreenshot(browser, cloneUrl, vp, clonePath, fullPage),
+      takeScreenshot(browser, originalUrl, vp, originalPath, fullPage, assetWaitOptions, contentMasks),
+      takeScreenshot(browser, cloneUrl, vp, clonePath, fullPage, assetWaitOptions, contentMasks),
     ]);
 
     original[vp.name] = origResult;

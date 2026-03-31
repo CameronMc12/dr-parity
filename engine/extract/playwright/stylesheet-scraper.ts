@@ -18,6 +18,7 @@ import type {
   KeyframeData,
   CSSVariableData,
   CSSVariableReference,
+  ContainerQueryData,
 } from '../../types/extraction';
 
 // Re-export types for convenience
@@ -29,6 +30,7 @@ export type {
   KeyframeData,
   CSSVariableData,
   CSSVariableReference,
+  ContainerQueryData,
 };
 
 // ---------------------------------------------------------------------------
@@ -157,12 +159,14 @@ export async function scrapeStylesheets(
       keyframes: Array<{ name: string; frames: Array<{ offset: string; properties: Record<string, string> }> }>;
       cssVariables: Array<{ name: string; value: string; scope: string }>;
       variableReferences: Array<{ selector: string; property: string; variable: string; resolvedValue: string }>;
+      containerQueries: Array<{ name: string; condition: string; rules: Array<{ selector: string; properties: Record<string, string> }> }>;
     } => {
       const rules: Array<{ selector: string; properties: Record<string, string> }> = [];
       const mediaQueries: Array<{ query: string; rules: Array<{ selector: string; properties: Record<string, string> }> }> = [];
       const keyframes: Array<{ name: string; frames: Array<{ offset: string; properties: Record<string, string> }> }> = [];
       const cssVariables: Array<{ name: string; value: string; scope: string }> = [];
       const variableReferences: Array<{ selector: string; property: string; variable: string; resolvedValue: string }> = [];
+      const containerQueries: Array<{ name: string; condition: string; rules: Array<{ selector: string; properties: Record<string, string> }> }> = [];
 
       try {
         const cssRules = Array.from(sheet.cssRules);
@@ -183,13 +187,34 @@ export async function scrapeStylesheets(
             mediaQueries.push(result.mediaData);
             cssVariables.push(...result.variables);
             variableReferences.push(...result.variableRefs);
+          } else if (rule.cssText && rule.cssText.includes('@container')) {
+            // Detect container queries — CSSContainerRule may not be typed
+            // in all environments, so we fall back to cssText parsing.
+            const containerMatch = rule.cssText.match(/@container\s*(\w+)?\s*\(([^)]+)\)/);
+            if (containerMatch) {
+              const nestedRules: Array<{ selector: string; properties: Record<string, string> }> = [];
+              // Extract nested style rules if the rule has cssRules
+              const groupRule = rule as CSSRule & { cssRules?: CSSRuleList };
+              if (groupRule.cssRules) {
+                for (const nested of Array.from(groupRule.cssRules)) {
+                  if (nested instanceof CSSStyleRule) {
+                    nestedRules.push(processStyleRule(nested).ruleData);
+                  }
+                }
+              }
+              containerQueries.push({
+                name: containerMatch[1] || '',
+                condition: containerMatch[2],
+                rules: nestedRules,
+              });
+            }
           }
         }
       } catch {
         // Cross-origin — rules inaccessible via CSSOM
       }
 
-      return { url, rules, mediaQueries, keyframes, cssVariables, variableReferences };
+      return { url, rules, mediaQueries, keyframes, cssVariables, variableReferences, containerQueries };
     };
 
     // ----- Main extraction logic -----
@@ -233,6 +258,17 @@ export async function scrapeStylesheets(
     return results;
   });
 
+  // --- CSS-in-JS extraction (Item 2.2) ---
+  const cssInJsSheets = await extractCSSinJS(page);
+  for (const sheet of cssInJsSheets) {
+    // Conform to the same shape as processSheet() results
+    stylesheets.push({
+      ...sheet,
+      variableReferences: [],
+      containerQueries: sheet.containerQueries ?? [],
+    });
+  }
+
   // Compute totals and aggregate variable references
   let totalRules = 0;
   let totalKeyframes = 0;
@@ -262,4 +298,122 @@ export async function scrapeStylesheets(
     totalVariables,
     variableReferences: allVariableReferences,
   };
+}
+
+// ---------------------------------------------------------------------------
+// CSS-in-JS extraction (Item 2.2)
+// ---------------------------------------------------------------------------
+
+const CSS_RULE_RE = /([^{}]+)\{([^}]+)\}/g;
+
+function parseCssTextToRules(
+  cssText: string,
+): CSSRuleData[] {
+  const rules: CSSRuleData[] = [];
+  let match: RegExpExecArray | null;
+  CSS_RULE_RE.lastIndex = 0;
+
+  while ((match = CSS_RULE_RE.exec(cssText)) !== null) {
+    const selector = match[1].trim();
+    const body = match[2].trim();
+
+    // Skip keyframe inner rules and at-rules
+    if (
+      selector.startsWith('@') ||
+      selector.includes('%') ||
+      selector === 'from' ||
+      selector === 'to'
+    ) {
+      continue;
+    }
+
+    const properties: Record<string, string> = {};
+    for (const decl of body.split(';')) {
+      const colonIdx = decl.indexOf(':');
+      if (colonIdx === -1) continue;
+      const prop = decl.slice(0, colonIdx).trim();
+      const val = decl.slice(colonIdx + 1).trim();
+      if (prop && val) {
+        properties[prop] = val;
+      }
+    }
+
+    if (Object.keys(properties).length > 0) {
+      rules.push({ selector, properties });
+    }
+  }
+
+  return rules;
+}
+
+/**
+ * Detect and extract CSS-in-JS styles from runtime-injected `<style>` elements
+ * (styled-components, Emotion, and generic runtime styles).
+ */
+async function extractCSSinJS(page: Page): Promise<StylesheetData[]> {
+  const rawResults = await page.evaluate(() => {
+    const results: Array<{ type: string; css: string }> = [];
+
+    // Styled-components
+    document.querySelectorAll('style[data-styled]').forEach((el) => {
+      results.push({ type: 'styled-components', css: el.textContent || '' });
+    });
+
+    // Emotion
+    document.querySelectorAll('style[data-emotion]').forEach((el) => {
+      results.push({ type: 'emotion', css: el.textContent || '' });
+    });
+
+    // Generic runtime-injected styles (no href, not already captured above)
+    const capturedCss = new Set(results.map((r) => r.css));
+    document
+      .querySelectorAll('style:not([data-styled]):not([data-emotion])')
+      .forEach((el) => {
+        const text = el.textContent;
+        if (text && text.length > 10 && !capturedCss.has(text)) {
+          // Exclude styles that are likely from build tools (Tailwind, etc.)
+          // by checking for runtime-style markers
+          const hasRuntimeMarker =
+            !el.hasAttribute('data-precedence') && // Next.js built-in
+            !el.hasAttribute('data-next-font');
+          if (hasRuntimeMarker) {
+            results.push({ type: 'runtime', css: text });
+            capturedCss.add(text);
+          }
+        }
+      });
+
+    return results;
+  });
+
+  // Parse each CSS-in-JS source into StylesheetData
+  const sheets: StylesheetData[] = [];
+  for (const entry of rawResults) {
+    const rules = parseCssTextToRules(entry.css);
+    if (rules.length > 0) {
+      // Extract CSS variables from rules
+      const cssVariables: CSSVariableData[] = [];
+      for (const rule of rules) {
+        for (const [prop, val] of Object.entries(rule.properties)) {
+          if (prop.startsWith('--')) {
+            cssVariables.push({
+              name: prop,
+              value: val,
+              scope: rule.selector,
+            });
+          }
+        }
+      }
+
+      sheets.push({
+        url: null, // CSS-in-JS has no URL
+        rules,
+        mediaQueries: [],
+        keyframes: [],
+        cssVariables,
+      });
+    }
+  }
+
+  return sheets;
 }
