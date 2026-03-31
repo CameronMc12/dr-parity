@@ -255,3 +255,37 @@ Gaps and opportunities discovered during implementation of the roadmap features.
 8. **DOM comparator semantic-role awareness (4.10)**: The current tree diff is purely structural (tag + text). Extending it to compare ARIA roles and landmark elements (`nav`, `main`, `footer`, `aside`) would catch cases where the clone uses `<div>` where the original uses semantic HTML, which affects accessibility but not visual output.
 
 9. **Lottie component code generation with actual asset paths (4.7)**: The Lottie hook in component-gen.ts currently emits a placeholder TODO for the animation JSON import. Once `LottieEntry.localPath` is populated, the generator could emit `import animationData from "../../public/animations/foo.json"` and pass it directly to the `<LottiePlayer>` component, eliminating the manual step.
+
+## Discovered during Tier 5 Items 5.1–5.9 (2026-03-30)
+
+### Gaps
+
+1. **@starting-style detection depends on CSSOM `cssText` containing the literal string (5.1)**: If the browser normalizes or strips `@starting-style` blocks when exposing rules via `CSSRule.cssText`, the regex-based detection will miss them. A more robust approach would check for `CSSStartingStyleRule` constructor once browsers expose it as a distinct rule type (similar to how `CSSKeyframesRule` is exposed).
+
+2. **View Transition API detection is computed-style-only (5.1)**: Elements with `view-transition-name` set via JavaScript (e.g., `el.style.viewTransitionName = 'hero'`) are detected, but the detection does not capture the `@view-transition` at-rule or `document.startViewTransition()` calls. Intercepting the latter via a runtime shim (like the existing IO/animate shims) would capture SPA navigation transitions.
+
+3. **FontFace API entries lack URLs (5.2)**: Fonts loaded programmatically via `new FontFace(family, source)` expose the family/weight/style but the `source` (ArrayBuffer or URL) is not easily serializable. These entries have empty `url` fields and cannot be downloaded. Consider intercepting the `FontFace` constructor via `addInitScript` to capture the source URL before it's consumed.
+
+4. **Typekit CSS may be geoblocked or rate-limited (5.3)**: Adobe Fonts/Typekit CSS endpoints may return different content based on the requesting domain's Typekit project settings. The fetched CSS may contain only a subset of the fonts actually used on the page. If the response is empty or blocked, the fallback is the `@font-face` rules already captured from the page's stylesheets.
+
+5. **Custom cursor images are downloaded to `public/images/` not `public/images/cursors/` (5.4)**: The current implementation adds cursor image URLs to the general images download queue. A dedicated `cursors` category with its own output directory would improve organization and make it easier to generate the corresponding `cursor: url(...)` CSS in `globals.css`.
+
+6. **Weighted pixel diff region boundaries are fixed (5.6)**: The header height (80px) and footer height (200px) are hardcoded constants. Sites with taller sticky headers or minimal footers will get inaccurate region breakdowns. These should be configurable via `DiffOptions` or auto-detected from the page's sticky-positioned elements.
+
+7. **Interaction testing does not verify pixel-level match (5.8)**: The `testInteractions` function captures before/after screenshots but sets `match: true` unconditionally. Integrating `pixelmatch` to produce an actual diff score per interaction would make the results actionable.
+
+8. **Section alignment verification fallback selectors are brittle (5.9)**: The function falls back to `section:nth-of-type(N+1)` when `data-section-id` is not found. On pages where `<section>` elements are not used (using `<div>` instead), this will fail. Consider also trying `[id]` elements or the section's heading text content as a fallback.
+
+### Opportunities
+
+1. **@starting-style could inform entry animation code generation**: When `@starting-style` is detected, the component generator could emit the property in a `@starting-style` block within a `<style>` tag or a Tailwind `@layer` rule, rather than falling back to JS-based IntersectionObserver entry animations. This is more performant and CSS-native.
+
+2. **View Transition integration with multi-page extraction**: When multiple pages share `view-transition-name` values on corresponding elements (e.g., product cards), the generation pipeline could produce a Next.js `layout.tsx` with `ViewTransition` support for cross-page animated navigation.
+
+3. **FontFace API constructor interception**: A runtime shim similar to the `Element.prototype.animate` wrapper could intercept `new FontFace(family, source, descriptors)` calls, capturing the source URL and descriptors. This would complement the existing `document.fonts.forEach` detection with richer metadata.
+
+4. **Weighted diff score in fix-loop prioritization**: The `weightedScore` from `WeightedDiffResult` could be used by the fix-loop to prioritize fixing above-fold issues first, since users see those immediately. The current fix-loop uses flat `percentDifferent` without spatial weighting.
+
+5. **Scroll frame diff for animation fidelity scoring**: The `captureScrollFrames` function could be paired with `compareScreenshots` to produce a per-frame diff score, yielding an "animation fidelity" metric. Averaging the per-frame scores would give a single number for how well the clone reproduces scroll-driven animations.
+
+6. **Interaction test results could feed back into the fix-loop**: When `testInteractions` detects visual differences after clicking, the results could generate `FixSuggestion` entries targeting the specific component and interaction handler, enabling automated fix attempts for broken hover/click states.

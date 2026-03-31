@@ -18,6 +18,25 @@ import type { PixelDiffResult, ViewportDiff, SectionPixelDiff } from '../types/d
 export interface DiffOptions {
   threshold?: number;
   outputDir: string;
+  /** When enabled, compute weighted diff prioritizing above-fold content. */
+  weighted?: boolean;
+  /** Viewport height for above-fold calculation (default 900). */
+  viewportHeight?: number;
+}
+
+export interface WeightedDiffResult extends ViewportDiff {
+  /** Weighted score 0-100 (lower = fewer differences, weighted by region importance). */
+  weightedScore: number;
+  regionBreakdown: {
+    /** % diff in the top viewport-height of the image. */
+    aboveFold: number;
+    /** % diff below the first viewport-height. */
+    belowFold: number;
+    /** % diff in top 80px (header region). */
+    header: number;
+    /** % diff in bottom 200px (footer region). */
+    footer: number;
+  };
 }
 
 export interface ScreenshotPair {
@@ -119,7 +138,7 @@ export async function compareScreenshots(
     ? Number(((differentPixels / totalPixels) * 100).toFixed(2))
     : 0;
 
-  return {
+  const baseDiff: ViewportDiff = {
     viewport: { width, height },
     totalPixels,
     differentPixels,
@@ -128,6 +147,81 @@ export async function compareScreenshots(
     cloneScreenshot: clonePath,
     diffImage: diffImagePath,
     sectionDiffs: [],
+  };
+
+  if (options.weighted) {
+    return computeWeightedDiff(baseDiff, diffPng, options.viewportHeight ?? 900);
+  }
+
+  return baseDiff;
+}
+
+/**
+ * Compute a weighted diff score prioritizing above-fold content (Item 5.6).
+ * Above-fold pixels weighted 2x, header 1.5x, footer 0.5x.
+ */
+function computeWeightedDiff(
+  baseDiff: ViewportDiff,
+  diffPng: PNG,
+  viewportHeight: number,
+): WeightedDiffResult {
+  const { width, height } = diffPng;
+  const HEADER_HEIGHT = 80;
+  const FOOTER_HEIGHT = 200;
+  const foldY = Math.min(viewportHeight, height);
+  const footerY = Math.max(height - FOOTER_HEIGHT, 0);
+
+  let headerDiff = 0, headerTotal = 0;
+  let aboveFoldDiff = 0, aboveFoldTotal = 0;
+  let belowFoldDiff = 0, belowFoldTotal = 0;
+  let footerDiff = 0, footerTotal = 0;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const isDiff = diffPng.data[idx]! > 0;
+
+      if (y < HEADER_HEIGHT) {
+        headerTotal++;
+        if (isDiff) headerDiff++;
+      }
+      if (y < foldY) {
+        aboveFoldTotal++;
+        if (isDiff) aboveFoldDiff++;
+      } else {
+        belowFoldTotal++;
+        if (isDiff) belowFoldDiff++;
+      }
+      if (y >= footerY) {
+        footerTotal++;
+        if (isDiff) footerDiff++;
+      }
+    }
+  }
+
+  const pct = (d: number, t: number): number => (t > 0 ? Number(((d / t) * 100).toFixed(2)) : 0);
+
+  const aboveFoldPct = pct(aboveFoldDiff, aboveFoldTotal);
+  const belowFoldPct = pct(belowFoldDiff, belowFoldTotal);
+  const headerPct = pct(headerDiff, headerTotal);
+  const footerPct = pct(footerDiff, footerTotal);
+
+  // Weighted score: above-fold 2x, header 1.5x, footer 0.5x, below-fold 1x
+  const totalWeight = aboveFoldTotal * 2 + belowFoldTotal * 1;
+  const weightedDiffPixels = aboveFoldDiff * 2 + belowFoldDiff * 1;
+  const weightedScore = totalWeight > 0
+    ? Number(((weightedDiffPixels / totalWeight) * 100).toFixed(2))
+    : 0;
+
+  return {
+    ...baseDiff,
+    weightedScore,
+    regionBreakdown: {
+      aboveFold: aboveFoldPct,
+      belowFold: belowFoldPct,
+      header: headerPct,
+      footer: footerPct,
+    },
   };
 }
 

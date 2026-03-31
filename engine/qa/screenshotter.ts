@@ -103,6 +103,41 @@ async function takeScreenshot(
 }
 
 // ---------------------------------------------------------------------------
+// Scroll frame capture (Item 5.7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Capture multiple frames of a page at evenly-spaced scroll positions.
+ * Useful for comparing scroll animation progression between original and clone.
+ */
+export async function captureScrollFrames(
+  page: Page,
+  outputDir: string,
+  frameCount?: number,
+): Promise<string[]> {
+  await mkdir(outputDir, { recursive: true });
+
+  const totalHeight = await page.evaluate(
+    () => document.documentElement.scrollHeight - window.innerHeight,
+  );
+  const frames = frameCount ?? 5;
+  const paths: string[] = [];
+
+  for (let i = 0; i < frames; i++) {
+    const scrollY = frames > 1
+      ? Math.round((totalHeight * i) / (frames - 1))
+      : 0;
+    await page.evaluate((y) => window.scrollTo(0, y), scrollY);
+    await page.waitForTimeout(200);
+    const path = join(outputDir, `frame-${String(i).padStart(2, '0')}.png`);
+    await page.screenshot({ path });
+    paths.push(path);
+  }
+
+  return paths;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 

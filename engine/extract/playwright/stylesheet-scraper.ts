@@ -187,6 +187,26 @@ export async function scrapeStylesheets(
             mediaQueries.push(result.mediaData);
             cssVariables.push(...result.variables);
             variableReferences.push(...result.variableRefs);
+          } else if (rule.cssText && rule.cssText.includes('@starting-style')) {
+            // Detect @starting-style blocks — store as a special rule
+            const selectorMatch = rule.cssText.match(/^([^{]+)\{/);
+            const startingMatch = rule.cssText.match(/@starting-style\s*\{([^}]+)\}/);
+            if (selectorMatch && startingMatch) {
+              const startingProps: Record<string, string> = {};
+              for (const decl of startingMatch[1].split(';')) {
+                const colonIdx = decl.indexOf(':');
+                if (colonIdx === -1) continue;
+                const prop = decl.slice(0, colonIdx).trim();
+                const val = decl.slice(colonIdx + 1).trim();
+                if (prop && val) startingProps[prop] = val;
+              }
+              if (Object.keys(startingProps).length > 0) {
+                rules.push({
+                  selector: `@starting-style(${selectorMatch[1].trim()})`,
+                  properties: startingProps,
+                });
+              }
+            }
           } else if (rule.cssText && rule.cssText.includes('@container')) {
             // Detect container queries — CSSContainerRule may not be typed
             // in all environments, so we fall back to cssText parsing.

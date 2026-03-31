@@ -902,6 +902,22 @@ const TAILWIND_MAP: Record<string, (value: string, tokens: DesignTokens) => stri
     if (v === 'none' || !v) return null;
     return `@container/${v}`;
   },
+  // Modern CSS properties (Item 5.5)
+  'aspect-ratio': (v) => {
+    const map: Record<string, string> = {
+      '16 / 9': 'aspect-video', '1 / 1': 'aspect-square',
+      '4 / 3': 'aspect-[4/3]', '3 / 2': 'aspect-[3/2]',
+      '21 / 9': 'aspect-[21/9]', 'auto': 'aspect-auto',
+    };
+    return map[v] ?? `aspect-[${v.replace(/\s+/g, '')}]`;
+  },
+  'text-wrap': (v) => {
+    const map: Record<string, string> = {
+      'balance': 'text-balance', 'pretty': 'text-pretty',
+      'wrap': 'text-wrap', 'nowrap': 'text-nowrap', 'stable': 'text-stable',
+    };
+    return map[v] ?? null;
+  },
 };
 
 // ---------------------------------------------------------------------------

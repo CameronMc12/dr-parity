@@ -46,11 +46,17 @@ export async function extractFonts(
   // Step 1: Gather raw font data from the page in one pass.
   const rawData = await gatherFontData(page);
 
+  // Step 1b: Detect programmatically loaded fonts via FontFace API.
+  const fontFaceApiEntries = await detectFontFaceApiLoaded(page);
+
   // Step 2: Fetch Google Fonts CSS (if any) for WOFF2 URLs.
   const googleFontFaces = await fetchGoogleFontsCss(page, rawData.googleFontsUrls);
 
-  // Step 3: Merge all @font-face declarations.
-  const allFontFaces = [...rawData.fontFaces, ...googleFontFaces];
+  // Step 2b: Fetch Typekit/Adobe Fonts CSS (if any kit IDs detected).
+  const typekitFontFaces = await fetchTypekitFontsCss(page, rawData.typekitIds);
+
+  // Step 3: Merge all @font-face declarations + FontFace API entries (deduplicated).
+  const allFontFaces = deduplicateFontFaces([...rawData.fontFaces, ...googleFontFaces, ...typekitFontFaces, ...fontFaceApiEntries]);
 
   // Step 4: Build FontSpec records grouped by family.
   const fontMap = buildFontMap(allFontFaces, rawData.fontUsage, rawData.systemFontFamilies);
@@ -408,6 +414,41 @@ async function fetchGoogleFontsCss(
   }
 
   // Tag all as Google source — handled in buildFontMap.
+  return allFaces;
+}
+
+// ---------------------------------------------------------------------------
+// Typekit / Adobe Fonts CSS fetcher (Item 5.3)
+// ---------------------------------------------------------------------------
+
+async function fetchTypekitFontsCss(
+  page: Page,
+  kitIds: string[],
+): Promise<RawFontFace[]> {
+  if (kitIds.length === 0) return [];
+
+  const allFaces: RawFontFace[] = [];
+  const seenKits = new Set<string>();
+
+  for (const kitId of kitIds) {
+    if (seenKits.has(kitId)) continue;
+    seenKits.add(kitId);
+
+    try {
+      const response = await page.context().request.get(
+        `https://use.typekit.net/${kitId}.css`,
+        { headers: { 'User-Agent': WOFF2_USER_AGENT } },
+      );
+      if (response.ok()) {
+        const cssText = await response.text();
+        const faces = parseFontFaces([cssText]);
+        allFaces.push(...faces);
+      }
+    } catch {
+      // Typekit may block automated access — silently skip.
+    }
+  }
+
   return allFaces;
 }
 
@@ -780,6 +821,65 @@ async function extractMetricsViaBrowser(
       };
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// FontFace API detection (Item 5.2)
+// ---------------------------------------------------------------------------
+
+async function detectFontFaceApiLoaded(page: Page): Promise<RawFontFace[]> {
+  const entries = await page.evaluate(() => {
+    const results: Array<{
+      family: string;
+      style: string;
+      weight: string;
+      status: string;
+    }> = [];
+
+    if (document.fonts) {
+      document.fonts.forEach((font) => {
+        results.push({
+          family: font.family.replace(/^["']|["']$/g, ''),
+          style: font.style || 'normal',
+          weight: font.weight || '400',
+          status: font.status,
+        });
+      });
+    }
+    return results;
+  });
+
+  // Convert FontFace API entries to RawFontFace (no URL available — they're JS-loaded)
+  return entries
+    .filter((e) => e.status === 'loaded')
+    .map((e) => ({
+      family: e.family,
+      weight: e.weight,
+      style: e.style,
+      url: '',
+      format: '' as string,
+      unicodeRange: '',
+      isVariable: /\d+\s+\d+/.test(e.weight),
+      variationSettings: '',
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Font face deduplication (Item 5.2)
+// ---------------------------------------------------------------------------
+
+function deduplicateFontFaces(faces: RawFontFace[]): RawFontFace[] {
+  const seen = new Set<string>();
+  const result: RawFontFace[] = [];
+
+  for (const face of faces) {
+    const key = `${face.family.toLowerCase()}|${face.weight}|${face.style}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(face);
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------

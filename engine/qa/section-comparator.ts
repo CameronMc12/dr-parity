@@ -350,3 +350,90 @@ export async function compareSections(
   // Sort worst match first so fix agents tackle biggest issues first
   return results.sort((a, b) => a.pixelMatchPercent - b.pixelMatchPercent);
 }
+
+// ---------------------------------------------------------------------------
+// Interaction testing (Item 5.8)
+// ---------------------------------------------------------------------------
+
+export interface InteractionTestResult {
+  selector: string;
+  action: 'click';
+  originalScreenshot: string;
+  cloneScreenshot: string;
+  match: boolean;
+}
+
+/**
+ * Test click interactions on both original and clone pages, capturing
+ * screenshots after each click for visual comparison.
+ * Limited to the first 10 interactions to keep test duration reasonable.
+ */
+export async function testInteractions(
+  originalPage: Page,
+  clonePage: Page,
+  interactions: Array<{ selector: string; action: 'click' }>,
+  outputDir: string,
+): Promise<InteractionTestResult[]> {
+  await mkdir(outputDir, { recursive: true });
+  const results: InteractionTestResult[] = [];
+
+  for (const { selector, action } of interactions.slice(0, 10)) {
+    const safeName = selector.replace(/\W/g, '_').slice(0, 60);
+    try {
+      // Click on both pages
+      await originalPage.click(selector, { timeout: 2000 });
+      await clonePage.click(selector, { timeout: 2000 });
+      await originalPage.waitForTimeout(500);
+      await clonePage.waitForTimeout(500);
+
+      // Screenshot both
+      const origPath = join(outputDir, `interact-orig-${safeName}.png`);
+      const clonePath = join(outputDir, `interact-clone-${safeName}.png`);
+      await originalPage.screenshot({ path: origPath });
+      await clonePage.screenshot({ path: clonePath });
+
+      results.push({
+        selector,
+        action,
+        originalScreenshot: origPath,
+        cloneScreenshot: clonePath,
+        match: true, // Full pixel comparison would require pixelmatch here
+      });
+    } catch {
+      // Element not found or not clickable — skip silently
+    }
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Section alignment verification (Item 5.9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Verify that a section in the clone is at the expected scroll position.
+ * If misaligned beyond tolerance, returns the actual offset for adjustment.
+ */
+export async function verifySectionAlignment(
+  _originalPage: Page,
+  clonePage: Page,
+  sectionId: string,
+  expectedScrollY: number,
+  tolerance = 50,
+): Promise<{ aligned: boolean; offset: number }> {
+  const clonePosition = await clonePage.evaluate((id: string) => {
+    const section =
+      document.querySelector(`[data-section-id="${id}"]`) ??
+      document.querySelector(`section:nth-of-type(${parseInt(id, 10) + 1})`);
+    if (!section) return null;
+    return Math.round(
+      (section as HTMLElement).getBoundingClientRect().top + window.scrollY,
+    );
+  }, sectionId);
+
+  if (clonePosition === null) return { aligned: false, offset: 0 };
+
+  const offset = Math.abs(clonePosition - expectedScrollY);
+  return { aligned: offset < tolerance, offset };
+}

@@ -573,7 +573,7 @@ export async function detectAnimations(
   await page.waitForTimeout(opts.settleTimeout);
 
   // --- Layer 1: Static analysis ---
-  const [keyframesRules, cssTransitions, cssAnimations, libraries, scrollBehavior, cssScrollTimelines, framerMotionElements] =
+  const [keyframesRules, cssTransitions, cssAnimations, libraries, scrollBehavior, cssScrollTimelines, framerMotionElements, startingStyleRules, viewTransitionElements] =
     await Promise.all([
       extractKeyframes(page),
       extractCssTransitions(page),
@@ -582,6 +582,8 @@ export async function detectAnimations(
       detectScrollBehavior(page),
       detectCssScrollTimelines(page),
       detectFramerMotionElements(page),
+      detectStartingStyleRules(page),
+      detectViewTransitionElements(page),
     ]);
 
   // --- Layer 2: Collect runtime monitoring data ---
@@ -624,6 +626,8 @@ export async function detectAnimations(
     ...buildCssScrollTimelineSpecs(cssScrollTimelines, keyframeMap),
     ...buildFramerMotionSpecs(framerMotionElements, libraries),
     ...buildVideoScrollSyncSpecs(videoScrollSyncs),
+    ...buildStartingStyleSpecs(startingStyleRules),
+    ...buildViewTransitionSpecs(viewTransitionElements),
   ];
 
   // Deduplicate by elementSelector + type
@@ -2209,6 +2213,125 @@ function mergeScrollDiffProperties(diffs: ScrollStyleDiff[]): AnimatedProperty[]
     property,
     from: vals.from,
     to: vals.to,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// @starting-style detection (Item 5.1)
+// ---------------------------------------------------------------------------
+
+interface StartingStyleRule {
+  parentSelector: string;
+  properties: Record<string, string>;
+}
+
+async function detectStartingStyleRules(page: Page): Promise<StartingStyleRule[]> {
+  return page.evaluate(() => {
+    const results: Array<{ parentSelector: string; properties: Record<string, string> }> = [];
+    try {
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          for (const rule of Array.from(sheet.cssRules)) {
+            if (rule.cssText?.includes('@starting-style')) {
+              // Extract the parent selector and the starting-style properties
+              const selectorMatch = rule.cssText.match(/^([^{]+)\{/);
+              const startingMatch = rule.cssText.match(/@starting-style\s*\{([^}]+)\}/);
+              if (selectorMatch && startingMatch) {
+                const props: Record<string, string> = {};
+                for (const decl of startingMatch[1].split(';')) {
+                  const colonIdx = decl.indexOf(':');
+                  if (colonIdx === -1) continue;
+                  const prop = decl.slice(0, colonIdx).trim();
+                  const val = decl.slice(colonIdx + 1).trim();
+                  if (prop && val) props[prop] = val;
+                }
+                if (Object.keys(props).length > 0) {
+                  results.push({ parentSelector: selectorMatch[1].trim(), properties: props });
+                }
+              }
+            }
+          }
+        } catch {
+          // Cross-origin stylesheet
+        }
+      }
+    } catch {
+      // styleSheets access may fail
+    }
+    return results;
+  });
+}
+
+function buildStartingStyleSpecs(rules: StartingStyleRule[]): AnimationSpec[] {
+  return rules.map((rule) => ({
+    id: nextId("starting-style"),
+    type: "css-animation" as AnimationType,
+    trigger: { type: "load" as const },
+    properties: Object.entries(rule.properties).map(([property, value]) => ({
+      property,
+      from: value,
+      to: "",
+    })),
+    duration: 0,
+    easing: "ease",
+    delay: 0,
+    iterations: 1,
+    direction: "normal" as AnimationDirection,
+    fillMode: "none" as AnimationFillMode,
+    elementSelector: rule.parentSelector,
+    humanDescription: `Entry animation via @starting-style on "${rule.parentSelector}" — sets initial values (${Object.keys(rule.properties).join(', ')}) that transition to the element's resting state.`,
+    implementationNotes: "Use @starting-style CSS at-rule for entry animations. Requires browser support; consider IntersectionObserver fallback.",
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// View Transitions API detection (Item 5.1)
+// ---------------------------------------------------------------------------
+
+interface ViewTransitionElement {
+  selector: string;
+  name: string;
+}
+
+async function detectViewTransitionElements(page: Page): Promise<ViewTransitionElement[]> {
+  return page.evaluate(() => {
+    const results: Array<{ selector: string; name: string }> = [];
+    const elements = document.querySelectorAll('*');
+    const limit = Math.min(elements.length, 2000);
+
+    for (let i = 0; i < limit; i++) {
+      const el = elements[i];
+      const vtn = getComputedStyle(el).getPropertyValue('view-transition-name');
+      if (vtn && vtn !== 'none') {
+        let selector = el.tagName.toLowerCase();
+        if (el.id) {
+          selector = '#' + CSS.escape(el.id);
+        } else if (el.className && typeof el.className === 'string') {
+          const cls = el.className.trim().split(/\s+/).slice(0, 2).join('.');
+          if (cls) selector += '.' + cls;
+        }
+        results.push({ selector, name: vtn });
+      }
+    }
+    return results;
+  });
+}
+
+function buildViewTransitionSpecs(elements: ViewTransitionElement[]): AnimationSpec[] {
+  return elements.map((el) => ({
+    id: nextId("view-transition"),
+    type: "css-animation" as AnimationType,
+    trigger: { type: "load" as const },
+    properties: [],
+    duration: 0,
+    easing: "ease",
+    delay: 0,
+    iterations: 1,
+    direction: "normal" as AnimationDirection,
+    fillMode: "none" as AnimationFillMode,
+    elementSelector: el.selector,
+    humanDescription: `View Transition API: element "${el.selector}" has view-transition-name: ${el.name}. This enables cross-document or same-document animated transitions.`,
+    implementationNotes: `Set view-transition-name: ${el.name} in CSS. Use document.startViewTransition() for SPA transitions or the @view-transition at-rule for MPA navigation.`,
   }));
 }
 

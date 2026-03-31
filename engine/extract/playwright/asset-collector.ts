@@ -208,6 +208,11 @@ interface DiscoveredLottie {
   type?: string;
 }
 
+interface DiscoveredCursor {
+  url: string;
+  selector: string;
+}
+
 interface DiscoveredAssets {
   images: DiscoveredImage[];
   pictures: DiscoveredPicture[];
@@ -219,6 +224,7 @@ interface DiscoveredAssets {
   svgSprites: DiscoveredSvgSprite[];
   svgUseRefs: DiscoveredSvgUseRef[];
   lottieAnimations: DiscoveredLottie[];
+  customCursors: DiscoveredCursor[];
 }
 
 async function discoverAssets(page: Page): Promise<DiscoveredAssets> {
@@ -357,7 +363,24 @@ async function discoverAssets(page: Page): Promise<DiscoveredAssets> {
       }
     });
 
-    return { images, pictures, videos, backgrounds, inlineSvgs, favicons, ogImage, svgSprites, svgUseRefs, lottieAnimations };
+    // --- Custom cursors (Item 5.4) ---
+    const customCursors: Array<{ url: string; selector: string }> = [];
+    for (const el of Array.from(allElements)) {
+      const cursor = getComputedStyle(el).cursor;
+      if (cursor && cursor.includes('url(')) {
+        const urlMatch = cursor.match(/url\(["']?([^"')]+)["']?\)/);
+        if (urlMatch && !urlMatch[1].startsWith('data:')) {
+          const cls = el.className;
+          const clsStr = typeof cls === 'string' ? cls.split(' ')[0] || '' : '';
+          customCursors.push({
+            url: urlMatch[1],
+            selector: `${el.tagName}.${clsStr}`,
+          });
+        }
+      }
+    }
+
+    return { images, pictures, videos, backgrounds, inlineSvgs, favicons, ogImage, svgSprites, svgUseRefs, lottieAnimations, customCursors };
   });
 }
 
@@ -632,6 +655,11 @@ function buildDownloadQueue(
     if (lottie.src && !lottie.type) {
       enqueue({ url: lottie.src, category: 'lottie' });
     }
+  }
+
+  // Custom cursor images (Item 5.4).
+  for (const cursor of discovered.customCursors) {
+    enqueue({ url: cursor.url, category: 'images' });
   }
 
   return queue;
