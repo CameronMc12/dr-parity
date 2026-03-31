@@ -50,6 +50,7 @@ export interface PromptGenOptions {
 
 const MAX_HTML_BYTES = 30_000;
 const PROMPTS_DIR = 'docs/research/prompts';
+const MAX_WRITE_RETRIES = 2;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -83,7 +84,7 @@ export async function generateBuilderPrompts(
       staggerPatterns: options.staggerPatterns ?? [],
     });
 
-    await writeFile(filePath, content, 'utf-8');
+    await writePromptWithRetry(filePath, content);
 
     prompts.push({
       sectionId: section.id,
@@ -94,6 +95,29 @@ export async function generateBuilderPrompts(
   }
 
   return prompts;
+}
+
+// ---------------------------------------------------------------------------
+// File write with retry
+// ---------------------------------------------------------------------------
+
+async function writePromptWithRetry(
+  filePath: string,
+  content: string,
+  maxRetries: number = MAX_WRITE_RETRIES,
+): Promise<void> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      await writeFile(filePath, content, 'utf-8');
+      return;
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      console.warn(
+        `  \u26A0 Write failed for ${filePath}, retrying (${attempt + 1}/${maxRetries})...`,
+      );
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

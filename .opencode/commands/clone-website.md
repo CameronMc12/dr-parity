@@ -279,6 +279,17 @@ Verify: npx tsc --noEmit
 
 **After builders complete:** Merge completed worktree branches, resolving conflicts intelligently since you have full context on what each builder produced and what the intended outcome is.
 
+**Builder Error Recovery:**
+- If a builder agent fails TypeScript check (`npx tsc --noEmit` errors):
+  1. Read the error messages
+  2. Re-dispatch with: "Fix these TypeScript errors in {file}: {errors}"
+  3. Max 2 retries per builder
+  4. If still broken after retries, split the component into smaller sub-components
+- If a builder times out or produces empty output:
+  1. Check if the prompt file is valid: `cat docs/research/prompts/{section}.md | head -20`
+  2. Re-dispatch with a simpler prompt (reduce to essential styles only)
+- After each successful builder, verify: `npx tsc --noEmit`
+
 ### 3.3 Page Assembly (After All Components Are Built)
 
 After all components are built and merged, assemble the page:

@@ -17,6 +17,7 @@ import {
   type SectionInfo,
   type SectionCompareResult,
 } from '../engine/qa/section-comparator';
+import { ProgressReporter } from '../engine/utils/progress';
 import type { PageData, SectionSpec } from '../engine/types/extraction';
 
 // ---------------------------------------------------------------------------
@@ -70,7 +71,9 @@ function parseArgs(): SectionQAArgs {
 // Section extraction from page-data.json
 // ---------------------------------------------------------------------------
 
-function buildSectionInfoFromPageData(sections: SectionSpec[]): SectionInfo[] {
+function buildSectionInfoFromPageData(
+  sections: SectionSpec[],
+): SectionInfo[] {
   return sections
     .sort((a, b) => a.order - b.order)
     .map((section) => ({
@@ -94,7 +97,9 @@ function printReport(
 
   const totalMatch = sorted.reduce((sum, r) => sum + r.pixelMatchPercent, 0);
   const overallScore =
-    sorted.length > 0 ? Number((totalMatch / sorted.length).toFixed(1)) : 100;
+    sorted.length > 0
+      ? Number((totalMatch / sorted.length).toFixed(1))
+      : 100;
   const failCount = sorted.filter((r) => !r.passed).length;
   const allPassed = failCount === 0;
 
@@ -110,7 +115,9 @@ function printReport(
     const pct = `${r.pixelMatchPercent}%`;
     const icon = r.passed ? '\u2713' : '\u2717';
     const diffNote = r.passed ? '' : ` (diff: ${r.diffImagePath})`;
-    console.log(`Section ${idx}: ${name} \u2192 ${pct} ${icon}${diffNote}`);
+    console.log(
+      `Section ${idx}: ${name} \u2192 ${pct} ${icon}${diffNote}`,
+    );
   }
 
   console.log('');
@@ -133,14 +140,17 @@ function printReport(
 async function main(): Promise<void> {
   const { originalUrl, cloneUrl, threshold, outputDir } = parseArgs();
 
-  // Read page-data.json
+  const progress = new ProgressReporter(4);
+
+  // Phase 1: Read page-data.json
+  progress.startPhase('Loading page-data.json');
   const pageDataPath = join(process.cwd(), 'docs/research/page-data.json');
   let pageData: PageData;
   try {
     const raw = await readFile(pageDataPath, 'utf-8');
     pageData = JSON.parse(raw) as PageData;
   } catch {
-    console.error(`Failed to read ${pageDataPath}`);
+    progress.failPhase(`Failed to read ${pageDataPath}`);
     console.error(
       'Run the extraction step first to generate docs/research/page-data.json',
     );
@@ -148,24 +158,24 @@ async function main(): Promise<void> {
   }
 
   if (!pageData.sections || pageData.sections.length === 0) {
-    console.error('No sections found in page-data.json');
+    progress.failPhase('No sections found in page-data.json');
     process.exit(1);
   }
 
   const sections = buildSectionInfoFromPageData(pageData.sections);
+  progress.endPhase(`${sections.length} sections loaded`);
 
-  console.log(`Original:  ${originalUrl}`);
-  console.log(`Clone:     ${cloneUrl}`);
-  console.log(`Threshold: ${threshold}%`);
-  console.log(`Sections:  ${sections.length}`);
-  console.log('');
+  console.log(`  Original:  ${originalUrl}`);
+  console.log(`  Clone:     ${cloneUrl}`);
+  console.log(`  Threshold: ${threshold}%`);
 
   await mkdir(outputDir, { recursive: true });
 
   const browser = await chromium.launch({ headless: true });
 
   try {
-    console.log('Comparing sections...');
+    // Phase 2: Compare sections
+    progress.startPhase('Comparing sections');
     const results = await compareSections(browser, {
       originalUrl,
       cloneUrl,
@@ -173,14 +183,20 @@ async function main(): Promise<void> {
       outputDir,
       threshold,
     });
+    progress.endPhase(`${results.length} sections compared`);
 
-    // Write JSON report
+    // Phase 3: Write JSON report
+    progress.startPhase('Writing report');
     const reportPath = join(outputDir, 'section-qa-report.json');
     await writeFile(reportPath, JSON.stringify(results, null, 2), 'utf-8');
-    console.log(`Report saved: ${reportPath}`);
+    progress.endPhase(reportPath);
 
-    // Print formatted results
+    // Phase 4: Format and print results
+    progress.startPhase('Formatting results');
     const passed = printReport(results, threshold);
+    progress.endPhase(passed ? 'ALL PASS' : 'SOME FAILURES');
+
+    progress.summary();
     process.exit(passed ? 0 : 1);
   } finally {
     await browser.close();

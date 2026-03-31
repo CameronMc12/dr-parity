@@ -149,3 +149,47 @@ Gaps and opportunities discovered during implementation of the roadmap features.
 2. **Container query breakpoint extraction**: When container queries include size conditions like `(min-width: 400px)`, these breakpoints could be collected alongside viewport breakpoints to give the generation pipeline a complete picture of responsive behavior.
 
 3. **HSL/OKLCH color token preservation**: When the target site uses oklch or hsl natively, the design token system could preserve the original color space in `ColorToken.value` and add an `originalColorSpace` field. This would enable the foundation generator to emit tokens in the same color space the designers intended, rather than converting everything to RGB for deduplication.
+
+## Discovered during Tier 3 Items 3.1, 3.2, 3.3, 3.4 (2026-03-30)
+
+### Gaps
+
+1. **`smartWait` DOM stability check depends on `document.body` existing**: The MutationObserver-based DOM stability check in `smartWait` assumes `document.body` is available. On pages where navigation leads to a blank document (e.g., client-rendered SPAs with a slow shell), `document.body` may be null, causing the `observer.observe()` call to throw. Consider adding a guard that waits for `document.body` before observing.
+
+2. **Checkpoint phase data may exceed JSON serialization limits**: Large extraction results (e.g., `assets` with many base64-encoded images or `stylesheets` with thousands of rules) are stored in `.checkpoint.json` as nested JSON. On very large sites this file could grow to tens of MB, slowing checkpoint reads/writes. Consider storing each phase in a separate file (similar to the cache approach) or compressing the checkpoint.
+
+3. **Cache TTL is not configurable via CLI**: The 1-hour TTL in `ExtractionCache` is hardcoded. For iterative development workflows where the target site changes frequently, a shorter TTL (or a `--cache-ttl` flag) would be useful.
+
+4. **Screenshot batch optimization is sequential within batches**: The current batched screenshot approach still processes sections sequentially within each batch (since Playwright cannot take multiple screenshots on the same page simultaneously). The only gain is the reduced wait time (100ms vs 300ms). True parallelism would require multiple browser contexts rendering the same page, which trades memory for speed.
+
+### Opportunities
+
+1. **Selective phase re-extraction**: The `--resume` flag currently skips all completed phases. A `--rerun <phase>` flag could force re-extraction of a specific phase (e.g., `--rerun fonts`) while keeping other cached results, useful when debugging a single extraction step.
+
+2. **Cache warming across URLs**: When extracting multiple pages from the same domain, font and stylesheet results are likely identical. A domain-level cache key (in addition to per-URL) could avoid redundant font/stylesheet extraction across pages of the same site.
+
+3. **Progress reporting with ETA**: With checkpoint data tracking timestamps per phase, the resume output could estimate remaining time based on historical phase durations from the checkpoint file.
+
+4. **Atomic checkpoint writes**: The current `writeFile` for checkpoints is not atomic. If the process crashes mid-write, the checkpoint JSON could be corrupted. Writing to a `.checkpoint.tmp.json` and then renaming would provide crash-safe persistence.
+
+## Discovered during Tier 3 Items 3.5, 3.6, 3.7, 3.8 (2026-03-30)
+
+### Gaps
+
+1. **`--from-cache` does not validate cache freshness**: When `--from-cache` loads a `page-data.json` from a previous run, there is no check that the cached data matches the current target URL or that the site has not changed since the cache was written. Adding a URL and timestamp validation against the cached `PageData.url` and `PageData.extractedAt` fields would prevent stale data reuse.
+
+2. **`--only-sections` matches by name are case-sensitive and exact**: The section name filter uses `Array.includes()` which requires an exact case-sensitive match. Users may not remember exact section names from extraction. A fuzzy or case-insensitive match (e.g., `hero` matching `HeroSection`) would improve usability.
+
+3. **Dry-run animation detection still scrolls the page**: The `detectAnimations` call in dry-run mode performs scroll probing and hover probing, which mutates page state. If the user subsequently runs a full extraction without `--dry-run`, the page state may differ from a clean load. Consider using a fresh page context for dry-run or only running static analysis (CSS keyframes/transitions) in dry-run mode.
+
+4. **`writePromptWithRetry` retry delay is fixed at 500ms**: The retry backoff in `builder-prompts.ts` uses a flat 500ms delay. For disk I/O errors caused by temporary filesystem pressure, an exponential backoff (500ms, 1000ms) would be more robust without adding significant complexity.
+
+### Opportunities
+
+1. **ProgressReporter could emit structured JSON events**: For CI/CD integration, ProgressReporter could optionally emit newline-delimited JSON events (`{"phase": "scan", "status": "complete", "durationMs": 450}`) when a `--json-progress` flag is passed. This would enable build systems to parse extraction progress programmatically.
+
+2. **Dry-run could output a machine-readable summary**: The dry-run summary is currently human-readable console output. Adding a `--dry-run --json` mode that writes a `dry-run-summary.json` file would enable scripted workflows (e.g., estimating extraction cost before committing to a full run).
+
+3. **Per-section re-extraction could merge into existing page-data.json**: Currently `--only-sections` generates a fresh `page-data.json` with only the filtered sections. Instead, it could merge re-extracted sections back into an existing `page-data.json`, preserving data for unmodified sections. This would enable incremental section updates without losing the full extraction context.
+
+4. **Builder dispatch error recovery could track failure history**: When a builder fails and is retried, the failure reason and retry count could be appended to a `docs/research/prompts/build-log.json` file. This would provide a persistent record of which sections are problematic and why, enabling smarter dispatch strategies on subsequent runs.
