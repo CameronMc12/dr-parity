@@ -17,6 +17,7 @@ import type {
   MediaQueryData,
   KeyframeData,
   CSSVariableData,
+  CSSVariableReference,
 } from '../../types/extraction';
 
 // Re-export types for convenience
@@ -27,6 +28,7 @@ export type {
   MediaQueryData,
   KeyframeData,
   CSSVariableData,
+  CSSVariableReference,
 };
 
 // ---------------------------------------------------------------------------
@@ -77,12 +79,32 @@ export async function scrapeStylesheets(
     ): {
       ruleData: { selector: string; properties: Record<string, string> };
       variables: Array<{ name: string; value: string; scope: string }>;
+      variableRefs: Array<{ selector: string; property: string; variable: string; resolvedValue: string }>;
     } => {
       const properties = extractProperties(rule.style, MAX_PROPERTY_COUNT);
       const variables = extractVariablesFromProperties(rule.style, rule.selectorText);
+
+      // Scan property values for var(--xxx) references
+      const variableRefs: Array<{ selector: string; property: string; variable: string; resolvedValue: string }> = [];
+      for (const [prop, value] of Object.entries(properties)) {
+        const varMatches = value.match(/var\(--[\w-]+/g);
+        if (varMatches) {
+          for (const match of varMatches) {
+            const varName = match.replace('var(', '');
+            variableRefs.push({
+              selector: rule.selectorText,
+              property: prop,
+              variable: varName,
+              resolvedValue: value,
+            });
+          }
+        }
+      }
+
       return {
         ruleData: { selector: rule.selectorText, properties },
         variables,
+        variableRefs,
       };
     };
 
@@ -106,20 +128,23 @@ export async function scrapeStylesheets(
     ): {
       mediaData: { query: string; rules: Array<{ selector: string; properties: Record<string, string> }> };
       variables: Array<{ name: string; value: string; scope: string }>;
+      variableRefs: Array<{ selector: string; property: string; variable: string; resolvedValue: string }>;
     } => {
       const query = rule.conditionText ?? rule.media.mediaText;
       const rules: Array<{ selector: string; properties: Record<string, string> }> = [];
       const variables: Array<{ name: string; value: string; scope: string }> = [];
+      const variableRefs: Array<{ selector: string; property: string; variable: string; resolvedValue: string }> = [];
 
       for (const nested of Array.from(rule.cssRules)) {
         if (nested instanceof CSSStyleRule) {
           const result = processStyleRule(nested);
           rules.push(result.ruleData);
           variables.push(...result.variables);
+          variableRefs.push(...result.variableRefs);
         }
       }
 
-      return { mediaData: { query, rules }, variables };
+      return { mediaData: { query, rules }, variables, variableRefs };
     };
 
     const processSheet = (
@@ -131,11 +156,13 @@ export async function scrapeStylesheets(
       mediaQueries: Array<{ query: string; rules: Array<{ selector: string; properties: Record<string, string> }> }>;
       keyframes: Array<{ name: string; frames: Array<{ offset: string; properties: Record<string, string> }> }>;
       cssVariables: Array<{ name: string; value: string; scope: string }>;
+      variableReferences: Array<{ selector: string; property: string; variable: string; resolvedValue: string }>;
     } => {
       const rules: Array<{ selector: string; properties: Record<string, string> }> = [];
       const mediaQueries: Array<{ query: string; rules: Array<{ selector: string; properties: Record<string, string> }> }> = [];
       const keyframes: Array<{ name: string; frames: Array<{ offset: string; properties: Record<string, string> }> }> = [];
       const cssVariables: Array<{ name: string; value: string; scope: string }> = [];
+      const variableReferences: Array<{ selector: string; property: string; variable: string; resolvedValue: string }> = [];
 
       try {
         const cssRules = Array.from(sheet.cssRules);
@@ -148,19 +175,21 @@ export async function scrapeStylesheets(
             const result = processStyleRule(rule);
             rules.push(result.ruleData);
             cssVariables.push(...result.variables);
+            variableReferences.push(...result.variableRefs);
           } else if (rule instanceof CSSKeyframesRule) {
             keyframes.push(processKeyframesRule(rule));
           } else if (rule instanceof CSSMediaRule) {
             const result = processMediaRule(rule);
             mediaQueries.push(result.mediaData);
             cssVariables.push(...result.variables);
+            variableReferences.push(...result.variableRefs);
           }
         }
       } catch {
         // Cross-origin — rules inaccessible via CSSOM
       }
 
-      return { url, rules, mediaQueries, keyframes, cssVariables };
+      return { url, rules, mediaQueries, keyframes, cssVariables, variableReferences };
     };
 
     // ----- Main extraction logic -----
@@ -204,17 +233,25 @@ export async function scrapeStylesheets(
     return results;
   });
 
-  // Compute totals
+  // Compute totals and aggregate variable references
   let totalRules = 0;
   let totalKeyframes = 0;
   let totalMediaQueries = 0;
   let totalVariables = 0;
+  const allVariableReferences: CSSVariableReference[] = [];
 
   for (const sheet of stylesheets) {
     totalRules += sheet.rules.length;
     totalKeyframes += sheet.keyframes.length;
     totalMediaQueries += sheet.mediaQueries.length;
     totalVariables += sheet.cssVariables.length;
+
+    // Collect variable references from each sheet
+    if (sheet.variableReferences) {
+      for (const ref of sheet.variableReferences) {
+        allVariableReferences.push(ref as CSSVariableReference);
+      }
+    }
   }
 
   return {
@@ -223,5 +260,6 @@ export async function scrapeStylesheets(
     totalKeyframes,
     totalMediaQueries,
     totalVariables,
+    variableReferences: allVariableReferences,
   };
 }

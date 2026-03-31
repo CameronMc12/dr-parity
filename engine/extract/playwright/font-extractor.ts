@@ -17,7 +17,7 @@
  */
 
 import type { Page } from 'playwright';
-import type { FontSpec, FontFile, FontSource, FontStyle, FontFileFormat } from '../../types/extraction';
+import type { FontSpec, FontFile, FontSource, FontStyle, FontFileFormat, FontMetrics } from '../../types/extraction';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 
@@ -572,6 +572,9 @@ async function downloadFontFiles(
           await writeFile(localPath, buffer);
           file.localPath = relativePath;
           downloaded.push(relativePath);
+
+          // Attach font metrics (estimated from known values).
+          file.metrics = estimateFontMetrics(spec.family);
         }
       } catch {
         // Skip files that fail to download.
@@ -579,8 +582,144 @@ async function downloadFontFiles(
     }
   }
 
+  // Try browser-based metric extraction for all downloaded fonts.
+  await extractMetricsViaBrowser(page, fontMap);
+
   return downloaded;
 }
+
+// ---------------------------------------------------------------------------
+// Font metrics — known values & browser-based extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Known font metrics for popular web fonts.
+ * Values are expressed as ratios (actual value / unitsPerEm).
+ */
+const KNOWN_FONT_METRICS: Record<string, FontMetrics> = {
+  'Inter': { ascent: 0.9271, descent: -0.2441, lineGap: 0, unitsPerEm: 2048 },
+  'Roboto': { ascent: 0.9277, descent: -0.2441, lineGap: 0, unitsPerEm: 2048 },
+  'Open Sans': { ascent: 1.0693, descent: -0.2927, lineGap: 0, unitsPerEm: 2048 },
+  'Lato': { ascent: 0.9277, descent: -0.2363, lineGap: 0, unitsPerEm: 2048 },
+  'Montserrat': { ascent: 0.9688, descent: -0.2510, lineGap: 0, unitsPerEm: 1000 },
+  'Poppins': { ascent: 1.0500, descent: -0.3500, lineGap: 0, unitsPerEm: 1000 },
+  'Source Sans Pro': { ascent: 0.9840, descent: -0.2460, lineGap: 0, unitsPerEm: 1000 },
+  'Source Sans 3': { ascent: 0.9840, descent: -0.2460, lineGap: 0, unitsPerEm: 1000 },
+  'Nunito': { ascent: 1.0110, descent: -0.3530, lineGap: 0, unitsPerEm: 1000 },
+  'Nunito Sans': { ascent: 1.0110, descent: -0.3530, lineGap: 0, unitsPerEm: 1000 },
+  'Raleway': { ascent: 1.0000, descent: -0.2500, lineGap: 0, unitsPerEm: 1000 },
+  'Playfair Display': { ascent: 1.0820, descent: -0.2510, lineGap: 0, unitsPerEm: 1000 },
+  'DM Sans': { ascent: 1.0000, descent: -0.2500, lineGap: 0, unitsPerEm: 1000 },
+  'Geist': { ascent: 0.9000, descent: -0.2500, lineGap: 0, unitsPerEm: 2048 },
+  'Geist Mono': { ascent: 0.9000, descent: -0.2500, lineGap: 0, unitsPerEm: 2048 },
+  'SF Pro': { ascent: 1.0684, descent: -0.2930, lineGap: 0, unitsPerEm: 2048 },
+  'SF Pro Display': { ascent: 1.0684, descent: -0.2930, lineGap: 0, unitsPerEm: 2048 },
+  'SF Pro Text': { ascent: 1.0684, descent: -0.2930, lineGap: 0, unitsPerEm: 2048 },
+  'Fira Code': { ascent: 0.9350, descent: -0.3150, lineGap: 0, unitsPerEm: 1000 },
+  'JetBrains Mono': { ascent: 1.0200, descent: -0.3000, lineGap: 0, unitsPerEm: 1000 },
+  'Space Grotesk': { ascent: 0.9844, descent: -0.2500, lineGap: 0, unitsPerEm: 1000 },
+  'Work Sans': { ascent: 0.9688, descent: -0.2344, lineGap: 0, unitsPerEm: 2048 },
+  'Plus Jakarta Sans': { ascent: 1.0500, descent: -0.2800, lineGap: 0, unitsPerEm: 1000 },
+};
+
+/** Default metrics used when the font family is not in the known table. */
+const DEFAULT_FONT_METRICS: FontMetrics = {
+  ascent: 0.95,
+  descent: -0.25,
+  lineGap: 0,
+  unitsPerEm: 1000,
+};
+
+/**
+ * Estimate font metrics from a lookup table of known fonts.
+ * Falls back to sensible defaults for unknown families.
+ */
+function estimateFontMetrics(family: string): FontMetrics {
+  const normalized = family.replace(/['"]/g, '').trim();
+
+  // Try exact match first.
+  const exact = KNOWN_FONT_METRICS[normalized];
+  if (exact) return { ...exact };
+
+  // Try case-insensitive match.
+  const lower = normalized.toLowerCase();
+  for (const [key, metrics] of Object.entries(KNOWN_FONT_METRICS)) {
+    if (key.toLowerCase() === lower) return { ...metrics };
+  }
+
+  return { ...DEFAULT_FONT_METRICS };
+}
+
+/**
+ * Use Playwright's browser context to measure font metrics via the Canvas API.
+ * This refines the initial estimates for any fonts that are already loaded in the page.
+ */
+async function extractMetricsViaBrowser(
+  page: Page,
+  fontMap: Map<string, FontSpec>,
+): Promise<void> {
+  const families = Array.from(fontMap.values())
+    .filter((spec) => spec.source !== 'system' && spec.files.length > 0)
+    .map((spec) => spec.family);
+
+  if (families.length === 0) return;
+
+  const browserMetrics: Record<string, { ascent: number; descent: number }> = await page.evaluate(
+    async (familyNames: string[]) => {
+      const results: Record<string, { ascent: number; descent: number }> = {};
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return results;
+      canvas.width = 500;
+      canvas.height = 200;
+
+      for (const family of familyNames) {
+        try {
+          // Wait for the font to be available (it should already be loaded).
+          await document.fonts.ready;
+          ctx.font = `100px "${family}"`;
+          const textMetrics = ctx.measureText('Hgpq|ABCDEFxyz');
+
+          // fontBoundingBoxAscent/Descent are well-supported in modern browsers.
+          if (
+            typeof textMetrics.fontBoundingBoxAscent === 'number' &&
+            typeof textMetrics.fontBoundingBoxDescent === 'number'
+          ) {
+            results[family] = {
+              ascent: textMetrics.fontBoundingBoxAscent / 100,
+              descent: -(textMetrics.fontBoundingBoxDescent / 100),
+            };
+          }
+        } catch {
+          // Skip fonts that fail to measure.
+        }
+      }
+
+      return results;
+    },
+    families,
+  );
+
+  // Merge browser-measured metrics into font files.
+  for (const spec of fontMap.values()) {
+    const measured = browserMetrics[spec.family];
+    if (!measured) continue;
+
+    for (const file of spec.files) {
+      if (!file.metrics) continue;
+      // Override with more accurate browser-measured values.
+      file.metrics = {
+        ...file.metrics,
+        ascent: measured.ascent,
+        descent: measured.descent,
+      };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// URL resolution
+// ---------------------------------------------------------------------------
 
 function resolveUrl(url: string, baseUrl: string): string | null {
   try {

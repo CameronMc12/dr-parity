@@ -352,16 +352,37 @@ async function extractSection(
 
         if (tag === 'img') {
           const img = element as HTMLImageElement;
+          const cs = window.getComputedStyle(img);
+
+          // Check for parent <picture> element sources.
+          let pictureSources: Array<{ srcset: string; media?: string; type?: string }> | undefined;
+          if (img.parentElement?.tagName.toLowerCase() === 'picture') {
+            const sources = Array.from(img.parentElement.querySelectorAll('source'));
+            if (sources.length > 0) {
+              pictureSources = sources.map((s) => ({
+                srcset: s.srcset || '',
+                media: s.getAttribute('media') || undefined,
+                type: s.type || undefined,
+              }));
+            }
+          }
+
           return {
             type: 'image' as const,
-            src: img.src || img.currentSrc || undefined,
+            src: img.src || img.currentSrc || img.getAttribute('data-src') || undefined,
             alt: img.alt || undefined,
+            srcset: img.srcset || undefined,
+            sizes: img.sizes || undefined,
+            dataSrc: img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || undefined,
+            dataLazy: img.getAttribute('data-lazy') || undefined,
+            loading: (img.loading as 'lazy' | 'eager') || undefined,
+            decoding: (img.decoding as 'async' | 'sync' | 'auto') || undefined,
+            fetchPriority: (img as HTMLImageElement & { fetchPriority?: string }).fetchPriority || undefined,
+            pictureSources,
             naturalWidth: img.naturalWidth || undefined,
             naturalHeight: img.naturalHeight || undefined,
-            objectFit:
-              window.getComputedStyle(img).objectFit || undefined,
-            objectPosition:
-              window.getComputedStyle(img).objectPosition || undefined,
+            objectFit: cs.objectFit || undefined,
+            objectPosition: cs.objectPosition || undefined,
           };
         }
 
@@ -416,6 +437,14 @@ async function extractSection(
         type: string;
         src?: string;
         alt?: string;
+        srcset?: string;
+        sizes?: string;
+        dataSrc?: string;
+        dataLazy?: string;
+        loading?: string;
+        decoding?: string;
+        fetchPriority?: string;
+        pictureSources?: Array<{ srcset: string; media?: string; type?: string }>;
         poster?: string;
         autoplay?: boolean;
         loop?: boolean;
@@ -425,6 +454,13 @@ async function extractSection(
         objectFit?: string;
         objectPosition?: string;
         outerHTML?: string;
+      }
+
+      interface PseudoStylesRaw {
+        before?: Record<string, string>;
+        after?: Record<string, string>;
+        placeholder?: Record<string, string>;
+        marker?: Record<string, string>;
       }
 
       interface ElementRaw {
@@ -444,6 +480,7 @@ async function extractSection(
         };
         isVisible: boolean;
         media?: MediaSpecRaw;
+        pseudoStyles?: PseudoStylesRaw;
       }
 
       function walkElement(
@@ -473,6 +510,59 @@ async function extractSection(
 
         const media = getMediaSpec(element);
 
+        // --- Pseudo-element extraction ---
+        const PSEUDO_PROPS = [
+          'content', 'display', 'position', 'top', 'right', 'bottom', 'left',
+          'width', 'height', 'backgroundColor', 'background', 'backgroundImage',
+          'color', 'fontSize', 'fontWeight', 'opacity', 'transform',
+          'borderRadius', 'border', 'boxShadow', 'zIndex', 'overflow',
+          'padding', 'margin',
+        ];
+
+        function extractPseudoStyles(
+          target: Element,
+          pseudo: '::before' | '::after' | '::placeholder' | '::marker',
+        ): Record<string, string> | undefined {
+          const pseudoComputed = window.getComputedStyle(target, pseudo);
+          const pseudoContent = pseudoComputed.content;
+          // For ::placeholder and ::marker the content check is irrelevant
+          const needsContentCheck = pseudo === '::before' || pseudo === '::after';
+          if (
+            needsContentCheck &&
+            (!pseudoContent ||
+              pseudoContent === 'none' ||
+              pseudoContent === '""' ||
+              pseudoContent === "''")
+          ) {
+            return undefined;
+          }
+          const styles: Record<string, string> = {};
+          for (const prop of PSEUDO_PROPS) {
+            const val = pseudoComputed.getPropertyValue(
+              prop.replace(/([A-Z])/g, '-$1').toLowerCase(),
+            ) || (pseudoComputed as unknown as Record<string, string>)[prop];
+            if (
+              val &&
+              val !== 'none' &&
+              val !== 'normal' &&
+              val !== 'auto' &&
+              val !== '0px'
+            ) {
+              styles[prop] = val;
+            }
+          }
+          return Object.keys(styles).length > 0 ? styles : undefined;
+        }
+
+        const beforeStyles = extractPseudoStyles(element, '::before');
+        const afterStyles = extractPseudoStyles(element, '::after');
+        let pseudoStyles: PseudoStylesRaw | undefined;
+        if (beforeStyles || afterStyles) {
+          pseudoStyles = {};
+          if (beforeStyles) pseudoStyles.before = beforeStyles;
+          if (afterStyles) pseudoStyles.after = afterStyles;
+        }
+
         const result: ElementRaw = {
           tag,
           id: element.id || undefined,
@@ -488,6 +578,7 @@ async function extractSection(
           boundingRect: getRect(element),
           isVisible: visible,
           media,
+          pseudoStyles,
         };
 
         // For SVGs, store the full markup as innerHTML.
@@ -666,12 +757,26 @@ interface SerializedElement {
   boundingRect: Rect;
   isVisible: boolean;
   media?: SerializedMedia;
+  pseudoStyles?: {
+    before?: Record<string, string>;
+    after?: Record<string, string>;
+    placeholder?: Record<string, string>;
+    marker?: Record<string, string>;
+  };
 }
 
 interface SerializedMedia {
   type: string;
   src?: string;
   alt?: string;
+  srcset?: string;
+  sizes?: string;
+  dataSrc?: string;
+  dataLazy?: string;
+  loading?: string;
+  decoding?: string;
+  fetchPriority?: string;
+  pictureSources?: Array<{ srcset: string; media?: string; type?: string }>;
   poster?: string;
   autoplay?: boolean;
   loop?: boolean;
@@ -698,6 +803,7 @@ function deserializeElement(raw: SerializedElement): ElementSpec {
     boundingRect: raw.boundingRect,
     isVisible: raw.isVisible,
     media: raw.media ? deserializeMedia(raw.media) : undefined,
+    pseudoStyles: raw.pseudoStyles,
   };
 }
 
@@ -708,6 +814,14 @@ function deserializeMedia(raw: SerializedMedia): MediaSpec {
 
   if (raw.src !== undefined) base.src = raw.src;
   if (raw.alt !== undefined) base.alt = raw.alt;
+  if (raw.srcset !== undefined) base.srcset = raw.srcset;
+  if (raw.sizes !== undefined) base.sizes = raw.sizes;
+  if (raw.dataSrc !== undefined) base.dataSrc = raw.dataSrc;
+  if (raw.dataLazy !== undefined) base.dataLazy = raw.dataLazy;
+  if (raw.loading !== undefined) base.loading = raw.loading as MediaSpec['loading'];
+  if (raw.decoding !== undefined) base.decoding = raw.decoding as MediaSpec['decoding'];
+  if (raw.fetchPriority !== undefined) base.fetchPriority = raw.fetchPriority as MediaSpec['fetchPriority'];
+  if (raw.pictureSources !== undefined) base.pictureSources = raw.pictureSources;
   if (raw.poster !== undefined) base.poster = raw.poster;
   if (raw.autoplay !== undefined) base.autoplay = raw.autoplay;
   if (raw.loop !== undefined) base.loop = raw.loop;

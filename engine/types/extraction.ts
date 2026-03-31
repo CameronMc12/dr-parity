@@ -81,12 +81,24 @@ export interface CSSVariableData {
   scope: string;
 }
 
+/** Tracks where `var(--xxx)` references appear in CSS rules. */
+export interface CSSVariableReference {
+  selector: string;
+  property: string;
+  /** The variable name, e.g. `--color-primary`. */
+  variable: string;
+  /** The full property value containing the `var()` call. */
+  resolvedValue: string;
+}
+
 export interface StylesheetExtractionResult {
   stylesheets: StylesheetData[];
   totalRules: number;
   totalKeyframes: number;
   totalMediaQueries: number;
   totalVariables: number;
+  /** Every `var(--xxx)` reference found across all stylesheets. */
+  variableReferences: CSSVariableReference[];
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +153,13 @@ export interface ElementSpec {
   boundingRect: Rect;
   isVisible: boolean;
   media?: MediaSpec;
+  /** Computed styles for CSS pseudo-elements (::before, ::after, etc.). */
+  pseudoStyles?: {
+    before?: Record<string, string>;
+    after?: Record<string, string>;
+    placeholder?: Record<string, string>;
+    marker?: Record<string, string>;
+  };
 }
 
 export interface StateSpec {
@@ -156,12 +175,34 @@ export interface StateSpec {
 
 export type MediaType = 'image' | 'video' | 'svg' | 'canvas' | 'iframe';
 
+export interface PictureSource {
+  srcset: string;
+  media?: string;
+  type?: string;
+}
+
 export interface MediaSpec {
   type: MediaType;
   src?: string;
   /** Local file path after the asset has been downloaded. */
   localPath?: string;
   alt?: string;
+  /** Responsive image srcset attribute. */
+  srcset?: string;
+  /** Responsive image sizes attribute. */
+  sizes?: string;
+  /** data-src for lazy-loaded images. */
+  dataSrc?: string;
+  /** data-lazy for lazy-loaded images. */
+  dataLazy?: string;
+  /** Native loading attribute. */
+  loading?: 'lazy' | 'eager';
+  /** Decoding hint. */
+  decoding?: 'async' | 'sync' | 'auto';
+  /** Fetch priority hint. */
+  fetchPriority?: 'high' | 'low' | 'auto';
+  /** Sources from a parent <picture> element. */
+  pictureSources?: PictureSource[];
   poster?: string;
   autoplay?: boolean;
   loop?: boolean;
@@ -220,6 +261,32 @@ export interface AnimationSpec {
   implementationNotes: string;
   /** Optional pre-generated code snippet to recreate this animation. */
   codeSnippet?: string;
+  /** Captured GSAP ScrollTrigger configuration when type is 'gsap'. */
+  gsapScrollTriggerConfig?: {
+    pin?: string | boolean;
+    scrub?: number | boolean;
+    start?: string;
+    end?: string;
+    snap?: number | boolean | Record<string, unknown>;
+    markers?: boolean;
+    toggleClass?: string;
+    toggleActions?: string;
+    callbacksPresent?: {
+      onEnter?: boolean;
+      onLeave?: boolean;
+      onUpdate?: boolean;
+      onToggle?: boolean;
+      onEnterBack?: boolean;
+      onLeaveBack?: boolean;
+    };
+  };
+  /** Captured IntersectionObserver callback effects (class/style changes). */
+  ioEffects?: {
+    classesAdded: string[];
+    classesRemoved: string[];
+    styleChanged: boolean;
+    newStyle?: string;
+  };
 }
 
 export type AnimationTriggerType =
@@ -266,6 +333,27 @@ export interface AnimationKeyframe {
 }
 
 // ---------------------------------------------------------------------------
+// Stagger patterns
+// ---------------------------------------------------------------------------
+
+export interface StaggerPattern {
+  /** CSS selector for the container element. */
+  containerSelector: string;
+  /** CSS selector for the staggered child elements. */
+  childSelector: string;
+  /** Number of children participating in the stagger. */
+  childCount: number;
+  /** Delay in ms between each successive child animation. */
+  delayIncrement: number;
+  /** Total time in ms for all children to begin their animation. */
+  totalDuration: number;
+  /** Direction the stagger proceeds. */
+  direction: 'forward' | 'reverse' | 'center' | 'edges';
+  /** Animation mechanism used for the staggered children. */
+  animationType: AnimationType;
+}
+
+// ---------------------------------------------------------------------------
 // Third-party library detection
 // ---------------------------------------------------------------------------
 
@@ -298,6 +386,19 @@ export interface FontSpec {
   variableAxes?: Record<string, { min: number; max: number; default: number }>;
 }
 
+export interface FontMetrics {
+  /** Ascent as a ratio (e.g. 0.95). */
+  ascent: number;
+  /** Descent as a ratio, typically negative (e.g. -0.25). */
+  descent: number;
+  /** Line gap as a ratio (e.g. 0). */
+  lineGap: number;
+  /** Units per em — typically 1000 or 2048. */
+  unitsPerEm: number;
+  xHeight?: number;
+  capHeight?: number;
+}
+
 export interface FontFile {
   weight: number;
   style: string;
@@ -306,6 +407,8 @@ export interface FontFile {
   /** Local path after download. */
   localPath?: string;
   unicodeRange?: string;
+  /** Font metrics extracted from the font file or estimated from known values. */
+  metrics?: FontMetrics;
 }
 
 // ---------------------------------------------------------------------------

@@ -9,9 +9,13 @@ import type {
   SpacingToken,
   ElementSpec,
   FontSpec,
+  CSSVariableData,
 } from '../types/extraction';
 import type {
   DesignTokens,
+  GradientToken,
+  GradientStop,
+  GradientType,
   TypographyScale,
   SpacingScale,
   RadiusScale,
@@ -29,8 +33,18 @@ export function extractDesignTokens(data: PageData): DesignTokens {
   const spacing = buildSpacingScale(data);
   const borderRadius = buildRadiusScale(allElements);
   const shadows = buildShadowTokens(allElements);
+  const gradients = extractGradients(allElements);
   const breakpoints = collectBreakpoints(data);
-  const cssVariables = generateCssVariables(colors, typography, spacing, borderRadius, shadows);
+
+  // Collect original CSS custom properties from stylesheets
+  const originalVariables = collectOriginalCssVariables(data);
+
+  // Prefer original variable names when they match extracted color values
+  applyOriginalVariableNames(colors, originalVariables);
+
+  const cssVariables = generateCssVariables(
+    colors, typography, spacing, borderRadius, shadows, gradients, originalVariables,
+  );
 
   return {
     colors,
@@ -38,6 +52,7 @@ export function extractDesignTokens(data: PageData): DesignTokens {
     spacing,
     borderRadius,
     shadows,
+    gradients,
     fonts: data.fonts,
     breakpoints,
     cssVariables,
@@ -471,6 +486,85 @@ function inferShadowName(idx: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Gradient extraction
+// ---------------------------------------------------------------------------
+
+const GRADIENT_PROPS = ['background', 'backgroundImage', 'background-image'] as const;
+
+function extractGradients(allElements: ElementSpec[]): GradientToken[] {
+  const gradients: GradientToken[] = [];
+  const seen = new Set<string>();
+
+  for (const el of allElements) {
+    for (const prop of GRADIENT_PROPS) {
+      const val = el.computedStyles[prop];
+      if (val && val.includes('gradient') && !seen.has(val)) {
+        seen.add(val);
+        gradients.push(parseGradient(val, gradients.length));
+      }
+    }
+  }
+
+  return gradients;
+}
+
+function parseGradient(value: string, index: number): GradientToken {
+  const type: GradientType = value.includes('radial')
+    ? 'radial'
+    : value.includes('conic')
+      ? 'conic'
+      : 'linear';
+
+  const stops = parseGradientStops(value);
+
+  let angle: string | undefined;
+  let shape: string | undefined;
+
+  if (type === 'linear') {
+    const angleMatch = value.match(/linear-gradient\(\s*(\d+deg|to\s+[\w\s]+)/);
+    if (angleMatch) angle = angleMatch[1].trim();
+  } else if (type === 'radial') {
+    const shapeMatch = value.match(/radial-gradient\(\s*([^,]+)/);
+    if (shapeMatch) {
+      const candidate = shapeMatch[1].trim();
+      // Only store shape if it looks like a shape descriptor, not a color stop
+      if (/^(circle|ellipse|closest|farthest|at\s)/i.test(candidate)) {
+        shape = candidate;
+      }
+    }
+  } else if (type === 'conic') {
+    const fromMatch = value.match(/conic-gradient\(\s*(from\s+\d+deg)/);
+    if (fromMatch) angle = fromMatch[1].trim();
+  }
+
+  const cssVariable = `--gradient-${index}`;
+
+  return { value, type, stops, angle, shape, cssVariable };
+}
+
+function parseGradientStops(value: string): GradientStop[] {
+  const stops: GradientStop[] = [];
+  // Match color values followed by optional position percentages
+  const colorPattern =
+    /(#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|oklch\([^)]+\)|[a-z]+)\s*(\d+%)?/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = colorPattern.exec(value)) !== null) {
+    const colorCandidate = match[1];
+    // Filter out CSS keywords that aren't colors
+    if (/^(linear|radial|conic|gradient|to|from|at|circle|ellipse|closest|farthest|repeating)$/i.test(colorCandidate)) {
+      continue;
+    }
+    stops.push({
+      color: colorCandidate,
+      position: match[2] || undefined,
+    });
+  }
+
+  return stops;
+}
+
+// ---------------------------------------------------------------------------
 // Breakpoints
 // ---------------------------------------------------------------------------
 
@@ -485,6 +579,71 @@ function collectBreakpoints(data: PageData): number[] {
 }
 
 // ---------------------------------------------------------------------------
+// Original CSS custom-property collection
+// ---------------------------------------------------------------------------
+
+/**
+ * Collects all CSS custom properties (--xxx) defined in the page's stylesheets.
+ * These are the original variable names the target site used.
+ */
+function collectOriginalCssVariables(data: PageData): CSSVariableData[] {
+  if (!data.stylesheets) return [];
+
+  const variables: CSSVariableData[] = [];
+  const seen = new Set<string>();
+
+  for (const sheet of data.stylesheets.stylesheets) {
+    for (const cssVar of sheet.cssVariables) {
+      // Deduplicate by name+scope, preferring :root scope
+      const key = `${cssVar.name}@${cssVar.scope}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        variables.push(cssVar);
+      }
+    }
+  }
+
+  return variables;
+}
+
+/**
+ * If the original site defined a CSS variable whose resolved value matches
+ * one of our extracted color tokens, reassign the token's cssVariable name
+ * to the original name instead of the auto-generated semantic name.
+ */
+function applyOriginalVariableNames(
+  colors: DesignTokens['colors'],
+  originalVariables: CSSVariableData[],
+): void {
+  // Build a map from resolved color value -> original variable name
+  const valueToOriginalVar = new Map<string, string>();
+  for (const cssVar of originalVariables) {
+    const rgb = parseColorToRgb(cssVar.value);
+    if (rgb) {
+      const key = `${rgb.r},${rgb.g},${rgb.b}`;
+      // Prefer variable names that look like color tokens
+      if (!valueToOriginalVar.has(key) || cssVar.name.includes('color')) {
+        valueToOriginalVar.set(key, cssVar.name);
+      }
+    }
+  }
+
+  // Apply original names to color tokens
+  for (const token of colors.all) {
+    const rgb = parseColorToRgb(token.value);
+    if (!rgb) continue;
+    const key = `${rgb.r},${rgb.g},${rgb.b}`;
+    const originalName = valueToOriginalVar.get(key);
+    if (originalName) {
+      token.cssVariable = originalName;
+      if (!token.name || token.name === originalName.replace('--', '').replace('color-', '')) {
+        token.name = originalName.replace(/^--/, '');
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CSS variable generation
 // ---------------------------------------------------------------------------
 
@@ -494,6 +653,8 @@ function generateCssVariables(
   spacing: SpacingScale,
   borderRadius: RadiusScale,
   shadows: ShadowToken[],
+  gradients: GradientToken[],
+  originalVariables: CSSVariableData[] = [],
 ): Record<string, string> {
   const vars: Record<string, string> = {};
 
@@ -524,6 +685,30 @@ function generateCssVariables(
   // Shadows
   for (const shadow of shadows) {
     vars[`--shadow-${shadow.name}`] = shadow.value;
+  }
+
+  // Gradients
+  for (const gradient of gradients) {
+    if (gradient.cssVariable) {
+      vars[gradient.cssVariable] = gradient.value;
+    }
+  }
+
+  // Original site CSS custom properties (preserve names the target site used)
+  for (const cssVar of originalVariables) {
+    // Skip variables we already emitted under a different key
+    if (vars[cssVar.name] !== undefined) continue;
+    // Skip font/spacing/radius/shadow vars we've already generated
+    if (
+      cssVar.name.startsWith('--font-') ||
+      cssVar.name.startsWith('--spacing-') ||
+      cssVar.name.startsWith('--radius-') ||
+      cssVar.name.startsWith('--shadow-') ||
+      cssVar.name.startsWith('--gradient-')
+    ) {
+      continue;
+    }
+    vars[cssVar.name] = cssVar.value;
   }
 
   return vars;

@@ -139,6 +139,21 @@ interface DiscoveredImage {
   alt: string;
   width: number;
   height: number;
+  srcset: string;
+  sizes: string;
+  dataSrc: string;
+  dataLazy: string;
+  loading: string;
+  decoding: string;
+  fetchPriority: string;
+}
+
+interface DiscoveredPicture {
+  sources: Array<{ srcset: string; media: string; type: string }>;
+  fallbackSrc: string;
+  alt: string;
+  width: number;
+  height: number;
 }
 
 interface DiscoveredVideo {
@@ -169,6 +184,7 @@ interface DiscoveredFavicon {
 
 interface DiscoveredAssets {
   images: DiscoveredImage[];
+  pictures: DiscoveredPicture[];
   videos: DiscoveredVideo[];
   backgrounds: DiscoveredBackground[];
   inlineSvgs: DiscoveredInlineSvg[];
@@ -178,13 +194,37 @@ interface DiscoveredAssets {
 
 async function discoverAssets(page: Page): Promise<DiscoveredAssets> {
   return page.evaluate(() => {
-    // --- Images ---
+    // --- Images (with responsive attributes) ---
     const images = Array.from(document.querySelectorAll('img')).map((img) => ({
       src: img.src || img.currentSrc || '',
       alt: img.alt || '',
       width: img.naturalWidth || 0,
       height: img.naturalHeight || 0,
+      srcset: img.srcset || '',
+      sizes: img.sizes || '',
+      dataSrc: img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || '',
+      dataLazy: img.getAttribute('data-lazy') || '',
+      loading: img.loading || '',
+      decoding: img.decoding || '',
+      fetchPriority: (img as HTMLImageElement & { fetchPriority?: string }).fetchPriority || '',
     }));
+
+    // --- Picture elements ---
+    const pictures = Array.from(document.querySelectorAll('picture')).map((pic) => {
+      const sources = Array.from(pic.querySelectorAll('source')).map((s) => ({
+        srcset: s.srcset || '',
+        media: s.getAttribute('media') || '',
+        type: s.type || '',
+      }));
+      const img = pic.querySelector('img');
+      return {
+        sources,
+        fallbackSrc: img?.src || '',
+        alt: img?.alt || '',
+        width: img?.naturalWidth || 0,
+        height: img?.naturalHeight || 0,
+      };
+    });
 
     // --- Videos ---
     const videos = Array.from(document.querySelectorAll('video')).map((v) => {
@@ -242,7 +282,7 @@ async function discoverAssets(page: Page): Promise<DiscoveredAssets> {
     const ogImage =
       document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.content || '';
 
-    return { images, videos, backgrounds, inlineSvgs, favicons, ogImage };
+    return { images, pictures, videos, backgrounds, inlineSvgs, favicons, ogImage };
   });
 }
 
@@ -379,15 +419,48 @@ function buildDownloadQueue(
     queue.push(item);
   }
 
-  // Images.
+  // Images (including srcset variants and lazy-loaded sources).
   for (const img of discovered.images) {
-    enqueue({
-      url: img.src,
-      category: 'images',
-      alt: img.alt,
-      width: img.width,
-      height: img.height,
-    });
+    // Primary src (may be empty for lazy-loaded images).
+    const actualSrc = img.src || img.dataSrc || img.dataLazy;
+    if (actualSrc) {
+      enqueue({
+        url: actualSrc,
+        category: 'images',
+        alt: img.alt,
+        width: img.width,
+        height: img.height,
+      });
+    }
+
+    // srcset variants — download all responsive sizes.
+    if (img.srcset) {
+      const variants = parseSrcset(img.srcset);
+      for (const variantUrl of variants) {
+        enqueue({ url: variantUrl, category: 'images', alt: img.alt });
+      }
+    }
+  }
+
+  // Picture element sources.
+  for (const pic of discovered.pictures) {
+    if (pic.fallbackSrc) {
+      enqueue({
+        url: pic.fallbackSrc,
+        category: 'images',
+        alt: pic.alt,
+        width: pic.width,
+        height: pic.height,
+      });
+    }
+    for (const source of pic.sources) {
+      if (source.srcset) {
+        const variants = parseSrcset(source.srcset);
+        for (const variantUrl of variants) {
+          enqueue({ url: variantUrl, category: 'images' });
+        }
+      }
+    }
   }
 
   // Background images.
@@ -423,6 +496,22 @@ function buildDownloadQueue(
   }
 
   return queue;
+}
+
+// ---------------------------------------------------------------------------
+// srcset parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a srcset attribute value and return an array of image URLs.
+ * Each entry in a srcset is: `<url> <descriptor>` separated by commas.
+ */
+function parseSrcset(srcset: string): string[] {
+  if (!srcset) return [];
+  return srcset
+    .split(',')
+    .map((entry) => entry.trim().split(/\s+/)[0])
+    .filter((url) => url && !url.startsWith('data:'));
 }
 
 // ---------------------------------------------------------------------------

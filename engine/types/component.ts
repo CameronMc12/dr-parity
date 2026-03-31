@@ -85,6 +85,26 @@ export interface SharedComponent {
 // Design tokens (analyzed from raw extraction)
 // ---------------------------------------------------------------------------
 
+export interface GradientStop {
+  color: string;
+  position?: string;
+}
+
+export type GradientType = 'linear' | 'radial' | 'conic';
+
+export interface GradientToken {
+  /** Full CSS gradient value. */
+  value: string;
+  type: GradientType;
+  stops: GradientStop[];
+  /** Angle or direction for linear gradients (e.g. `"135deg"`, `"to right"`). */
+  angle?: string;
+  /** Shape descriptor for radial gradients (e.g. `"ellipse at center"`). */
+  shape?: string;
+  /** Auto-generated CSS custom-property name, e.g. `--gradient-hero`. */
+  cssVariable?: string;
+}
+
 export interface DesignTokens {
   colors: {
     primary: ColorToken;
@@ -101,6 +121,7 @@ export interface DesignTokens {
   spacing: SpacingScale;
   borderRadius: RadiusScale;
   shadows: ShadowToken[];
+  gradients: GradientToken[];
   fonts: FontSpec[];
   /** Sorted list of detected breakpoint widths (px). */
   breakpoints: number[];

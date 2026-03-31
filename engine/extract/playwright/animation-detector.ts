@@ -23,6 +23,7 @@ import type {
   LibraryInfo,
   AnimationDirection,
   AnimationFillMode,
+  StaggerPattern,
 } from "../../types/extraction";
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,8 @@ export interface AnimationDetectionResult {
   animations: AnimationSpec[];
   libraries: LibraryInfo[];
   globalScrollBehavior: "native" | "lenis" | "locomotive" | "custom";
+  /** Detected stagger patterns among sibling elements. */
+  staggerPatterns: StaggerPattern[];
   totalDetected: number;
   detectionDuration: number;
 }
@@ -72,6 +75,36 @@ interface WebAnimationRecord {
 interface ScrollListenerRecord {
   target: string;
   timestamp: number;
+}
+
+interface ScrollTriggerRecord {
+  trigger: string | null;
+  pin?: string | boolean;
+  scrub?: number | boolean;
+  start?: string;
+  end?: string;
+  snap?: number | boolean | Record<string, unknown>;
+  markers?: boolean;
+  toggleClass?: string;
+  toggleActions?: string;
+  onEnter: boolean;
+  onLeave: boolean;
+  onUpdate: boolean;
+  onToggle: boolean;
+  onEnterBack: boolean;
+  onLeaveBack: boolean;
+  animatedProperties?: string[];
+  timestamp: number;
+}
+
+interface IOEffectRecord {
+  selector: string;
+  classesAdded: string[];
+  classesRemoved: string[];
+  styleChanged: boolean;
+  newStyle: string;
+  threshold?: number | number[];
+  rootMargin?: string;
 }
 
 interface ParsedKeyframesRule {
@@ -235,10 +268,160 @@ const runtimeMonitoringScript = `(() => {
     return origAEL.call(this, type, listener, opts);
   };
 
+  // ----- GSAP ScrollTrigger interception (Item 1.3) -----
+  var __drp_scrollTriggers = [];
+
+  function __drpWrapScrollTrigger() {
+    if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") return;
+    try {
+      var OrigCreate = ScrollTrigger.create.bind(ScrollTrigger);
+      ScrollTrigger.create = function(vars) {
+        try {
+          __drp_scrollTriggers.push({
+            trigger: vars.trigger ? __drpSelector(typeof vars.trigger === "string" ? document.querySelector(vars.trigger) : vars.trigger) : null,
+            pin: vars.pin,
+            scrub: vars.scrub,
+            start: vars.start,
+            end: vars.end,
+            snap: vars.snap,
+            markers: vars.markers,
+            toggleClass: vars.toggleClass,
+            toggleActions: vars.toggleActions,
+            onEnter: !!vars.onEnter,
+            onLeave: !!vars.onLeave,
+            onUpdate: !!vars.onUpdate,
+            onToggle: !!vars.onToggle,
+            onEnterBack: !!vars.onEnterBack,
+            onLeaveBack: !!vars.onLeaveBack,
+            timestamp: Date.now()
+          });
+        } catch(e) {}
+        return OrigCreate(vars);
+      };
+    } catch(e) {}
+  }
+
+  function __drpWrapGsapTweens() {
+    if (typeof gsap === "undefined") return;
+    try {
+      var methods = ["to", "from", "fromTo"];
+      for (var mi = 0; mi < methods.length; mi++) {
+        (function(method) {
+          var orig = gsap[method].bind(gsap);
+          gsap[method] = function() {
+            var args = Array.prototype.slice.call(arguments);
+            var vars = method === "fromTo" ? args[2] : args[1];
+            if (vars && vars.scrollTrigger) {
+              try {
+                var st = vars.scrollTrigger;
+                var animProps = Object.keys(vars).filter(function(k) {
+                  return k !== "scrollTrigger" && k !== "duration" && k !== "ease" && k !== "delay";
+                });
+                __drp_scrollTriggers.push({
+                  trigger: st.trigger ? __drpSelector(typeof st.trigger === "string" ? document.querySelector(st.trigger) : st.trigger) : null,
+                  pin: st.pin,
+                  scrub: st.scrub,
+                  start: st.start,
+                  end: st.end,
+                  snap: st.snap,
+                  markers: st.markers,
+                  toggleClass: st.toggleClass,
+                  toggleActions: st.toggleActions,
+                  onEnter: !!st.onEnter,
+                  onLeave: !!st.onLeave,
+                  onUpdate: !!st.onUpdate,
+                  onToggle: !!st.onToggle,
+                  onEnterBack: !!st.onEnterBack,
+                  onLeaveBack: !!st.onLeaveBack,
+                  animatedProperties: animProps,
+                  timestamp: Date.now()
+                });
+              } catch(e) {}
+            }
+            return orig.apply(gsap, args);
+          };
+        })(methods[mi]);
+      }
+    } catch(e) {}
+  }
+
+  __drpWrapScrollTrigger();
+  __drpWrapGsapTweens();
+  setTimeout(function() { __drpWrapScrollTrigger(); __drpWrapGsapTweens(); }, 2000);
+
+  // ----- Enhanced IntersectionObserver effect capture (Item 1.4) -----
+  var __drp_ioEffects = [];
+
+  // Patch the existing IO wrapper's callback to capture class/style changes
+  // We do this by wrapping the user's callback in a MutationObserver-based diff
+  var __drp_ioTargetSnapshots = new WeakMap();
+
+  // Observe intersecting elements for class/style mutations after callback fires
+  var __drp_ioMutObs = new MutationObserver(function(mutations) {
+    for (var m = 0; m < mutations.length; m++) {
+      var mut = mutations[m];
+      var el = mut.target;
+      var sel = __drpSelector(el);
+      var snapshot = __drp_ioTargetSnapshots.get(el);
+      if (!snapshot) continue;
+
+      var currentClasses = Array.from(el.classList);
+      var added = currentClasses.filter(function(c) { return snapshot.classes.indexOf(c) === -1; });
+      var removed = snapshot.classes.filter(function(c) { return currentClasses.indexOf(c) === -1; });
+      var currentStyle = el.getAttribute("style") || "";
+      var styleChanged = snapshot.style !== currentStyle;
+
+      if (added.length > 0 || removed.length > 0 || styleChanged) {
+        __drp_ioEffects.push({
+          selector: sel,
+          classesAdded: added,
+          classesRemoved: removed,
+          styleChanged: styleChanged,
+          newStyle: currentStyle,
+          threshold: snapshot.threshold,
+          rootMargin: snapshot.rootMargin
+        });
+        // Unregister after first capture to avoid noise
+        __drp_ioMutObs.unobserve(el);
+        __drp_ioTargetSnapshots.delete(el);
+      }
+    }
+  });
+
+  // Enhance the already-shimmed IO wrapper to snapshot elements before callback
+  var _PrevIO = window.IntersectionObserver;
+  window.IntersectionObserver = function(callback, options) {
+    var enhancedCallback = function(entries, obs) {
+      for (var i = 0; i < entries.length; i++) {
+        var entry = entries[i];
+        if (entry.isIntersecting) {
+          var el = entry.target;
+          try {
+            // Snapshot current state before callback fires
+            __drp_ioTargetSnapshots.set(el, {
+              classes: Array.from(el.classList),
+              style: el.getAttribute("style") || "",
+              threshold: options ? options.threshold : undefined,
+              rootMargin: options ? options.rootMargin : undefined
+            });
+            // Observe for mutations caused by the callback
+            __drp_ioMutObs.observe(el, { attributes: true, attributeFilter: ["class", "style"] });
+          } catch(e) {}
+        }
+      }
+      return callback(entries, obs);
+    };
+    return new _PrevIO(enhancedCallback, options);
+  };
+  window.IntersectionObserver.prototype = _PrevIO.prototype;
+  Object.defineProperty(window.IntersectionObserver, "name", { value: "IntersectionObserver" });
+
   // ----- Public accessors -----
   window.__drp_getObserverData   = () => JSON.stringify(__drp_observers);
   window.__drp_getWebAnimations  = () => JSON.stringify(__drp_webAnims);
   window.__drp_getScrollListeners = () => JSON.stringify(__drp_scrollLsns);
+  window.__drp_getScrollTriggers = () => JSON.stringify(__drp_scrollTriggers);
+  window.__drp_getIOEffects      = () => JSON.stringify(__drp_ioEffects);
 })();`;
 
 // ---------------------------------------------------------------------------
@@ -272,7 +455,8 @@ export async function detectAnimations(
     ]);
 
   // --- Layer 2: Collect runtime monitoring data ---
-  const [observerData, webAnimData, scrollListenerData] = await collectRuntimeData(page);
+  const [observerData, webAnimData, scrollListenerData, scrollTriggerData, ioEffects] =
+    await collectRuntimeData(page);
 
   // --- Layer 3: Active probing ---
   const scrollAnimations = opts.scrollProbe
@@ -283,17 +467,24 @@ export async function detectAnimations(
     ? await hoverProbe(page, cssTransitions)
     : [];
 
+  // --- Stagger detection ---
+  const staggerPatterns = await detectStaggerPatterns(page);
+
   // --- Assemble results ---
   const keyframeMap = buildKeyframeMap(keyframesRules);
+
+  const ioSpecs = buildIntersectionObserverSpecs(observerData, scrollAnimations);
+  mergeIOEffectsIntoSpecs(ioSpecs, ioEffects);
 
   const allAnimations: AnimationSpec[] = [
     ...buildCssTransitionSpecs(cssTransitions),
     ...buildCssAnimationSpecs(cssAnimations, keyframeMap),
-    ...buildIntersectionObserverSpecs(observerData, scrollAnimations),
+    ...ioSpecs,
     ...buildWebAnimationSpecs(webAnimData),
     ...buildScrollListenerSpecs(scrollListenerData),
     ...buildHoverSpecs(hoverAnimations),
     ...buildLibrarySpecificSpecs(libraries),
+    ...buildScrollTriggerSpecs(scrollTriggerData),
   ];
 
   // Deduplicate by elementSelector + type
@@ -304,6 +495,7 @@ export async function detectAnimations(
     animations: capped,
     libraries,
     globalScrollBehavior: scrollBehavior,
+    staggerPatterns,
     totalDetected: deduped.length,
     detectionDuration: Date.now() - start,
   };
@@ -566,8 +758,8 @@ async function detectScrollBehavior(
 
 async function collectRuntimeData(
   page: Page,
-): Promise<[ObserverRecord[], WebAnimationRecord[], ScrollListenerRecord[]]> {
-  const [rawObservers, rawWebAnims, rawScrollLsns] = await Promise.all([
+): Promise<[ObserverRecord[], WebAnimationRecord[], ScrollListenerRecord[], ScrollTriggerRecord[], IOEffectRecord[]]> {
+  const [rawObservers, rawWebAnims, rawScrollLsns, rawScrollTriggers, rawIOEffects] = await Promise.all([
     page.evaluate(() => {
       const fn = (window as unknown as Record<string, unknown>).__drp_getObserverData as (() => string) | undefined;
       return fn ? fn() : "[]";
@@ -580,12 +772,22 @@ async function collectRuntimeData(
       const fn = (window as unknown as Record<string, unknown>).__drp_getScrollListeners as (() => string) | undefined;
       return fn ? fn() : "[]";
     }),
+    page.evaluate(() => {
+      const fn = (window as unknown as Record<string, unknown>).__drp_getScrollTriggers as (() => string) | undefined;
+      return fn ? fn() : "[]";
+    }),
+    page.evaluate(() => {
+      const fn = (window as unknown as Record<string, unknown>).__drp_getIOEffects as (() => string) | undefined;
+      return fn ? fn() : "[]";
+    }),
   ]);
 
   return [
     safeJsonParse<ObserverRecord[]>(rawObservers, []),
     safeJsonParse<WebAnimationRecord[]>(rawWebAnims, []),
     safeJsonParse<ScrollListenerRecord[]>(rawScrollLsns, []),
+    safeJsonParse<ScrollTriggerRecord[]>(rawScrollTriggers, []),
+    safeJsonParse<IOEffectRecord[]>(rawIOEffects, []),
   ];
 }
 
@@ -1174,6 +1376,224 @@ function notesForIntersection(obs: ObserverRecord, properties: AnimatedProperty[
 function notesForHoverAnimation(h: HoverStyleDiff): string {
   const changes = h.changes.map(c => `${c.property}: ${c.from} → ${c.to}`).join("; ");
   return `On hover, apply: ${changes}. Use transition: ${h.transitionDuration} ${h.transitionTimingFunction}.`;
+}
+
+// ---------------------------------------------------------------------------
+// GSAP ScrollTrigger spec builder (Item 1.3)
+// ---------------------------------------------------------------------------
+
+function buildScrollTriggerSpecs(records: ScrollTriggerRecord[]): AnimationSpec[] {
+  const specs: AnimationSpec[] = [];
+  const seen = new Set<string>();
+
+  for (const st of records) {
+    const key = `${st.trigger ?? "unknown"}|${st.start ?? ""}|${st.end ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const pinLabel = st.pin ? "pinned, " : "";
+    const scrubLabel = st.scrub ? `scrub=${String(st.scrub)}, ` : "";
+    const startLabel = st.start ?? "top center";
+    const endLabel = st.end ?? "bottom center";
+
+    specs.push({
+      id: nextId("gsap-st"),
+      type: "gsap",
+      trigger: {
+        type: st.scrub ? "scroll-progress" : "scroll-position",
+      },
+      properties: (st.animatedProperties ?? []).map(prop => ({
+        property: prop,
+        from: "",
+        to: "",
+      })),
+      duration: 0,
+      easing: "none",
+      delay: 0,
+      iterations: 1,
+      direction: "normal",
+      fillMode: "none",
+      elementSelector: st.trigger ?? "unknown",
+      gsapScrollTriggerConfig: {
+        pin: st.pin,
+        scrub: st.scrub,
+        start: st.start,
+        end: st.end,
+        snap: st.snap,
+        markers: st.markers,
+        toggleClass: st.toggleClass,
+        toggleActions: st.toggleActions,
+        callbacksPresent: {
+          onEnter: st.onEnter,
+          onLeave: st.onLeave,
+          onUpdate: st.onUpdate,
+          onToggle: st.onToggle,
+          onEnterBack: st.onEnterBack,
+          onLeaveBack: st.onLeaveBack,
+        },
+      },
+      humanDescription: `GSAP ScrollTrigger: ${pinLabel}${scrubLabel}start="${startLabel}", end="${endLabel}"`,
+      implementationNotes: `Install gsap and register ScrollTrigger. Use gsap.to() with scrollTrigger config.${st.pin ? " Element is pinned during scroll." : ""}${st.scrub ? " Animation progress is linked to scroll position." : ""}`,
+    });
+  }
+
+  return specs;
+}
+
+// ---------------------------------------------------------------------------
+// IO effects merger (Item 1.4)
+// ---------------------------------------------------------------------------
+
+function mergeIOEffectsIntoSpecs(
+  specs: AnimationSpec[],
+  effects: IOEffectRecord[],
+): void {
+  for (const spec of specs) {
+    const matchingEffects = effects.filter(e => e.selector === spec.elementSelector);
+    if (matchingEffects.length === 0) continue;
+
+    // Take the first matching effect (most relevant)
+    const effect = matchingEffects[0];
+
+    spec.ioEffects = {
+      classesAdded: effect.classesAdded,
+      classesRemoved: effect.classesRemoved,
+      styleChanged: effect.styleChanged,
+      newStyle: effect.newStyle || undefined,
+    };
+
+    // Enrich implementation notes with captured class names
+    const classParts: string[] = [];
+    if (effect.classesAdded.length > 0) {
+      classParts.push(`Classes added on intersect: "${effect.classesAdded.join('", "')}"`);
+    }
+    if (effect.classesRemoved.length > 0) {
+      classParts.push(`Classes removed on intersect: "${effect.classesRemoved.join('", "')}"`);
+    }
+    if (effect.styleChanged && effect.newStyle) {
+      classParts.push(`Inline style changed to: "${effect.newStyle}"`);
+    }
+
+    if (classParts.length > 0) {
+      spec.implementationNotes += ` Captured IO callback effects: ${classParts.join(". ")}.`;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stagger pattern detection (Item 1.6)
+// ---------------------------------------------------------------------------
+
+interface RawStaggerPattern {
+  containerSelector: string;
+  childSelector: string;
+  childCount: number;
+  delayIncrement: number;
+  totalDuration: number;
+  direction: 'forward' | 'reverse';
+  animationType: 'css-animation' | 'css-transition';
+}
+
+async function detectStaggerPatterns(page: Page): Promise<StaggerPattern[]> {
+  const rawPatterns = await page.evaluate(() => {
+    const patterns: Array<{
+      containerSelector: string;
+      childSelector: string;
+      childCount: number;
+      delayIncrement: number;
+      totalDuration: number;
+      direction: 'forward' | 'reverse';
+      animationType: 'css-animation' | 'css-transition';
+    }> = [];
+
+    /** Build a minimal CSS selector for an element. */
+    function miniSelector(el: Element): string {
+      if (el.id) return `#${el.id}`;
+      const tag = el.tagName.toLowerCase();
+      const cls = el.className && typeof el.className === 'string'
+        ? el.className.trim().split(/\s+/)[0]
+        : '';
+      return cls ? `${tag}.${cls}` : tag;
+    }
+
+    // Find container elements that might hold staggered children.
+    const containerSelectors = [
+      'ul', 'ol', 'nav',
+      '[class*="grid"]', '[class*="list"]', '[class*="cards"]',
+      '[class*="features"]', '[class*="items"]', '[class*="stagger"]',
+    ];
+
+    const containers = document.querySelectorAll(containerSelectors.join(', '));
+
+    for (const container of Array.from(containers)) {
+      const children = Array.from(container.children).filter(c => {
+        const cs = getComputedStyle(c);
+        return cs.display !== 'none';
+      });
+
+      if (children.length < 2) continue;
+
+      // Check for animation delays
+      const animDelays: number[] = [];
+      const transDelays: number[] = [];
+      let hasAnimation = false;
+      let hasTransition = false;
+
+      for (const child of children) {
+        const cs = getComputedStyle(child);
+        const animDelay = parseFloat(cs.animationDelay) || 0;
+        const transDelay = parseFloat(cs.transitionDelay) || 0;
+        animDelays.push(animDelay * 1000);
+        transDelays.push(transDelay * 1000);
+        if (cs.animationName !== 'none') hasAnimation = true;
+        if (cs.transitionProperty !== 'all' && cs.transitionProperty !== 'none') {
+          hasTransition = true;
+        }
+      }
+
+      // Check animation delays for arithmetic sequence
+      const delayArrays: Array<{ delays: number[]; type: 'css-animation' | 'css-transition' }> = [];
+      if (hasAnimation) delayArrays.push({ delays: animDelays, type: 'css-animation' });
+      if (hasTransition) delayArrays.push({ delays: transDelays, type: 'css-transition' });
+
+      for (const { delays, type } of delayArrays) {
+        // Need at least one non-zero delay difference
+        const hasNonZero = delays.some((d, i) => i > 0 && Math.abs(d - delays[i - 1]) > 5);
+        if (!hasNonZero) continue;
+
+        const diffs: number[] = [];
+        for (let i = 1; i < delays.length; i++) {
+          diffs.push(Math.round(delays[i] - delays[i - 1]));
+        }
+
+        const avgDiff = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+        if (Math.abs(avgDiff) < 10) continue;
+
+        const isStagger = diffs.every(d => Math.abs(d - avgDiff) < 20);
+        if (!isStagger) continue;
+
+        const direction = avgDiff > 0 ? 'forward' as const : 'reverse' as const;
+        const firstChild = children[0];
+
+        patterns.push({
+          containerSelector: miniSelector(container),
+          childSelector: miniSelector(firstChild),
+          childCount: children.length,
+          delayIncrement: Math.round(Math.abs(avgDiff)),
+          totalDuration: Math.abs(delays[delays.length - 1] - delays[0]),
+          direction,
+          animationType: type,
+        });
+      }
+    }
+
+    return patterns;
+  });
+
+  return rawPatterns.map((p) => ({
+    ...p,
+    animationType: p.animationType as AnimationType,
+  }));
 }
 
 // ---------------------------------------------------------------------------

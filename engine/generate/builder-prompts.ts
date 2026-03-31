@@ -15,8 +15,11 @@ import type {
   AnimationSpec,
   AssetManifest,
   ElementSpec,
+  MediaSpec,
   PageData,
+  PictureSource,
   SectionSpec,
+  StaggerPattern,
 } from '../types/extraction';
 
 // ---------------------------------------------------------------------------
@@ -37,6 +40,8 @@ export interface PromptGenOptions {
   pageData: PageData;
   tokens: DesignTokens;
   components: ComponentNode[];
+  /** Stagger patterns detected across the page. */
+  staggerPatterns?: StaggerPattern[];
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +80,7 @@ export async function generateBuilderPrompts(
       tokens,
       assets: pageData.assets,
       promptFilename: filename,
+      staggerPatterns: options.staggerPatterns ?? [],
     });
 
     await writeFile(filePath, content, 'utf-8');
@@ -101,6 +107,7 @@ interface PromptBuildContext {
   tokens: DesignTokens;
   assets: AssetManifest;
   promptFilename: string;
+  staggerPatterns: StaggerPattern[];
 }
 
 function buildPromptContent(ctx: PromptBuildContext): string {
@@ -169,6 +176,27 @@ function buildPromptContent(ctx: PromptBuildContext): string {
     }
   }
 
+  // Stagger patterns relevant to this section
+  const sectionStaggerPatterns = ctx.staggerPatterns.filter((sp) => {
+    // Include stagger patterns whose container appears within this section's classes
+    const sectionClasses = collectAllClasses(section.elements);
+    const containerClass = sp.containerSelector.replace(/^[a-z]+\./, '');
+    return sectionClasses.includes(containerClass) || sp.containerSelector === section.className;
+  });
+  if (sectionStaggerPatterns.length > 0) {
+    lines.push('## Stagger Animation');
+    lines.push('');
+    for (const sp of sectionStaggerPatterns) {
+      lines.push(`- **Container:** \`${sp.containerSelector}\``);
+      lines.push(`- **Children:** ${sp.childCount} x \`${sp.childSelector}\``);
+      lines.push(`- **Delay between each:** ${sp.delayIncrement}ms`);
+      lines.push(`- **Direction:** ${sp.direction}`);
+      lines.push(`- **Total stagger duration:** ${sp.totalDuration}ms`);
+      lines.push(`- **Animation type:** ${sp.animationType}`);
+      lines.push('');
+    }
+  }
+
   // Text content
   lines.push('## Text Content (verbatim)');
   lines.push('');
@@ -187,6 +215,31 @@ function buildPromptContent(ctx: PromptBuildContext): string {
       lines.push(`- \`${asset.localPath}\` (original: ${asset.originalUrl})`);
     }
     lines.push('');
+  }
+
+  // Responsive image data
+  const responsiveImages = collectResponsiveImages(section.elements);
+  if (responsiveImages.length > 0) {
+    lines.push('## Responsive Images');
+    lines.push('');
+    for (const img of responsiveImages) {
+      lines.push(`### Image: ${img.alt || '(no alt)'}`);
+      lines.push(`- **src:** \`${img.src || img.dataSrc || '(lazy-loaded)'}\``);
+      if (img.srcset) lines.push(`- **srcset:** \`${img.srcset}\``);
+      if (img.sizes) lines.push(`- **sizes:** \`${img.sizes}\``);
+      if (img.loading) lines.push(`- **loading:** ${img.loading}`);
+      if (img.fetchPriority) lines.push(`- **fetchPriority:** ${img.fetchPriority}`);
+      if (img.width && img.height) lines.push(`- **dimensions:** ${img.width} x ${img.height}`);
+      if (img.pictureSources && img.pictureSources.length > 0) {
+        lines.push('- **picture sources:**');
+        for (const source of img.pictureSources) {
+          const mediaPart = source.media ? `, media: \`${source.media}\`` : '';
+          const typePart = source.type ? `, type: ${source.type}` : '';
+          lines.push(`  - srcset: \`${source.srcset}\`${mediaPart}${typePart}`);
+        }
+      }
+      lines.push('');
+    }
   }
 
   // Design tokens
@@ -318,6 +371,18 @@ function appendElementStyles(
       lines.push(JSON.stringify(el.computedStyles, null, 2));
       lines.push('```');
       lines.push('');
+    }
+
+    // Pseudo-element styles
+    if (el.pseudoStyles) {
+      for (const [pseudo, styles] of Object.entries(el.pseudoStyles)) {
+        if (!styles || Object.keys(styles).length === 0) continue;
+        lines.push(`#### ::${pseudo} for \`${selector}\``);
+        lines.push('```json');
+        lines.push(JSON.stringify(styles, null, 2));
+        lines.push('```');
+        lines.push('');
+      }
     }
 
     if (el.states.length > 0) {
@@ -456,6 +521,51 @@ function collectElementAnimations(elements: ElementSpec[]): AnimationSpec[] {
   }
 
   return anims;
+}
+
+// ---------------------------------------------------------------------------
+// Responsive image collector
+// ---------------------------------------------------------------------------
+
+interface ResponsiveImageInfo {
+  src?: string;
+  alt?: string;
+  srcset?: string;
+  sizes?: string;
+  dataSrc?: string;
+  loading?: string;
+  fetchPriority?: string;
+  width?: number;
+  height?: number;
+  pictureSources?: PictureSource[];
+}
+
+function collectResponsiveImages(elements: ElementSpec[]): ResponsiveImageInfo[] {
+  const images: ResponsiveImageInfo[] = [];
+
+  for (const el of elements) {
+    if (el.media?.type === 'image') {
+      const m = el.media;
+      // Include if the image has any responsive attributes
+      if (m.srcset || m.sizes || m.dataSrc || m.dataLazy || m.pictureSources) {
+        images.push({
+          src: m.src,
+          alt: m.alt,
+          srcset: m.srcset,
+          sizes: m.sizes,
+          dataSrc: m.dataSrc ?? m.dataLazy,
+          loading: m.loading,
+          fetchPriority: m.fetchPriority,
+          width: m.naturalWidth,
+          height: m.naturalHeight,
+          pictureSources: m.pictureSources,
+        });
+      }
+    }
+    images.push(...collectResponsiveImages(el.children));
+  }
+
+  return images;
 }
 
 // ---------------------------------------------------------------------------

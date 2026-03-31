@@ -13,8 +13,10 @@ import type {
   ImportSpec,
 } from '../types/component';
 import type {
+  AnimationSpec,
   ElementSpec,
   StateSpec,
+  StaggerPattern,
 } from '../types/extraction';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +32,8 @@ export interface ComponentGenOutput {
 export interface ComponentGenOptions {
   projectDir: string;
   tokens: DesignTokens;
+  /** Stagger patterns detected across the page, used for child animation delays. */
+  staggerPatterns?: StaggerPattern[];
 }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +44,7 @@ export function generateComponent(
   node: ComponentNode,
   options: ComponentGenOptions,
 ): ComponentGenOutput {
-  const content = buildComponentSource(node, options.tokens);
+  const content = buildComponentSource(node, options.tokens, options.staggerPatterns ?? []);
   const filePath = join(options.projectDir, node.filePath);
 
   return { filePath, content, componentName: node.name };
@@ -72,13 +76,18 @@ export async function writeComponents(
 function buildComponentSource(
   node: ComponentNode,
   tokens: DesignTokens,
+  staggerPatterns: StaggerPattern[] = [],
 ): string {
   const { spec } = node;
   const lines: string[] = [];
   const ctx: GenContext = { tokens, indent: 0, needsUseEffect: false, needsUseRef: false, needsUseState: false };
 
-  // Determine hooks needed from animations
+  // Determine hooks needed from animations and stagger patterns
   analyzeHookRequirements(spec, ctx);
+  if (staggerPatterns.length > 0) {
+    ctx.needsUseEffect = true;
+    ctx.needsUseRef = true;
+  }
 
   // "use client" directive
   if (spec.isClient) {
@@ -106,6 +115,12 @@ function buildComponentSource(
   const hookCode = buildAnimationHooks(spec, ctx);
   if (hookCode) {
     lines.push(hookCode);
+  }
+
+  // Stagger animation hooks
+  const staggerCode = buildStaggerHooks(staggerPatterns);
+  if (staggerCode) {
+    lines.push(staggerCode);
   }
 
   // JSX
@@ -249,7 +264,7 @@ function buildAnimationHooks(spec: ComponentSpec, ctx: GenContext): string {
   const gsapAnims = spec.animations.filter((a) => a.type === 'gsap');
   const lenisAnims = spec.animations.filter((a) => a.type === 'lenis');
 
-  // IntersectionObserver hook
+  // IntersectionObserver hook (enhanced with captured IO effects - Item 1.4)
   if (intersectionAnims.length > 0) {
     lines.push('');
     lines.push('  useEffect(() => {');
@@ -262,7 +277,13 @@ function buildAnimationHooks(spec: ComponentSpec, ctx: GenContext): string {
     lines.push('      (entries) => {');
     lines.push('        for (const entry of entries) {');
     lines.push('          if (entry.isIntersecting) {');
-    lines.push('            entry.target.classList.add("animate-in");');
+
+    // Use captured IO effects if available, otherwise fall back to generic "animate-in"
+    const ioCallbackLines = buildIOCallbackLines(intersectionAnims);
+    for (const line of ioCallbackLines) {
+      lines.push(`            ${line}`);
+    }
+
     lines.push('            observer.unobserve(entry.target);');
     lines.push('          }');
     lines.push('        }');
@@ -296,34 +317,74 @@ function buildAnimationHooks(spec: ComponentSpec, ctx: GenContext): string {
     lines.push('  }, []);');
   }
 
-  // GSAP hook
+  // GSAP hook (enhanced with ScrollTrigger support - Item 1.3)
   if (gsapAnims.length > 0) {
+    const hasScrollTrigger = gsapAnims.some((a) => a.gsapScrollTriggerConfig);
+
     lines.push('');
     lines.push('  useEffect(() => {');
     lines.push('    const el = sectionRef.current;');
     lines.push('    if (!el) return;');
     lines.push('');
-    for (const anim of gsapAnims) {
-      if (anim.codeSnippet) {
-        // Use pre-generated code snippet
-        const indented = anim.codeSnippet
-          .split('\n')
-          .map((line) => `    ${line}`)
-          .join('\n');
-        lines.push(indented);
-      } else {
-        // Generate from animation properties
-        const fromProps = anim.properties
-          .map((p) => `${p.property}: "${p.from}"`)
-          .join(', ');
-        const toProps = anim.properties
-          .map((p) => `${p.property}: "${p.to}"`)
-          .join(', ');
-        lines.push(
-          `    gsap.fromTo(el.querySelector("${anim.elementSelector}"), { ${fromProps} }, { ${toProps}, duration: ${anim.duration / 1000}, ease: "${anim.easing}" });`,
-        );
+
+    if (hasScrollTrigger) {
+      // Use dynamic imports for GSAP + ScrollTrigger
+      lines.push('    async function initGsap() {');
+      lines.push('      const gsap = (await import("gsap")).default;');
+      lines.push('      const { ScrollTrigger } = await import("gsap/ScrollTrigger");');
+      lines.push('      gsap.registerPlugin(ScrollTrigger);');
+      lines.push('');
+
+      for (const anim of gsapAnims) {
+        if (anim.codeSnippet) {
+          const indented = anim.codeSnippet
+            .split('\n')
+            .map((line) => `      ${line}`)
+            .join('\n');
+          lines.push(indented);
+        } else if (anim.gsapScrollTriggerConfig) {
+          const stLines = buildGsapScrollTriggerCode(anim);
+          for (const stLine of stLines) {
+            lines.push(`      ${stLine}`);
+          }
+        } else {
+          const fromProps = anim.properties
+            .map((p) => `${p.property}: "${p.from}"`)
+            .join(', ');
+          const toProps = anim.properties
+            .map((p) => `${p.property}: "${p.to}"`)
+            .join(', ');
+          lines.push(
+            `      gsap.fromTo(el.querySelector("${anim.elementSelector}"), { ${fromProps} }, { ${toProps}, duration: ${anim.duration / 1000}, ease: "${anim.easing}" });`,
+          );
+        }
+      }
+
+      lines.push('    }');
+      lines.push('');
+      lines.push('    initGsap();');
+    } else {
+      for (const anim of gsapAnims) {
+        if (anim.codeSnippet) {
+          const indented = anim.codeSnippet
+            .split('\n')
+            .map((line) => `    ${line}`)
+            .join('\n');
+          lines.push(indented);
+        } else {
+          const fromProps = anim.properties
+            .map((p) => `${p.property}: "${p.from}"`)
+            .join(', ');
+          const toProps = anim.properties
+            .map((p) => `${p.property}: "${p.to}"`)
+            .join(', ');
+          lines.push(
+            `    gsap.fromTo(el.querySelector("${anim.elementSelector}"), { ${fromProps} }, { ${toProps}, duration: ${anim.duration / 1000}, ease: "${anim.easing}" });`,
+          );
+        }
       }
     }
+
     lines.push('  }, []);');
   }
 
@@ -350,6 +411,39 @@ function buildAnimationHooks(spec: ComponentSpec, ctx: GenContext): string {
 
   if (lines.length > 0) {
     lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Stagger animation hooks
+// ---------------------------------------------------------------------------
+
+function buildStaggerHooks(staggerPatterns: StaggerPattern[]): string {
+  if (staggerPatterns.length === 0) return '';
+
+  const lines: string[] = [];
+
+  for (const pattern of staggerPatterns) {
+    lines.push('');
+    lines.push(`  /* Stagger: ${pattern.delayIncrement}ms between ${pattern.childCount} children */`);
+    lines.push('  useEffect(() => {');
+    lines.push('    const container = sectionRef.current;');
+    lines.push('    if (!container) return;');
+    lines.push('');
+    lines.push(`    const children = container.querySelectorAll('${pattern.childSelector}');`);
+    lines.push('    children.forEach((child, i) => {');
+    lines.push(`      const el = child as HTMLElement;`);
+
+    if (pattern.direction === 'reverse') {
+      lines.push(`      el.style.animationDelay = \`\${(children.length - 1 - i) * ${pattern.delayIncrement}}ms\`;`);
+    } else {
+      lines.push(`      el.style.animationDelay = \`\${i * ${pattern.delayIncrement}}ms\`;`);
+    }
+
+    lines.push('    });');
+    lines.push('  }, []);');
   }
 
   return lines.join('\n');
@@ -409,14 +503,15 @@ function buildAttributes(el: ElementSpec, tokens: DesignTokens): string {
   // className from Tailwind conversion + original classes
   const twClasses = stylesToTailwind(el.computedStyles, tokens);
   const hoverClasses = buildHoverClasses(el.states);
-  const allClasses = [...el.classes, ...twClasses, ...hoverClasses].filter(Boolean);
+  const pseudoClasses = buildPseudoElementClasses(el);
+  const allClasses = [...el.classes, ...twClasses, ...hoverClasses, ...pseudoClasses].filter(Boolean);
 
   if (allClasses.length > 0) {
     parts.push(`className="${allClasses.join(' ')}"`);
   }
 
   // Inline styles for properties that don't map to Tailwind
-  const inlineStyles = stylesToInline(el.computedStyles);
+  const inlineStyles = stylesToInline(el.computedStyles, tokens);
   if (Object.keys(inlineStyles).length > 0) {
     const styleStr = Object.entries(inlineStyles)
       .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
@@ -433,19 +528,30 @@ function buildAttributes(el: ElementSpec, tokens: DesignTokens): string {
     }
   }
 
-  // Image-specific props
+  // Image-specific props (responsive-aware)
   if (el.tag === 'img' && el.media) {
-    if (el.media.localPath) {
-      parts.push(`src=${JSON.stringify(el.media.localPath)}`);
-    } else if (el.media.src) {
-      parts.push(`src=${JSON.stringify(el.media.src)}`);
+    // Resolve the actual image source: prefer localPath, then src, then data-src/data-lazy
+    const imgSrc = el.media.localPath ?? el.media.src ?? el.media.dataSrc ?? el.media.dataLazy ?? '';
+    if (imgSrc) {
+      parts.push(`src=${JSON.stringify(imgSrc)}`);
     }
     parts.push(`alt=${JSON.stringify(el.media.alt ?? '')}`);
-    if (el.media.naturalWidth) {
-      parts.push(`width={${el.media.naturalWidth}}`);
+
+    const w = el.media.naturalWidth || 800;
+    const h = el.media.naturalHeight || 600;
+    parts.push(`width={${w}}`);
+    parts.push(`height={${h}}`);
+
+    // Responsive sizes prop for next/image when srcset + sizes are available
+    if (el.media.sizes) {
+      parts.push(`sizes=${JSON.stringify(el.media.sizes)}`);
     }
-    if (el.media.naturalHeight) {
-      parts.push(`height={${el.media.naturalHeight}}`);
+
+    // Loading strategy: lazy by default, eager for above-the-fold
+    if (el.media.loading === 'eager' || el.media.fetchPriority === 'high') {
+      parts.push('priority');
+    } else {
+      parts.push('loading="lazy"');
     }
   }
 
@@ -601,6 +707,68 @@ const TAILWIND_MAP: Record<string, (value: string, tokens: DesignTokens) => stri
   },
 };
 
+// ---------------------------------------------------------------------------
+// Gradient → Tailwind mapping
+// ---------------------------------------------------------------------------
+
+/** Map of angle (degrees) to Tailwind gradient direction class. */
+const GRADIENT_DIRECTION_MAP: Record<number, string> = {
+  0: 'bg-gradient-to-t',
+  45: 'bg-gradient-to-tr',
+  90: 'bg-gradient-to-r',
+  135: 'bg-gradient-to-br',
+  180: 'bg-gradient-to-b',
+  225: 'bg-gradient-to-bl',
+  270: 'bg-gradient-to-l',
+  315: 'bg-gradient-to-tl',
+};
+
+/** Tolerance in degrees for snapping to a Tailwind direction. */
+const ANGLE_SNAP_TOLERANCE = 22;
+
+/**
+ * Attempt to map a CSS gradient value to Tailwind utility classes.
+ * Returns an array of classes if mappable, or null for complex gradients
+ * that must fall back to inline styles / CSS custom properties.
+ */
+function mapGradientToTailwind(value: string): string[] | null {
+  if (!value.includes('linear-gradient')) return null;
+
+  const angleMatch = value.match(/linear-gradient\(\s*(\d+)deg/);
+  if (!angleMatch) {
+    // Try keyword directions
+    const dirMatch = value.match(/linear-gradient\(\s*to\s+([\w\s]+)/);
+    if (dirMatch) {
+      const dirMap: Record<string, string> = {
+        'top': 'bg-gradient-to-t',
+        'top right': 'bg-gradient-to-tr',
+        'right': 'bg-gradient-to-r',
+        'bottom right': 'bg-gradient-to-br',
+        'bottom': 'bg-gradient-to-b',
+        'bottom left': 'bg-gradient-to-bl',
+        'left': 'bg-gradient-to-l',
+        'top left': 'bg-gradient-to-tl',
+      };
+      const dir = dirMatch[1].trim().toLowerCase();
+      const cls = dirMap[dir];
+      if (cls) return [cls];
+    }
+    return null;
+  }
+
+  const angle = parseInt(angleMatch[1], 10);
+  const snappedAngles = Object.keys(GRADIENT_DIRECTION_MAP).map(Number);
+  const closest = snappedAngles.reduce((prev, curr) =>
+    Math.abs(curr - angle) < Math.abs(prev - angle) ? curr : prev,
+  );
+
+  if (Math.abs(closest - angle) <= ANGLE_SNAP_TOLERANCE) {
+    return [GRADIENT_DIRECTION_MAP[closest]];
+  }
+
+  return null;
+}
+
 /** Properties that we handle via Tailwind and should NOT emit as inline styles. */
 const TAILWIND_HANDLED_PROPS = new Set(Object.keys(TAILWIND_MAP));
 
@@ -608,6 +776,7 @@ const TAILWIND_HANDLED_PROPS = new Set(Object.keys(TAILWIND_MAP));
 const SKIP_INLINE = new Set([
   ...TAILWIND_HANDLED_PROPS,
   'color', 'backgroundColor', 'background-color', 'borderColor', 'border-color',
+  'background', 'backgroundImage', 'background-image',
   // camelCase duplicates
   'flexDirection', 'flexWrap', 'alignItems', 'justifyContent', 'textAlign',
   'fontWeight', 'whiteSpace', 'textDecoration', 'textTransform', 'fontSize',
@@ -644,6 +813,19 @@ function stylesToTailwind(
       const cls = mapColorToTailwind(value, 'border', tokens);
       if (cls) classes.push(cls);
     }
+
+    // Gradient mapping for background/background-image
+    if (
+      (kebab === 'background' || kebab === 'background-image') &&
+      value.includes('gradient')
+    ) {
+      const gradientClasses = mapGradientToTailwind(value);
+      if (gradientClasses) {
+        classes.push(...gradientClasses);
+      }
+      // Complex gradients that can't be mapped get a CSS variable reference
+      // via the gradient token system — handled in stylesToInline below.
+    }
   }
 
   return classes;
@@ -651,6 +833,7 @@ function stylesToTailwind(
 
 function stylesToInline(
   styles: Record<string, string>,
+  tokens?: DesignTokens,
 ): Record<string, string> {
   const result: Record<string, string> = {};
 
@@ -664,6 +847,20 @@ function stylesToInline(
     // Convert kebab-case to camelCase for React style objects
     const camelProp = kebabToCamel(kebab);
     result[camelProp] = value;
+  }
+
+  // Emit complex gradients as inline backgroundImage if they couldn't map to Tailwind
+  for (const gradientProp of ['background', 'backgroundImage', 'background-image'] as const) {
+    const val = styles[gradientProp];
+    if (val && val.includes('gradient') && !mapGradientToTailwind(val)) {
+      // Check if there's a matching CSS variable from tokens
+      const matchingToken = tokens?.gradients.find((g) => g.value === val);
+      if (matchingToken?.cssVariable) {
+        result['backgroundImage'] = `var(${matchingToken.cssVariable})`;
+      } else {
+        result['backgroundImage'] = val;
+      }
+    }
   }
 
   return result;
@@ -697,6 +894,87 @@ function buildHoverClasses(states: StateSpec[]): string[] {
       }
     }
   }
+  return classes;
+}
+
+// ---------------------------------------------------------------------------
+// Pseudo-element → Tailwind classes
+// ---------------------------------------------------------------------------
+
+function buildPseudoElementClasses(el: ElementSpec): string[] {
+  if (!el.pseudoStyles) return [];
+
+  const classes: string[] = [];
+
+  for (const [pseudo, styles] of Object.entries(el.pseudoStyles)) {
+    if (!styles || Object.keys(styles).length === 0) continue;
+
+    const prefix = pseudo === 'before' ? 'before' : pseudo === 'after' ? 'after' : null;
+    if (!prefix) continue;
+
+    // Content is required for ::before/::after to render
+    const contentVal = styles['content'];
+    if (contentVal) {
+      const cleaned = contentVal.replace(/^["']|["']$/g, '');
+      if (cleaned === '' || cleaned === 'none') {
+        classes.push(`${prefix}:content-['']`);
+      } else {
+        // Escape spaces for Tailwind arbitrary values
+        const escaped = cleaned.replace(/\s/g, '_');
+        classes.push(`${prefix}:content-['${escaped}']`);
+      }
+    }
+
+    if (styles['position'] === 'absolute') classes.push(`${prefix}:absolute`);
+    if (styles['display'] === 'block') classes.push(`${prefix}:block`);
+
+    // Dimensional properties
+    const dimMap: Record<string, string> = {
+      width: 'w', height: 'h', top: 'top', right: 'right',
+      bottom: 'bottom', left: 'left',
+    };
+    for (const [prop, twPrefix] of Object.entries(dimMap)) {
+      const val = styles[prop];
+      if (val) {
+        if (val === '100%') {
+          classes.push(`${prefix}:${twPrefix}-full`);
+        } else if (val === '0px' || val === '0') {
+          classes.push(`${prefix}:${twPrefix}-0`);
+        } else {
+          classes.push(`${prefix}:${twPrefix}-[${val}]`);
+        }
+      }
+    }
+
+    // Background
+    if (styles['backgroundColor'] && styles['backgroundColor'] !== 'rgba(0, 0, 0, 0)') {
+      classes.push(`${prefix}:bg-[${styles['backgroundColor']}]`);
+    }
+    if (styles['backgroundImage']) {
+      classes.push(`${prefix}:bg-[${styles['backgroundImage']}]`);
+    }
+
+    // Border radius
+    if (styles['borderRadius']) {
+      classes.push(`${prefix}:rounded-[${styles['borderRadius']}]`);
+    }
+
+    // Opacity
+    if (styles['opacity'] && styles['opacity'] !== '1') {
+      classes.push(`${prefix}:opacity-[${styles['opacity']}]`);
+    }
+
+    // Transform
+    if (styles['transform'] && styles['transform'] !== 'none') {
+      classes.push(`${prefix}:[transform:${styles['transform'].replace(/\s/g, '_')}]`);
+    }
+
+    // z-index
+    if (styles['zIndex'] && styles['zIndex'] !== 'auto') {
+      classes.push(`${prefix}:z-[${styles['zIndex']}]`);
+    }
+  }
+
   return classes;
 }
 
@@ -799,6 +1077,95 @@ function htmlAttrToJsx(attr: string): string | null {
   };
   if (attr.startsWith('aria-') || attr.startsWith('data-')) return attr;
   return map[attr] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// GSAP ScrollTrigger code generation (Item 1.3)
+// ---------------------------------------------------------------------------
+
+function buildGsapScrollTriggerCode(anim: AnimationSpec): string[] {
+  const stConfig = anim.gsapScrollTriggerConfig;
+  if (!stConfig) return [];
+
+  const lines: string[] = [];
+  const selector = anim.elementSelector;
+  const targetExpr = selector === 'unknown' ? 'el' : `el.querySelector("${selector}")`;
+
+  // Build scrollTrigger config object
+  const stParts: string[] = [];
+  stParts.push('trigger: el');
+  if (stConfig.pin != null) {
+    stParts.push(`pin: ${JSON.stringify(stConfig.pin)}`);
+  }
+  if (stConfig.scrub != null) {
+    stParts.push(`scrub: ${JSON.stringify(stConfig.scrub)}`);
+  }
+  if (stConfig.start) {
+    stParts.push(`start: ${JSON.stringify(stConfig.start)}`);
+  }
+  if (stConfig.end) {
+    stParts.push(`end: ${JSON.stringify(stConfig.end)}`);
+  }
+  if (stConfig.snap != null) {
+    stParts.push(`snap: ${JSON.stringify(stConfig.snap)}`);
+  }
+  if (stConfig.toggleClass) {
+    stParts.push(`toggleClass: ${JSON.stringify(stConfig.toggleClass)}`);
+  }
+  if (stConfig.toggleActions) {
+    stParts.push(`toggleActions: ${JSON.stringify(stConfig.toggleActions)}`);
+  }
+
+  // Build animated properties
+  const animProps = anim.properties
+    .filter((p) => p.to !== '')
+    .map((p) => `${p.property}: "${p.to}"`)
+    .join(', ');
+
+  const animPropsStr = animProps ? `, ${animProps}` : '';
+
+  lines.push(`gsap.to(${targetExpr}, {`);
+  lines.push(`  scrollTrigger: {`);
+  for (const part of stParts) {
+    lines.push(`    ${part},`);
+  }
+  lines.push(`  }${animPropsStr},`);
+  lines.push(`});`);
+
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// IO callback code generation (Item 1.4)
+// ---------------------------------------------------------------------------
+
+function buildIOCallbackLines(anims: AnimationSpec[]): string[] {
+  // Check if any animation has captured IO effects
+  const animWithEffects = anims.find((a) => a.ioEffects);
+
+  if (!animWithEffects?.ioEffects) {
+    // Fall back to generic "animate-in" class
+    return ['entry.target.classList.add("animate-in");'];
+  }
+
+  const effects = animWithEffects.ioEffects;
+  const lines: string[] = [];
+
+  if (effects.classesAdded.length > 0) {
+    const escaped = effects.classesAdded.map((c) => JSON.stringify(c)).join(', ');
+    lines.push(`entry.target.classList.add(${escaped});`);
+  }
+  if (effects.classesRemoved.length > 0) {
+    const escaped = effects.classesRemoved.map((c) => JSON.stringify(c)).join(', ');
+    lines.push(`entry.target.classList.remove(${escaped});`);
+  }
+
+  // If no class changes were captured, fall back to generic
+  if (lines.length === 0) {
+    lines.push('entry.target.classList.add("animate-in");');
+  }
+
+  return lines;
 }
 
 // ---------------------------------------------------------------------------
