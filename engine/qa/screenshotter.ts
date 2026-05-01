@@ -9,7 +9,12 @@ import type { Browser, Page } from 'playwright';
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
 import { waitForAssetsToLoad, type AssetWaitOptions } from './asset-waiter';
-import { applyContentMasks, type ContentMask } from './content-masker';
+import {
+  applyContentMasks,
+  type ContentMask,
+  type MaskFireReport,
+  type MaskViewport,
+} from './content-masker';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -18,6 +23,8 @@ import { applyContentMasks, type ContentMask } from './content-masker';
 export interface ScreenshotSet {
   original: ViewportScreenshots;
   clone: ViewportScreenshots;
+  /** Mask fire reports keyed by `{site}-{viewport}`. */
+  maskReports?: Record<string, MaskFireReport[]>;
 }
 
 export interface ViewportScreenshots {
@@ -64,6 +71,11 @@ function buildFilename(site: 'original' | 'clone', viewport: string): string {
   return `${site}-${viewport}.png`;
 }
 
+interface TakeScreenshotResult {
+  path: string;
+  maskReports: MaskFireReport[];
+}
+
 async function takeScreenshot(
   browser: Browser,
   url: string,
@@ -72,11 +84,13 @@ async function takeScreenshot(
   fullPage: boolean,
   assetWaitOptions?: AssetWaitOptions,
   contentMasks?: ContentMask,
-): Promise<string> {
+): Promise<TakeScreenshotResult> {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
   });
   const page: Page = await context.newPage();
+
+  let maskReports: MaskFireReport[] = [];
 
   try {
     await page.goto(url, {
@@ -88,18 +102,202 @@ async function takeScreenshot(
     await waitForAssetsToLoad(page, assetWaitOptions);
 
     // Mask dynamic content (timestamps, cookie banners, etc.)
-    const restoreMasks = await applyContentMasks(page, contentMasks);
+    const viewportName = viewport.name as MaskViewport;
+    const { cleanup, fired } = await applyContentMasks(
+      page,
+      contentMasks,
+      viewportName,
+    );
+    maskReports = fired;
 
     try {
       await page.screenshot({ path: outputPath, fullPage });
     } finally {
-      await restoreMasks();
+      await cleanup();
     }
   } finally {
     await context.close();
   }
 
-  return outputPath;
+  return { path: outputPath, maskReports };
+}
+
+// ---------------------------------------------------------------------------
+// Hover state capture
+// ---------------------------------------------------------------------------
+
+/** CSS properties whose change in a `:hover` rule indicates a meaningful visual diff. */
+const HOVER_RELEVANT_PROPERTIES = new Set([
+  'transform',
+  'background',
+  'background-color',
+  'background-image',
+  'color',
+  'box-shadow',
+  'opacity',
+  'border',
+  'border-color',
+  'filter',
+  'scale',
+]);
+
+export interface HoverStateScreenshot {
+  selector: string;
+  /** Element label (textContent or aria-label, truncated). */
+  label: string;
+  /** Path to the captured hover screenshot PNG. */
+  path: string;
+  viewport: string;
+}
+
+export interface HoverStyleRule {
+  selector: string;
+  properties: Record<string, string>;
+}
+
+export interface CaptureHoverOptions {
+  /** Output directory for hover screenshots. */
+  outputDir: string;
+  /** Extracted stylesheet rules; the helper picks out `:hover` rules. */
+  hoverRules?: HoverStyleRule[];
+  /** Optional explicit selectors (overrides hoverRules detection). */
+  selectors?: string[];
+  /** Cap on number of elements to hover. Default 30. */
+  maxElements?: number;
+  /** Padding (px) around element bounding box. Default 20. */
+  paddingPx?: number;
+  /** Wait time (ms) for the hover transition. Default 400. */
+  hoverWaitMs?: number;
+  /** Viewport name for screenshot filename. */
+  viewport?: string;
+}
+
+/**
+ * Find selectors that have a `:hover` rule changing a visually-relevant property.
+ * Reads from already-extracted stylesheet data — no live DOM detection needed.
+ */
+export function findHoverCandidateSelectors(
+  hoverRules: HoverStyleRule[],
+): string[] {
+  const candidates = new Set<string>();
+  for (const rule of hoverRules) {
+    if (!rule.selector.includes(':hover')) continue;
+
+    const hasRelevant = Object.keys(rule.properties).some((prop) =>
+      HOVER_RELEVANT_PROPERTIES.has(prop.toLowerCase()),
+    );
+    if (!hasRelevant) continue;
+
+    // Strip pseudo-class and other compound selectors (split on comma for multi-selector rules)
+    for (const part of rule.selector.split(',')) {
+      const baseSelector = part
+        .replace(/:hover\b/g, '')
+        .replace(/:focus\b/g, '')
+        .replace(/:active\b/g, '')
+        .trim();
+      if (baseSelector.length > 0) candidates.add(baseSelector);
+    }
+  }
+  return Array.from(candidates);
+}
+
+/**
+ * Hover each candidate element on `page`, wait for transitions to settle, and
+ * capture a tight bounding-box screenshot.
+ *
+ * Caps at `maxElements` (default 30) to keep QA runs fast.
+ */
+export async function captureHoverStates(
+  page: Page,
+  options: CaptureHoverOptions,
+): Promise<HoverStateScreenshot[]> {
+  const {
+    outputDir,
+    hoverRules = [],
+    selectors,
+    maxElements = 30,
+    paddingPx = 20,
+    hoverWaitMs = 400,
+    viewport = 'desktop',
+  } = options;
+
+  await mkdir(outputDir, { recursive: true });
+
+  const candidateSelectors =
+    selectors && selectors.length > 0
+      ? selectors
+      : findHoverCandidateSelectors(hoverRules);
+
+  if (candidateSelectors.length === 0) return [];
+
+  const results: HoverStateScreenshot[] = [];
+  const seen = new Set<string>();
+
+  for (const selector of candidateSelectors) {
+    if (results.length >= maxElements) break;
+
+    let locator;
+    try {
+      locator = page.locator(selector).first();
+    } catch {
+      continue;
+    }
+
+    // Skip if not visible
+    const visible = await locator.isVisible().catch(() => false);
+    if (!visible) continue;
+
+    const box = await locator.boundingBox().catch(() => null);
+    if (!box || box.width <= 0 || box.height <= 0) continue;
+
+    // Dedupe by bounding-box position to avoid re-capturing the same element
+    const key = `${Math.round(box.x)}-${Math.round(box.y)}-${Math.round(box.width)}-${Math.round(box.height)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    try {
+      await locator.scrollIntoViewIfNeeded({ timeout: 1000 });
+      await locator.hover({ timeout: 1000 });
+      await page.waitForTimeout(hoverWaitMs);
+    } catch {
+      continue;
+    }
+
+    // Recompute box AFTER hover (transform may move it)
+    const hoveredBox = await locator.boundingBox().catch(() => null);
+    if (!hoveredBox) continue;
+
+    const clip = {
+      x: Math.max(0, hoveredBox.x - paddingPx),
+      y: Math.max(0, hoveredBox.y - paddingPx),
+      width: hoveredBox.width + paddingPx * 2,
+      height: hoveredBox.height + paddingPx * 2,
+    };
+
+    const label = await locator
+      .evaluate((el) => {
+        const text = (el.textContent ?? '').trim().slice(0, 40);
+        return text.length > 0 ? text : (el as HTMLElement).getAttribute('aria-label') ?? el.tagName;
+      })
+      .catch(() => 'unknown');
+
+    const safeLabel = String(results.length).padStart(3, '0');
+    const filename = `hover-${viewport}-${safeLabel}.png`;
+    const filepath = join(outputDir, filename);
+
+    try {
+      await page.screenshot({ path: filepath, clip });
+      results.push({ selector, label, path: filepath, viewport });
+    } catch {
+      // skip
+    }
+
+    // Move mouse away to reset hover state for next iteration
+    await page.mouse.move(0, 0).catch(() => {});
+    await page.waitForTimeout(50);
+  }
+
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +363,7 @@ export async function captureScreenshots(
 
   const original: Record<string, string> = {};
   const clone: Record<string, string> = {};
+  const maskReports: Record<string, MaskFireReport[]> = {};
 
   // Process each viewport sequentially to avoid resource contention
   for (const vp of viewports) {
@@ -177,8 +376,10 @@ export async function captureScreenshots(
       takeScreenshot(browser, cloneUrl, vp, clonePath, fullPage, assetWaitOptions, contentMasks),
     ]);
 
-    original[vp.name] = origResult;
-    clone[vp.name] = cloneResult;
+    original[vp.name] = origResult.path;
+    clone[vp.name] = cloneResult.path;
+    maskReports[`original-${vp.name}`] = origResult.maskReports;
+    maskReports[`clone-${vp.name}`] = cloneResult.maskReports;
   }
 
   return {
@@ -192,5 +393,6 @@ export async function captureScreenshots(
       tablet: clone['tablet'],
       mobile: clone['mobile'],
     },
+    maskReports,
   };
 }

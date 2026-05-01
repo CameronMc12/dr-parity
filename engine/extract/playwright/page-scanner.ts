@@ -656,11 +656,46 @@ async function extractSection(
         isVisible: boolean;
         media?: MediaSpecRaw;
         pseudoStyles?: PseudoStylesRaw;
+        shadowHost?: string;
+      }
+
+      // ---- Shadow DOM helpers ----
+      function buildHostSelector(host: Element): string {
+        if (host.id) return '#' + host.id;
+        const tag = host.tagName.toLowerCase();
+        if (host.className && typeof host.className === 'string') {
+          const cls = host.className.trim().split(/\s+/).filter(Boolean).slice(0, 2).join('.');
+          if (cls) return tag + '.' + cls;
+        }
+        return tag;
+      }
+
+      /**
+       * Yield all child Elements of `parent`, treating an open shadow root's
+       * children as if they were direct children. Closed shadow roots are
+       * inaccessible by spec and are skipped silently.
+       */
+      function walkWithShadow(parent: Element): { element: Element; shadowHost?: string }[] {
+        const out: { element: Element; shadowHost?: string }[] = [];
+        for (let i = 0; i < parent.children.length; i++) {
+          const child = parent.children[i];
+          out.push({ element: child });
+        }
+        // Open shadow root children of `parent` are part of `parent`'s composed tree.
+        const root = (parent as Element & { shadowRoot?: ShadowRoot }).shadowRoot;
+        if (root && root.mode === 'open') {
+          const hostSel = buildHostSelector(parent);
+          for (let i = 0; i < root.children.length; i++) {
+            out.push({ element: root.children[i], shadowHost: hostSel });
+          }
+        }
+        return out;
       }
 
       function walkElement(
         element: Element,
         depth: number,
+        shadowHost?: string,
       ): ElementRaw | null {
         if (elementCount >= config.maxElements) return null;
         if (depth > config.maxDepth) return null;
@@ -754,6 +789,7 @@ async function extractSection(
           isVisible: visible,
           media,
           pseudoStyles,
+          shadowHost,
         };
 
         // For SVGs, store the full markup as innerHTML.
@@ -761,10 +797,11 @@ async function extractSection(
           result.innerHTML = element.outerHTML;
         }
 
-        // Recurse into children.
-        for (let i = 0; i < element.children.length; i++) {
+        // Recurse into children, descending into open shadow roots.
+        const childEntries = walkWithShadow(element);
+        for (const entry of childEntries) {
           if (elementCount >= config.maxElements) break;
-          const child = walkElement(element.children[i], depth + 1);
+          const child = walkElement(entry.element, depth + 1, entry.shadowHost ?? shadowHost);
           if (child !== null) {
             result.children.push(child);
           }
@@ -783,11 +820,12 @@ async function extractSection(
       const zIndex = parseInt(sectionStyles.zIndex, 10) || 0;
       const position = sectionStyles.position;
 
-      // Walk all children.
+      // Walk all children, descending into open shadow roots.
       const children: ElementRaw[] = [];
-      for (let i = 0; i < el.children.length; i++) {
+      const sectionChildEntries = walkWithShadow(el);
+      for (const entry of sectionChildEntries) {
         if (elementCount >= config.maxElements) break;
-        const child = walkElement(el.children[i], 1);
+        const child = walkElement(entry.element, 1, entry.shadowHost);
         if (child !== null) {
           children.push(child);
         }
@@ -938,6 +976,7 @@ interface SerializedElement {
     placeholder?: Record<string, string>;
     marker?: Record<string, string>;
   };
+  shadowHost?: string;
 }
 
 interface SerializedMedia {
@@ -979,6 +1018,7 @@ function deserializeElement(raw: SerializedElement): ElementSpec {
     isVisible: raw.isVisible,
     media: raw.media ? deserializeMedia(raw.media) : undefined,
     pseudoStyles: raw.pseudoStyles,
+    shadowHost: raw.shadowHost,
   };
 }
 

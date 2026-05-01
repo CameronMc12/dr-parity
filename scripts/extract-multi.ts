@@ -22,6 +22,7 @@ import type {
 import {
   injectAnimationMonitors,
   detectAnimations,
+  collectViewTransitions,
 } from '../engine/extract/playwright/animation-detector';
 import { scanPage } from '../engine/extract/playwright/page-scanner';
 import { extractFonts } from '../engine/extract/playwright/font-extractor';
@@ -146,6 +147,8 @@ async function extractSinglePage(
     mapInteractions(page),
   ]);
 
+  const viewTransitions = await collectViewTransitions(page);
+
   return mergeExtractionData({
     url,
     scan,
@@ -154,6 +157,8 @@ async function extractSinglePage(
     assets,
     interactions,
     stylesheets,
+    registeredProperties: stylesheets?.registeredProperties,
+    viewTransitions,
     viewport: VIEWPORT,
   });
 }

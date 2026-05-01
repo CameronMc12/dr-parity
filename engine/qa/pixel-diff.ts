@@ -225,6 +225,109 @@ function computeWeightedDiff(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Hover-state diff (informational, threshold 90%)
+// ---------------------------------------------------------------------------
+
+export interface HoverDiffPair {
+  selector: string;
+  label: string;
+  original: string;
+  clone: string;
+  viewport: string;
+}
+
+export interface HoverDiffResult {
+  selector: string;
+  label: string;
+  viewport: string;
+  matchPercent: number;
+  passed: boolean;
+  diffImage: string;
+}
+
+export interface HoverDiffSummary {
+  results: HoverDiffResult[];
+  averageMatchPercent: number;
+  passed: boolean;
+  /** Threshold used (default 90). */
+  threshold: number;
+}
+
+const HOVER_DIFF_THRESHOLD = 90;
+
+/**
+ * Compare hover-state screenshots between original and clone.
+ * Informational only — does not gate the overall QA pass.
+ */
+export async function runHoverDiff(
+  pairs: HoverDiffPair[],
+  outputDir: string,
+  threshold = HOVER_DIFF_THRESHOLD,
+): Promise<HoverDiffSummary> {
+  await mkdir(outputDir, { recursive: true });
+
+  const results: HoverDiffResult[] = [];
+
+  for (const pair of pairs) {
+    try {
+      const [rawA, rawB] = await Promise.all([
+        readPng(pair.original),
+        readPng(pair.clone),
+      ]);
+      const { imgA, imgB, width, height } = resizeToSmaller(rawA, rawB);
+
+      if (width === 0 || height === 0) continue;
+
+      const diffPng = new PNG({ width, height });
+      const totalPixels = width * height;
+
+      const differentPixels = pixelmatch(
+        imgA.data,
+        imgB.data,
+        diffPng.data,
+        width,
+        height,
+        { threshold: 0.1 },
+      );
+
+      const diffFilename = `hover-diff-${pair.viewport}-${basename(pair.original)}`;
+      const diffImagePath = join(outputDir, diffFilename);
+      const encoded = await encodePng(diffPng);
+      await writeFile(diffImagePath, encoded);
+
+      const percentDifferent =
+        totalPixels > 0 ? (differentPixels / totalPixels) * 100 : 0;
+      const matchPercent = Number((100 - percentDifferent).toFixed(2));
+
+      results.push({
+        selector: pair.selector,
+        label: pair.label,
+        viewport: pair.viewport,
+        matchPercent,
+        passed: matchPercent >= threshold,
+        diffImage: diffImagePath,
+      });
+    } catch {
+      // Skip pairs that fail to compare (missing file, parse error, etc.)
+    }
+  }
+
+  const averageMatchPercent =
+    results.length > 0
+      ? Number(
+          (results.reduce((s, r) => s + r.matchPercent, 0) / results.length).toFixed(2),
+        )
+      : 100;
+
+  return {
+    results,
+    averageMatchPercent,
+    passed: averageMatchPercent >= threshold,
+    threshold,
+  };
+}
+
 /**
  * Run pixel-diff across all viewport pairs and produce a combined result.
  */

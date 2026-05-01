@@ -20,6 +20,8 @@ import type {
   SpacingToken,
   ElementSpec,
   StylesheetExtractionResult,
+  RegisteredProperty,
+  ViewTransitionRecord,
 } from '../types/extraction';
 import type { PageScanResult } from './playwright/page-scanner';
 import type { AnimationDetectionResult } from './playwright/animation-detector';
@@ -39,12 +41,24 @@ export interface MergeInput {
   assets: AssetCollectionResult;
   interactions: InteractionMapResult;
   stylesheets?: StylesheetExtractionResult;
+  registeredProperties?: RegisteredProperty[];
+  viewTransitions?: ViewTransitionRecord[];
   viewport: { width: number; height: number };
 }
 
 export function mergeExtractionData(input: MergeInput): PageData {
-  const { url, scan, animations, fonts, assets, interactions, stylesheets, viewport } =
-    input;
+  const {
+    url,
+    scan,
+    animations,
+    fonts,
+    assets,
+    interactions,
+    stylesheets,
+    registeredProperties,
+    viewTransitions,
+    viewport,
+  } = input;
 
   // 1. Start with sections from the scanner
   const sections = scan.sections.map((section) =>
@@ -78,6 +92,8 @@ export function mergeExtractionData(input: MergeInput): PageData {
     assets: assets.manifest,
     techStack,
     stylesheets,
+    registeredProperties,
+    viewTransitions,
     extractedAt: new Date().toISOString(),
   };
 }

@@ -259,7 +259,7 @@ export async function compareSections(
   ]);
 
   // Apply content masks to both pages before capturing any sections
-  const [restoreOriginal, restoreClone] = await Promise.all([
+  const [originalMaskResult, cloneMaskResult] = await Promise.all([
     applyContentMasks(originalPage, contentMasks),
     applyContentMasks(clonePage, contentMasks),
   ]);
@@ -338,7 +338,7 @@ export async function compareSections(
     }
   } finally {
     // Restore masked content, then close the browser contexts
-    await Promise.all([restoreOriginal(), restoreClone()]).catch(() => {
+    await Promise.all([originalMaskResult.cleanup(), cloneMaskResult.cleanup()]).catch(() => {
       /* best-effort restore before close */
     });
     await Promise.all([

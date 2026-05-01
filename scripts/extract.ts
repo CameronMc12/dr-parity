@@ -13,6 +13,7 @@ import { chromium, type Page } from 'playwright';
 import {
   injectAnimationMonitors,
   detectAnimations,
+  collectViewTransitions,
 } from '../engine/extract/playwright/animation-detector';
 import { scanPage, scanPageBatched } from '../engine/extract/playwright/page-scanner';
 import { extractFonts } from '../engine/extract/playwright/font-extractor';
@@ -561,6 +562,8 @@ async function main(): Promise<void> {
     // Phase 7: Merge
     // -----------------------------------------------------------------------
     progress.startPhase('Merging extraction data');
+    const viewTransitions = await collectViewTransitions(page);
+
     const pageData = mergeExtractionData({
       url,
       scan,
@@ -569,6 +572,8 @@ async function main(): Promise<void> {
       assets: assets!,
       interactions: interactions!,
       stylesheets: stylesheetResult!,
+      registeredProperties: stylesheetResult?.registeredProperties,
+      viewTransitions,
       viewport: VIEWPORT,
     });
     progress.endPhase();

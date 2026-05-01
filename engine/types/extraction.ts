@@ -42,8 +42,52 @@ export interface PageData {
   techStack: TechStackAnalysis;
   /** Extracted CSS stylesheets with rules, variables, keyframes, and media queries. */
   stylesheets?: StylesheetExtractionResult;
+  /** CSS `@property` declarations registered for typed custom properties. */
+  registeredProperties?: RegisteredProperty[];
+  /** Captured `document.startViewTransition()` calls plus `::view-transition-*` CSS rules. */
+  viewTransitions?: ViewTransitionRecord[];
   /** ISO-8601 timestamp of when extraction ran. */
   extractedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// CSS @property declarations
+// ---------------------------------------------------------------------------
+
+export interface RegisteredProperty {
+  /** Property name including the leading `--`. */
+  name: string;
+  /** Declared `syntax` descriptor, e.g. `<color>`, `<length>`, `*`. */
+  syntax: string;
+  /** Declared `inherits` descriptor as a boolean. */
+  inherits: boolean;
+  /** Declared `initial-value` descriptor (raw string, may be empty). */
+  initialValue: string;
+  /** URL of the stylesheet that declared the property, or null for inline. */
+  sourceStylesheet?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// View Transitions API
+// ---------------------------------------------------------------------------
+
+/** Captured runtime call to `document.startViewTransition()` plus matching CSS. */
+export interface ViewTransitionRecord {
+  /** Timestamp (ms since epoch) when the call was observed. */
+  timestamp: number;
+  /** Stringified update callback passed to `startViewTransition`, if any. */
+  callbackSource?: string;
+  /** Selectors of `::view-transition-*` pseudo-element rules referenced in CSS. */
+  pseudoSelectors: string[];
+  /** Specific `::view-transition-*` rules found in stylesheets. */
+  cssRules: ViewTransitionCssRule[];
+}
+
+export interface ViewTransitionCssRule {
+  /** Full selector text, e.g. `::view-transition-old(root)`. */
+  selector: string;
+  /** Declared property/value pairs. */
+  properties: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +234,8 @@ export interface ElementSpec {
     placeholder?: Record<string, string>;
     marker?: Record<string, string>;
   };
+  /** When this element lives inside an open Shadow DOM, the selector of the host. */
+  shadowHost?: string;
 }
 
 export interface StateSpec {
@@ -324,7 +370,33 @@ export interface AnimationSpec {
     classesRemoved: string[];
     styleChanged: boolean;
     newStyle?: string;
+    /** Stringified IO callback source (`callback.toString()`). */
+    callbackSource?: string;
+    /** Captured constructor `options` (root, rootMargin, thresholds). */
+    options?: {
+      rootMargin?: string;
+      thresholds?: number[];
+      hasRoot?: boolean;
+    };
+    /** Heuristic-parsed animation inferred from the callback source. */
+    inferredAnimation?: InferredIOAnimation;
   };
+}
+
+/** Heuristic guess at what an IntersectionObserver callback animates. */
+export interface InferredIOAnimation {
+  /** Mechanism family detected in the callback. */
+  type: 'class-toggle' | 'inline-style' | 'gsap' | 'web-animation' | 'unknown';
+  /** Target CSS property when known (e.g. `opacity`, `transform`). */
+  targetProperty?: string;
+  /** Starting value when known. */
+  fromValue?: string;
+  /** Ending value when known. */
+  toValue?: string;
+  /** Class name added/removed when type is `class-toggle`. */
+  className?: string;
+  /** Raw matched fragment that produced this inference (debugging aid). */
+  rawMatch?: string;
 }
 
 export type AnimationTriggerType =

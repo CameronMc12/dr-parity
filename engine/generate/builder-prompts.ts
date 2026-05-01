@@ -33,6 +33,22 @@ export interface BuilderPrompt {
   filePath: string;
   /** Full Markdown prompt text. */
   content: string;
+  /** Number of lines in the prompt content. */
+  lineCount: number;
+  /**
+   * If this prompt was split into sub-component prompts, the children appear
+   * here. The parent prompt itself becomes a "shell" that composes them.
+   */
+  children?: BuilderPrompt[];
+  /**
+   * True when this prompt is a shell wrapping sub-components. Builders for
+   * shells should compose the sub-components rather than re-implementing them.
+   */
+  isShell?: boolean;
+  /** Depth in the split tree (0 = root section, 1 = first split, 2 = nested). */
+  splitDepth: number;
+  /** Slot names this shell expects (one per sub-component). */
+  slotNames?: string[];
 }
 
 export interface PromptGenOptions {
@@ -52,6 +68,24 @@ const MAX_HTML_BYTES = 30_000;
 const PROMPTS_DIR = 'docs/research/prompts';
 const MAX_WRITE_RETRIES = 2;
 
+/** Default line threshold above which a prompt is split into sub-components. */
+const DEFAULT_PROMPT_LINE_LIMIT = 150;
+/**
+ * Per-child spec line count above which a child is considered "complex enough"
+ * to warrant its own sub-component prompt.
+ */
+const COMPLEX_CHILD_LINE_THRESHOLD = 40;
+/** Maximum recursion depth for splitting (0 = root, 1 = first split, 2 = nested). */
+const MAX_SPLIT_DEPTH = 2;
+
+function getPromptLineLimit(): number {
+  const env = process.env.PROMPT_LINE_LIMIT;
+  if (!env) return DEFAULT_PROMPT_LINE_LIMIT;
+  const parsed = parseInt(env, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return DEFAULT_PROMPT_LINE_LIMIT;
+  return parsed;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -63,6 +97,7 @@ export async function generateBuilderPrompts(
   const promptsDir = join(projectDir, PROMPTS_DIR);
   await mkdir(promptsDir, { recursive: true });
 
+  const lineLimit = getPromptLineLimit();
   const prompts: BuilderPrompt[] = [];
 
   for (const section of pageData.sections) {
@@ -70,31 +105,264 @@ export async function generateBuilderPrompts(
     const componentName = component?.name ?? toPascalCase(section.name);
     const targetFile = component?.filePath ?? `src/components/${componentName}.tsx`;
 
-    const slug = slugify(section.name);
-    const filename = `section-${section.id}-${slug}.md`;
-    const filePath = join(promptsDir, filename);
-
-    const content = buildPromptContent({
+    const sectionPrompt = await buildSectionPromptTree({
       section,
       componentName,
       targetFile,
       tokens,
       assets: pageData.assets,
-      promptFilename: filename,
       staggerPatterns: options.staggerPatterns ?? [],
+      promptsDir,
+      lineLimit,
+      splitDepth: 0,
     });
 
-    await writePromptWithRetry(filePath, content);
-
-    prompts.push({
-      sectionId: section.id,
-      componentName,
-      filePath,
-      content,
-    });
+    prompts.push(sectionPrompt);
   }
 
   return prompts;
+}
+
+// ---------------------------------------------------------------------------
+// Prompt-tree builder with auto-split
+// ---------------------------------------------------------------------------
+
+interface SectionPromptTreeContext {
+  section: SectionSpec;
+  componentName: string;
+  targetFile: string;
+  tokens: DesignTokens;
+  assets: AssetManifest;
+  staggerPatterns: StaggerPattern[];
+  promptsDir: string;
+  lineLimit: number;
+  splitDepth: number;
+}
+
+async function buildSectionPromptTree(
+  ctx: SectionPromptTreeContext,
+): Promise<BuilderPrompt> {
+  const slug = slugify(ctx.section.name);
+  const filename = `section-${ctx.section.id}-${slug}.md`;
+  const filePath = join(ctx.promptsDir, filename);
+
+  const fullContent = buildPromptContent({
+    section: ctx.section,
+    componentName: ctx.componentName,
+    targetFile: ctx.targetFile,
+    tokens: ctx.tokens,
+    assets: ctx.assets,
+    promptFilename: filename,
+    staggerPatterns: ctx.staggerPatterns,
+  });
+
+  const lineCount = countLines(fullContent);
+
+  // Decide whether to split.
+  const canSplit = ctx.splitDepth < MAX_SPLIT_DEPTH;
+  const candidates = canSplit
+    ? findSplitCandidates(ctx.section.elements, COMPLEX_CHILD_LINE_THRESHOLD)
+    : [];
+
+  if (lineCount <= ctx.lineLimit || candidates.length < 2) {
+    await writePromptWithRetry(filePath, fullContent);
+    return {
+      sectionId: ctx.section.id,
+      componentName: ctx.componentName,
+      filePath,
+      content: fullContent,
+      lineCount,
+      splitDepth: ctx.splitDepth,
+    };
+  }
+
+  // Build sub-component prompts for each candidate child.
+  const children: BuilderPrompt[] = [];
+  const slotNames: string[] = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const childEl = candidates[i]!;
+    const childName = `${ctx.componentName}${suffixForChild(childEl, i)}`;
+    const childTargetDir = `src/components/sections/${slugifyForDir(ctx.componentName)}`;
+    const childTargetFile = `${childTargetDir}/${childName}.tsx`;
+    const childSection = wrapElementAsSection(ctx.section, childEl, childName, i);
+
+    const childPrompt = await buildSectionPromptTree({
+      section: childSection,
+      componentName: childName,
+      targetFile: childTargetFile,
+      tokens: ctx.tokens,
+      assets: ctx.assets,
+      staggerPatterns: ctx.staggerPatterns,
+      promptsDir: ctx.promptsDir,
+      lineLimit: ctx.lineLimit,
+      splitDepth: ctx.splitDepth + 1,
+    });
+
+    children.push(childPrompt);
+    slotNames.push(childName);
+  }
+
+  // Build the shell prompt: layout-only + slot references.
+  const shellSection = stripCandidatesFromSection(ctx.section, candidates);
+  const shellContent = buildShellPromptContent({
+    section: shellSection,
+    originalSection: ctx.section,
+    componentName: ctx.componentName,
+    targetFile: ctx.targetFile,
+    tokens: ctx.tokens,
+    assets: ctx.assets,
+    promptFilename: filename,
+    staggerPatterns: ctx.staggerPatterns,
+    slotNames,
+    children,
+  });
+
+  await writePromptWithRetry(filePath, shellContent);
+
+  return {
+    sectionId: ctx.section.id,
+    componentName: ctx.componentName,
+    filePath,
+    content: shellContent,
+    lineCount: countLines(shellContent),
+    splitDepth: ctx.splitDepth,
+    isShell: true,
+    slotNames,
+    children,
+  };
+}
+
+function countLines(content: string): number {
+  if (!content) return 0;
+  return content.split('\n').length;
+}
+
+function suffixForChild(el: ElementSpec, index: number): string {
+  // Prefer the first class as a hint, fall back to tag + index.
+  if (el.id) return toPascalCase(el.id);
+  if (el.classes.length > 0) return toPascalCase(el.classes[0]!);
+  return `${toPascalCase(el.tag)}${index + 1}`;
+}
+
+function slugifyForDir(name: string): string {
+  return name
+    .replace(/([a-z])([A-Z])/g, '$1-$2')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Identify direct children of the section root that are complex enough to
+ * warrant their own sub-component prompt.
+ */
+function findSplitCandidates(
+  elements: ElementSpec[],
+  threshold: number,
+): ElementSpec[] {
+  // Walk into a single root wrapper if present (sections often wrap
+  // everything in one container element).
+  let pool = elements;
+  if (pool.length === 1 && pool[0]!.children.length > 1) {
+    pool = pool[0]!.children;
+  }
+
+  const candidates: ElementSpec[] = [];
+  for (const el of pool) {
+    if (estimateElementLineCost(el) >= threshold) {
+      candidates.push(el);
+    }
+  }
+  return candidates;
+}
+
+/**
+ * Rough line-cost estimate for an element subtree, used purely as a heuristic
+ * to decide whether to split. Mirrors the structure produced by
+ * `appendElementStyles` and `serializeElementTreeToHtml`.
+ */
+function estimateElementLineCost(el: ElementSpec): number {
+  let cost = 1;
+  // Computed styles render as JSON blocks: ~ keys + 4 wrapper lines.
+  const styleKeys = Object.keys(el.computedStyles).length;
+  if (styleKeys > 0) cost += styleKeys + 4;
+  if (el.pseudoStyles) {
+    for (const styles of Object.values(el.pseudoStyles)) {
+      if (styles && Object.keys(styles).length > 0) {
+        cost += Object.keys(styles).length + 4;
+      }
+    }
+  }
+  cost += el.states.length * 6;
+  cost += el.animations.length * 12;
+  for (const child of el.children) {
+    cost += estimateElementLineCost(child);
+  }
+  return cost;
+}
+
+/**
+ * Wrap a single element as if it were a top-level section, so the existing
+ * prompt builder can render it self-contained.
+ */
+function wrapElementAsSection(
+  parent: SectionSpec,
+  el: ElementSpec,
+  name: string,
+  index: number,
+): SectionSpec {
+  return {
+    id: `${parent.id}-sub-${index}`,
+    name,
+    order: parent.order,
+    boundingRect: el.boundingRect,
+    screenshots: parent.screenshots,
+    elements: [el],
+    animations: el.animations,
+    interactionModel: parent.interactionModel,
+    responsiveBreakpoints: parent.responsiveBreakpoints,
+    zIndex: parent.zIndex,
+    position: parent.position,
+    backgroundColor: parent.backgroundColor,
+    className: el.classes[0] ?? parent.className,
+    confidence: parent.confidence,
+  };
+}
+
+/**
+ * Produce a section copy where the candidate children have been replaced with
+ * lightweight slot placeholders. The shell prompt renders this stripped tree.
+ */
+function stripCandidatesFromSection(
+  section: SectionSpec,
+  candidates: ElementSpec[],
+): SectionSpec {
+  const candidateSet = new Set(candidates);
+  const replaceChildren = (els: ElementSpec[]): ElementSpec[] =>
+    els.map((el) => {
+      if (candidateSet.has(el)) {
+        return makeSlotPlaceholder(el);
+      }
+      if (el.children.length === 0) return el;
+      return { ...el, children: replaceChildren(el.children) };
+    });
+
+  return { ...section, elements: replaceChildren(section.elements) };
+}
+
+function makeSlotPlaceholder(el: ElementSpec): ElementSpec {
+  return {
+    tag: 'slot',
+    classes: el.classes,
+    computedStyles: {},
+    attributes: { 'data-slot-for': el.classes[0] ?? el.tag },
+    children: [],
+    states: [],
+    animations: [],
+    boundingRect: el.boundingRect,
+    isVisible: el.isVisible,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +602,127 @@ function buildPromptContent(ctx: PromptBuildContext): string {
   lines.push('7. Add `"use client"` if ANY interactivity is present (animations, scroll, click, hover effects)');
   lines.push('8. Respect `prefers-reduced-motion` for all animations');
   lines.push('9. Verify: `npx tsc --noEmit`');
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Shell prompt builder (used when a section is split)
+// ---------------------------------------------------------------------------
+
+interface ShellPromptContext {
+  /** Section with sub-component candidates replaced by <slot> placeholders. */
+  section: SectionSpec;
+  /** Original un-stripped section, used for global metadata. */
+  originalSection: SectionSpec;
+  componentName: string;
+  targetFile: string;
+  tokens: DesignTokens;
+  assets: AssetManifest;
+  promptFilename: string;
+  staggerPatterns: StaggerPattern[];
+  slotNames: string[];
+  children: BuilderPrompt[];
+}
+
+function buildShellPromptContent(ctx: ShellPromptContext): string {
+  const { componentName, targetFile, slotNames, children } = ctx;
+  const lines: string[] = [];
+
+  lines.push(`# Builder Prompt (Shell): ${componentName}`);
+  lines.push('');
+  lines.push(
+    '> This section was auto-split because its full prompt exceeded the line limit. This shell composes the layout and references sub-components built from their own prompt files.',
+  );
+  lines.push('');
+
+  lines.push('## Target File');
+  lines.push(`\`${targetFile}\``);
+  lines.push('');
+
+  lines.push('## Sub-Components (build first, then compose)');
+  lines.push('');
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]!;
+    lines.push(
+      `${i + 1}. **${slotNames[i]}** — prompt: \`${child.filePath}\`, target: \`src/components/sections/${slugifyForDir(componentName)}/${slotNames[i]}.tsx\``,
+    );
+  }
+  lines.push('');
+  lines.push(
+    'Each sub-component must be built from its own prompt file and imported into this shell. Do NOT re-implement their internal markup here — only render them as JSX elements where the matching `<slot data-slot-for="...">` placeholder appears below.',
+  );
+  lines.push('');
+
+  // Reference screenshot
+  lines.push('## Reference Screenshot');
+  lines.push(`\`${ctx.originalSection.screenshots.desktop}\``);
+  lines.push('');
+
+  // Stripped HTML structure with slot placeholders
+  lines.push('## Layout Structure (with `<slot>` placeholders for sub-components)');
+  lines.push('```html');
+  const html = serializeElementTreeToHtml(ctx.section.elements);
+  lines.push(truncateString(html, MAX_HTML_BYTES));
+  lines.push('```');
+  lines.push('');
+
+  // Slot mapping table
+  lines.push('## Slot Mapping');
+  lines.push('');
+  lines.push('| Slot placeholder | Sub-component to render |');
+  lines.push('| --- | --- |');
+  for (let i = 0; i < children.length; i++) {
+    const slotName = slotNames[i]!;
+    const childEl = ctx.children[i];
+    const slotKey = childEl ? slugifyForDir(slotName) : slotName;
+    lines.push(`| \`<slot data-slot-for="...">\` (#${i + 1}) | \`<${slotName} />\` (${slotKey}) |`);
+  }
+  lines.push('');
+
+  // Computed styles for the layout shell only (post-strip)
+  lines.push('## Computed Styles Per Layout Element');
+  lines.push('');
+  appendElementStyles(lines, ctx.section.elements, []);
+
+  // Section-level animations (still relevant to the shell)
+  if (ctx.originalSection.animations.length > 0) {
+    lines.push('## Section-Level Animations');
+    lines.push('');
+    for (let i = 0; i < ctx.originalSection.animations.length; i++) {
+      appendAnimation(lines, ctx.originalSection.animations[i]!, i + 1);
+    }
+  }
+
+  // Design tokens
+  lines.push('## Design Tokens');
+  lines.push('```css');
+  for (const [varName, value] of Object.entries(ctx.tokens.cssVariables)) {
+    lines.push(`${varName}: ${value};`);
+  }
+  lines.push('```');
+  lines.push('');
+
+  // Section metadata
+  lines.push('## Section Metadata');
+  lines.push('');
+  lines.push(`- **Position:** ${ctx.originalSection.position}`);
+  lines.push(`- **Z-Index:** ${ctx.originalSection.zIndex}`);
+  lines.push(`- **Background Color:** ${ctx.originalSection.backgroundColor}`);
+  lines.push(`- **Interaction Model:** ${ctx.originalSection.interactionModel}`);
+  lines.push('');
+
+  // Builder instructions
+  lines.push('## Instructions');
+  lines.push('');
+  lines.push('1. Ensure each sub-component above has been built from its own prompt file.');
+  lines.push(`2. Create \`${targetFile}\``);
+  lines.push('3. Translate the layout HTML to JSX, preserving exact computed styles.');
+  lines.push('4. Replace each `<slot data-slot-for="...">` with the matching sub-component element.');
+  lines.push('5. Import sub-components from their target paths above.');
+  lines.push('6. Add `"use client"` if any sub-component or layout has interactivity.');
+  lines.push('7. Verify: `npx tsc --noEmit`');
   lines.push('');
 
   return lines.join('\n');

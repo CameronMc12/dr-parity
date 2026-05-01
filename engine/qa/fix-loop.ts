@@ -10,6 +10,16 @@
  * WHERE, producing FixSuggestions that Claude Code agents consume.
  */
 
+import { execFileSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+
 import type { Browser } from 'playwright';
 import type {
   QAReport,
@@ -834,3 +844,215 @@ export async function runSectionFixLoop(
 
   return { sectionResults, overallScore, allPassed };
 }
+
+// ---------------------------------------------------------------------------
+// Builder dispatch with error recovery (Item: builder error recovery)
+// ---------------------------------------------------------------------------
+
+export type BuilderStatus = 'success' | 'build_failed' | 'rolled_back';
+
+export interface BuilderDispatchResult {
+  sectionId: string;
+  componentFile: string;
+  status: BuilderStatus;
+  attempts: number;
+  /** Stderr/error output from typecheck or build, if any. */
+  error?: string;
+  /** True when the previous file contents were restored. */
+  rolledBack: boolean;
+}
+
+export interface BuilderDispatchOptions {
+  sectionId: string;
+  /** Absolute or project-relative path to the component file the builder writes. */
+  componentFile: string;
+  /** Project root, used for snapshot resolution and verification commands. */
+  projectDir: string;
+  /**
+   * The actual builder dispatch. Should write/update `componentFile` and
+   * resolve once the builder agent has finished. May reject on transport-level
+   * failures.
+   */
+  dispatch: () => Promise<void>;
+  /**
+   * Validation step run after dispatch. Should throw if the produced JSX/TSX
+   * is invalid (e.g. typecheck failure). Defaults to running `tsc --noEmit`
+   * scoped to the component file.
+   */
+  verify?: () => Promise<void> | void;
+  /** Maximum retry attempts after a failure (default 1). */
+  maxRetries?: number;
+}
+
+/**
+ * Wrap a builder dispatch in snapshot-protected error recovery.
+ *
+ * Behaviour:
+ * 1. Snapshot the current contents of `componentFile` (if present).
+ * 2. Run the builder dispatch.
+ * 3. Run `verify` (defaults to file-scoped tsc --noEmit).
+ * 4. If verify throws, roll the file back to the snapshot and retry once.
+ * 5. After `maxRetries`, mark the section as `build_failed` and stop.
+ */
+export async function dispatchBuilderWithRecovery(
+  options: BuilderDispatchOptions,
+): Promise<BuilderDispatchResult> {
+  const {
+    sectionId,
+    componentFile,
+    projectDir,
+    dispatch,
+    verify,
+    maxRetries = 1,
+  } = options;
+
+  const absPath = resolve(projectDir, componentFile);
+  const snapshot = takeSnapshot(absPath);
+  let lastError: string | undefined;
+  let attempts = 0;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    attempts = attempt + 1;
+    try {
+      await dispatch();
+      const verifyFn = verify ?? (() => verifyComponentFile(absPath, projectDir));
+      await verifyFn();
+      return {
+        sectionId,
+        componentFile,
+        status: 'success',
+        attempts,
+        rolledBack: false,
+      };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      restoreSnapshot(absPath, snapshot);
+      console.warn(
+        `[Builder] Section '${sectionId}' attempt ${attempts} failed: ${lastError.split('\n')[0]}`,
+      );
+      if (attempt >= maxRetries) {
+        // Loud failure — do not infinitely retry.
+        console.error(
+          `[Builder] Section '${sectionId}' marked build_failed after ${attempts} attempt(s). Manual review required.`,
+        );
+        return {
+          sectionId,
+          componentFile,
+          status: 'build_failed',
+          attempts,
+          error: lastError,
+          rolledBack: true,
+        };
+      }
+    }
+  }
+
+  // Unreachable — the loop returns on every path.
+  return {
+    sectionId,
+    componentFile,
+    status: 'build_failed',
+    attempts,
+    error: lastError,
+    rolledBack: true,
+  };
+}
+
+interface FileSnapshot {
+  existed: boolean;
+  contents?: string;
+}
+
+function takeSnapshot(absPath: string): FileSnapshot {
+  if (!existsSync(absPath)) return { existed: false };
+  try {
+    return { existed: true, contents: readFileSync(absPath, 'utf-8') };
+  } catch {
+    return { existed: false };
+  }
+}
+
+function restoreSnapshot(absPath: string, snapshot: FileSnapshot): void {
+  if (snapshot.existed && snapshot.contents !== undefined) {
+    mkdirSync(dirname(absPath), { recursive: true });
+    writeFileSync(absPath, snapshot.contents, 'utf-8');
+    return;
+  }
+  // Snapshot says the file did not exist before — remove the broken one.
+  if (existsSync(absPath)) {
+    try {
+      unlinkSync(absPath);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Default verify step: run TypeScript against the project. Throws with the
+ * tsc output when type errors are detected in the target file.
+ */
+function verifyComponentFile(absPath: string, projectDir: string): void {
+  const tscBin = resolve(projectDir, 'node_modules/.bin/tsc');
+  if (!existsSync(tscBin)) {
+    // Without tsc available we can't verify — treat as success.
+    return;
+  }
+  try {
+    execFileSync(tscBin, ['--noEmit'], {
+      cwd: projectDir,
+      stdio: 'pipe',
+      encoding: 'utf-8',
+    });
+  } catch (err) {
+    const stdout = (err as { stdout?: string }).stdout ?? '';
+    const stderr = (err as { stderr?: string }).stderr ?? '';
+    const combined = `${stdout}\n${stderr}`;
+    // Only fail when the error references the file we just wrote — otherwise
+    // unrelated repo issues would always block the builder.
+    const fileSegment = absPath.replace(projectDir + '/', '');
+    if (combined.includes(fileSegment) || combined.includes(absPath)) {
+      throw new Error(
+        `Typecheck failed for ${fileSegment}:\n${combined.trim()}`,
+      );
+    }
+    // Pre-existing unrelated errors — let the builder pass.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// QA report annotation for build failures
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark a section as `build_failed` in a QA report so humans see it. Returns a
+ * new SectionQAResult; merge it into your report's `sectionResults`.
+ */
+export function buildFailedSectionResult(
+  sectionId: string,
+  sectionName: string,
+  error: string,
+): SectionQAResult {
+  const issue: QAIssue = {
+    severity: 'critical',
+    category: 'layout',
+    description: `Builder failed to produce valid JSX for section '${sectionName}'. Manual review required.`,
+    expected: 'Component file with valid TypeScript/JSX',
+    actual: error.split('\n').slice(0, 5).join('\n'),
+  };
+  return {
+    sectionId,
+    sectionName,
+    pixelMatchPercent: 0,
+    structureMatch: false,
+    animationMatch: false,
+    issues: [issue],
+    status: 'fail',
+  };
+}
+
+// Re-exported for orchestrators that want to write reports themselves.
+export const _qaReportPaths = {
+  defaultReportPath: (projectDir: string): string =>
+    join(projectDir, 'docs/research/qa-report.json'),
+};

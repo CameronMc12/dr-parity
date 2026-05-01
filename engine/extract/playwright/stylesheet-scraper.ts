@@ -19,6 +19,7 @@ import type {
   CSSVariableData,
   CSSVariableReference,
   ContainerQueryData,
+  RegisteredProperty,
 } from '../../types/extraction';
 
 // Re-export types for convenience
@@ -31,7 +32,13 @@ export type {
   CSSVariableData,
   CSSVariableReference,
   ContainerQueryData,
+  RegisteredProperty,
 };
+
+/** Result returned by `scrapeStylesheets`, augmented with `@property` rules. */
+export interface ScrapeResult extends StylesheetExtractionResult {
+  registeredProperties: RegisteredProperty[];
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -42,7 +49,7 @@ export type {
  */
 export async function scrapeStylesheets(
   page: Page,
-): Promise<StylesheetExtractionResult> {
+): Promise<ScrapeResult> {
   const stylesheets = await page.evaluate(() => {
     // ----- Helpers (run in browser) -----
 
@@ -310,6 +317,9 @@ export async function scrapeStylesheets(
     }
   }
 
+  // --- @property declarations (CSSPropertyRule) ---
+  const registeredProperties = await scrapeRegisteredProperties(page);
+
   return {
     stylesheets: stylesheets as StylesheetData[],
     totalRules,
@@ -317,7 +327,105 @@ export async function scrapeStylesheets(
     totalMediaQueries,
     totalVariables,
     variableReferences: allVariableReferences,
+    registeredProperties,
   };
+}
+
+// ---------------------------------------------------------------------------
+// CSS @property declarations
+// ---------------------------------------------------------------------------
+
+/**
+ * Iterate every accessible stylesheet rule and capture `@property` declarations.
+ * `CSSRule.type === 7` is the legacy numeric type for `CSSPropertyRule`; we also
+ * fall back to `cssText.startsWith('@property')` for engines that don't expose
+ * that constant.
+ */
+async function scrapeRegisteredProperties(page: Page): Promise<RegisteredProperty[]> {
+  return page.evaluate(() => {
+    const collected: Array<{
+      name: string;
+      syntax: string;
+      inherits: boolean;
+      initialValue: string;
+      sourceStylesheet: string | null;
+    }> = [];
+
+    const PROPERTY_RULE_TYPE = 7;
+
+    const parseFromCssText = (
+      cssText: string,
+      sourceStylesheet: string | null,
+    ): void => {
+      // @property --name { syntax: ...; inherits: ...; initial-value: ...; }
+      const match = cssText.match(/@property\s+(--[a-zA-Z0-9_-]+)\s*\{([^}]*)\}/);
+      if (!match) return;
+      const name = match[1];
+      const body = match[2];
+      let syntax = '';
+      let inherits = false;
+      let initialValue = '';
+      for (const decl of body.split(';')) {
+        const colonIdx = decl.indexOf(':');
+        if (colonIdx === -1) continue;
+        const prop = decl.slice(0, colonIdx).trim().toLowerCase();
+        const value = decl.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+        if (prop === 'syntax') syntax = value;
+        else if (prop === 'inherits') inherits = value === 'true';
+        else if (prop === 'initial-value') initialValue = value;
+      }
+      collected.push({ name, syntax, inherits, initialValue, sourceStylesheet });
+    };
+
+    try {
+      for (const sheet of Array.from(document.styleSheets)) {
+        const sourceUrl = sheet.href ?? null;
+        let rules: CSSRuleList;
+        try {
+          rules = sheet.cssRules;
+        } catch {
+          continue;
+        }
+        for (const rule of Array.from(rules)) {
+          // CSSPropertyRule may be exposed via name on Chromium; check duck-typed shape too.
+          const ruleType = (rule as CSSRule).type;
+          const cssText = rule.cssText ?? '';
+          const isPropertyRule =
+            ruleType === PROPERTY_RULE_TYPE ||
+            cssText.startsWith('@property');
+          if (!isPropertyRule) continue;
+
+          const propertyRule = rule as CSSRule & {
+            name?: string;
+            syntax?: string;
+            inherits?: boolean;
+            initialValue?: string;
+          };
+
+          if (typeof propertyRule.name === 'string' && typeof propertyRule.syntax === 'string') {
+            collected.push({
+              name: propertyRule.name,
+              syntax: propertyRule.syntax,
+              inherits: !!propertyRule.inherits,
+              initialValue: propertyRule.initialValue ?? '',
+              sourceStylesheet: sourceUrl,
+            });
+          } else {
+            parseFromCssText(cssText, sourceUrl);
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // Deduplicate by name; later declarations win.
+    const byName = new Map<string, typeof collected[number]>();
+    for (const entry of collected) {
+      byName.set(entry.name, entry);
+    }
+    return Array.from(byName.values());
+  });
 }
 
 // ---------------------------------------------------------------------------

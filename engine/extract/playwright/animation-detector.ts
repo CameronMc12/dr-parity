@@ -24,6 +24,8 @@ import type {
   AnimationDirection,
   AnimationFillMode,
   StaggerPattern,
+  InferredIOAnimation,
+  ViewTransitionRecord,
 } from "../../types/extraction";
 
 // ---------------------------------------------------------------------------
@@ -90,6 +92,13 @@ interface ObserverRecord {
   label: string;
   threshold: number | undefined;
   rootMargin: string | undefined;
+  callbackSource?: string;
+  ioOptions?: {
+    hasRoot?: boolean;
+    rootMargin?: string;
+    thresholds?: number[];
+  };
+  inferredAnimation?: InferredIOAnimation;
   timestamp: number;
 }
 
@@ -243,7 +252,63 @@ const runtimeMonitoringScript = `(() => {
 
   // ----- IntersectionObserver shim -----
   const OrigIO = window.IntersectionObserver;
+  // Capture per-observer metadata: callback source + normalised options.
+  const __drp_ioCallbacks = new WeakMap();
+
+  function __drpNormalizeThresholds(t) {
+    if (typeof t === "number") return [t];
+    if (Array.isArray(t)) return t.slice();
+    return [];
+  }
+
+  function __drpInferFromCallback(src) {
+    if (!src || typeof src !== "string") return null;
+    try {
+      // class toggle: classList.add('foo') | classList.remove('foo') | classList.toggle('foo')
+      var clsAdd = src.match(/classList\\.add\\(\\s*['"\`]([^'"\`]+)['"\`]/);
+      if (clsAdd) {
+        return { type: "class-toggle", className: clsAdd[1], rawMatch: clsAdd[0] };
+      }
+      var clsTog = src.match(/classList\\.(?:toggle|remove)\\(\\s*['"\`]([^'"\`]+)['"\`]/);
+      if (clsTog) {
+        return { type: "class-toggle", className: clsTog[1], rawMatch: clsTog[0] };
+      }
+      // inline style: el.style.opacity = '1' or el.style.transform = 'translateY(0)'
+      var styleSet = src.match(/\\.style\\.([a-zA-Z][a-zA-Z0-9_-]*)\\s*=\\s*['"\`]([^'"\`]+)['"\`]/);
+      if (styleSet) {
+        var prop = styleSet[1].replace(/[A-Z]/g, function(c) { return "-" + c.toLowerCase(); });
+        return { type: "inline-style", targetProperty: prop, toValue: styleSet[2], rawMatch: styleSet[0] };
+      }
+      // GSAP: gsap.to(target, { opacity: 1, ... }) | gsap.from(...) | gsap.fromTo(...)
+      var gsapTo = src.match(/gsap\\.(?:to|from|fromTo)\\s*\\([^)]*\\{([^}]+)\\}/);
+      if (gsapTo) {
+        var body = gsapTo[1];
+        var prop2Match = body.match(/\\b(opacity|y|x|scale|rotation|translateX|translateY|autoAlpha)\\s*:\\s*([\\-0-9.eE+]+|['"\`][^'"\`]+['"\`])/);
+        var inf = { type: "gsap", rawMatch: gsapTo[0] };
+        if (prop2Match) {
+          inf.targetProperty = prop2Match[1];
+          inf.toValue = prop2Match[2].replace(/^['"\`]|['"\`]$/g, "");
+        }
+        return inf;
+      }
+      // Element.animate(...)
+      if (/\\.animate\\s*\\(/.test(src)) {
+        return { type: "web-animation", rawMatch: ".animate(" };
+      }
+    } catch (_) { /* never break the page */ }
+    return { type: "unknown" };
+  }
+
   window.IntersectionObserver = function(callback, options) {
+    var callbackSource = "";
+    try { callbackSource = typeof callback === "function" ? Function.prototype.toString.call(callback) : ""; } catch (_) {}
+    var inferred = __drpInferFromCallback(callbackSource);
+    var normalised = {
+      hasRoot: !!(options && options.root),
+      rootMargin: options && options.rootMargin,
+      thresholds: __drpNormalizeThresholds(options && options.threshold),
+    };
+
     const wrapped = function(entries, obs) {
       for (let i = 0; i < entries.length; i++) {
         const e = entries[i];
@@ -254,6 +319,9 @@ const runtimeMonitoringScript = `(() => {
               selector: __drpSelector(e.target),
               threshold: options?.threshold,
               rootMargin: options?.rootMargin,
+              callbackSource: callbackSource,
+              ioOptions: normalised,
+              inferredAnimation: inferred,
               timestamp: Date.now(),
             });
           } catch (_) { /* never break the page */ }
@@ -261,7 +329,11 @@ const runtimeMonitoringScript = `(() => {
       }
       return callback(entries, obs);
     };
-    return new OrigIO(wrapped, options);
+    var instance = new OrigIO(wrapped, options);
+    try {
+      __drp_ioCallbacks.set(instance, { callbackSource: callbackSource, options: normalised, inferredAnimation: inferred });
+    } catch (_) {}
+    return instance;
   };
   window.IntersectionObserver.prototype = OrigIO.prototype;
   Object.defineProperty(window.IntersectionObserver, "name", { value: "IntersectionObserver" });
@@ -541,6 +613,25 @@ const runtimeMonitoringScript = `(() => {
 
   window.__drp_getVideoScrollSync = function() { return JSON.stringify(__drp_videoScrollSync); };
 
+  // ----- View Transitions API shim -----
+  var __drp_viewTransitions = [];
+  try {
+    if (typeof document !== "undefined" && typeof document.startViewTransition === "function") {
+      var origSVT = document.startViewTransition.bind(document);
+      document.startViewTransition = function(updateCallback) {
+        try {
+          var src = "";
+          try { src = typeof updateCallback === "function" ? Function.prototype.toString.call(updateCallback) : ""; } catch (_) {}
+          __drp_viewTransitions.push({
+            timestamp: Date.now(),
+            callbackSource: src,
+          });
+        } catch (_) {}
+        return origSVT(updateCallback);
+      };
+    }
+  } catch (_) {}
+
   // ----- Public accessors -----
   window.__drp_getObserverData   = () => JSON.stringify(__drp_observers);
   window.__drp_getWebAnimations  = () => JSON.stringify(__drp_webAnims);
@@ -550,6 +641,7 @@ const runtimeMonitoringScript = `(() => {
   window.__drp_getLenisConfig    = () => JSON.stringify(__drp_lenisConfig || {});
   window.__drp_getDetectedLibraries = () => JSON.stringify(__drp_detectedLibraries);
   window.__drp_getVideoScrollSync = window.__drp_getVideoScrollSync;
+  window.__drp_getViewTransitions = () => JSON.stringify(__drp_viewTransitions);
 })();`;
 
 // ---------------------------------------------------------------------------
@@ -1299,6 +1391,18 @@ function buildIntersectionObserverSpecs(
       rootMargin: obs.rootMargin,
     };
 
+    const ioEffects =
+      obs.callbackSource || obs.inferredAnimation || obs.ioOptions
+        ? {
+            classesAdded: [] as string[],
+            classesRemoved: [] as string[],
+            styleChanged: false,
+            callbackSource: obs.callbackSource,
+            options: obs.ioOptions,
+            inferredAnimation: obs.inferredAnimation,
+          }
+        : undefined;
+
     specs.push({
       id: nextId("io"),
       type: "intersection-observer",
@@ -1313,6 +1417,7 @@ function buildIntersectionObserverSpecs(
       elementSelector: obs.selector,
       humanDescription: describeIntersectionAnimation(obs, properties),
       implementationNotes: notesForIntersection(obs, properties),
+      ioEffects,
     });
   }
 
@@ -1710,6 +1815,7 @@ function mergeIOEffectsIntoSpecs(
     const effect = matchingEffects[0];
 
     spec.ioEffects = {
+      ...(spec.ioEffects ?? { classesAdded: [], classesRemoved: [], styleChanged: false }),
       classesAdded: effect.classesAdded,
       classesRemoved: effect.classesRemoved,
       styleChanged: effect.styleChanged,
@@ -2341,4 +2447,77 @@ function safeJsonParse<T>(raw: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+// ---------------------------------------------------------------------------
+// View Transitions API runtime collector
+// ---------------------------------------------------------------------------
+
+interface RawViewTransition {
+  timestamp: number;
+  callbackSource?: string;
+}
+
+/**
+ * Collect runtime `document.startViewTransition()` invocations and merge them
+ * with any `::view-transition-*` CSS rules scraped separately.
+ */
+export async function collectViewTransitions(page: Page): Promise<ViewTransitionRecord[]> {
+  const raw = await page.evaluate(() => {
+    const fn = (window as unknown as Record<string, unknown>).__drp_getViewTransitions as (() => string) | undefined;
+    return fn ? fn() : "[]";
+  });
+  const calls = safeJsonParse<RawViewTransition[]>(raw, []);
+
+  // Scrape any ::view-transition-* CSS rules from accessible stylesheets.
+  const cssRules = await page.evaluate(() => {
+    const out: Array<{ selector: string; properties: Record<string, string> }> = [];
+    try {
+      for (const sheet of Array.from(document.styleSheets)) {
+        let rules: CSSRuleList;
+        try {
+          rules = sheet.cssRules;
+        } catch {
+          continue;
+        }
+        for (const rule of Array.from(rules)) {
+          if (!(rule instanceof CSSStyleRule)) continue;
+          if (!/::view-transition[-a-z]*/.test(rule.selectorText)) continue;
+          const props: Record<string, string> = {};
+          for (let i = 0; i < rule.style.length; i++) {
+            const name = rule.style[i];
+            props[name] = rule.style.getPropertyValue(name);
+          }
+          out.push({ selector: rule.selectorText, properties: props });
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return out;
+  });
+
+  const pseudoSelectors = Array.from(new Set(cssRules.map((r) => r.selector)));
+
+  if (calls.length === 0 && cssRules.length === 0) {
+    return [];
+  }
+
+  if (calls.length === 0) {
+    // CSS-only View Transitions (e.g. @view-transition / view-transition-name)
+    return [
+      {
+        timestamp: Date.now(),
+        pseudoSelectors,
+        cssRules,
+      },
+    ];
+  }
+
+  return calls.map((c) => ({
+    timestamp: c.timestamp,
+    callbackSource: c.callbackSource,
+    pseudoSelectors,
+    cssRules,
+  }));
 }

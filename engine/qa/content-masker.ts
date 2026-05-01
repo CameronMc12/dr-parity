@@ -12,6 +12,19 @@ import type { Page } from 'playwright';
 // Public types
 // ---------------------------------------------------------------------------
 
+export type MaskViewport = 'desktop' | 'tablet' | 'mobile';
+
+export interface RegionMask {
+  /** CSS selector(s) of regions to overlay with a solid color before screenshot. */
+  selector: string;
+  /** Optional viewport restriction. When omitted, the mask applies to all viewports. */
+  viewports?: MaskViewport[];
+  /** Optional human-readable reason (printed in QA output). */
+  reason?: string;
+  /** Solid fill color (default `#FF00FF` magenta — same on both sides so pixelmatch ignores). */
+  fillColor?: string;
+}
+
 export interface ContentMask {
   /** CSS selectors of elements to hide via `visibility: hidden`. */
   hideSelectors?: string[];
@@ -25,6 +38,18 @@ export interface ContentMask {
     pattern: string;
     replacement: string;
   }>;
+  /** User-defined region masks (overlaid with solid color before diffing). */
+  regionMasks?: RegionMask[];
+}
+
+export interface MaskFireReport {
+  selector: string;
+  matchCount: number;
+  reason?: string;
+}
+
+export interface MaskConfigFile {
+  masks: RegionMask[];
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +108,21 @@ function mergeMasks(custom?: ContentMask): ContentMask {
       ...(DEFAULT_MASKS.regexMasks ?? []),
       ...(custom.regexMasks ?? []),
     ],
+    regionMasks: [...(custom.regionMasks ?? [])],
   };
+}
+
+/**
+ * Filter user region masks down to those applicable for the current viewport.
+ */
+export function filterRegionMasksForViewport(
+  masks: RegionMask[] | undefined,
+  viewport: MaskViewport,
+): RegionMask[] {
+  if (!masks) return [];
+  return masks.filter(
+    (m) => !m.viewports || m.viewports.length === 0 || m.viewports.includes(viewport),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +133,10 @@ interface SerializableMask {
   hideSelectors: string[];
   textReplacements: Array<{ selector: string; replacement: string }>;
   regexMasks: Array<{ pattern: string; replacement: string }>;
+  regionMasks: Array<{ selector: string; fillColor: string; reason?: string }>;
 }
+
+const DEFAULT_REGION_FILL = '#FF00FF';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -109,25 +151,44 @@ interface SerializableMask {
  * Returns a **cleanup function** that restores the page to its original
  * state after screenshots are captured.
  */
+export interface ApplyMasksResult {
+  cleanup: () => Promise<void>;
+  fired: MaskFireReport[];
+}
+
 export async function applyContentMasks(
   page: Page,
   masks?: ContentMask,
-): Promise<() => Promise<void>> {
+  viewport?: MaskViewport,
+): Promise<ApplyMasksResult> {
   const merged = mergeMasks(masks);
+
+  // Filter region masks by viewport if specified
+  const regionMasksForViewport = viewport
+    ? filterRegionMasksForViewport(merged.regionMasks, viewport)
+    : merged.regionMasks ?? [];
 
   const serializable: SerializableMask = {
     hideSelectors: merged.hideSelectors ?? [],
     textReplacements: merged.textReplacements ?? [],
     regexMasks: merged.regexMasks ?? [],
+    regionMasks: regionMasksForViewport.map((m) => ({
+      selector: m.selector,
+      fillColor: m.fillColor ?? DEFAULT_REGION_FILL,
+      reason: m.reason,
+    })),
   };
 
-  await page.evaluate((m: SerializableMask) => {
+  const fired = await page.evaluate((m: SerializableMask) => {
     // Backup storage so we can restore later
     const backup: Array<
       | { kind: 'visibility'; el: HTMLElement; prev: string }
       | { kind: 'text'; el: HTMLElement; prev: string }
       | { kind: 'textNode'; node: Text; prev: string }
+      | { kind: 'overlay'; el: HTMLElement }
     > = [];
+
+    const fireReports: Array<{ selector: string; matchCount: number; reason?: string }> = [];
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__drpMaskBackup = backup;
@@ -173,10 +234,48 @@ export async function applyContentMasks(
         }
       }
     }
+
+    // 4. Region overlays — paint solid color rectangles over user-defined regions
+    for (const { selector, fillColor, reason } of m.regionMasks) {
+      let matchCount = 0;
+      let elements: NodeListOf<Element>;
+      try {
+        elements = document.querySelectorAll(selector);
+      } catch {
+        fireReports.push({ selector, matchCount: 0, reason });
+        continue;
+      }
+
+      elements.forEach((el) => {
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+
+        const overlay = document.createElement('div');
+        overlay.dataset['drpMaskOverlay'] = '1';
+        overlay.style.position = 'absolute';
+        overlay.style.left = `${rect.left + window.scrollX}px`;
+        overlay.style.top = `${rect.top + window.scrollY}px`;
+        overlay.style.width = `${rect.width}px`;
+        overlay.style.height = `${rect.height}px`;
+        overlay.style.backgroundColor = fillColor;
+        overlay.style.zIndex = '2147483647';
+        overlay.style.pointerEvents = 'none';
+        overlay.style.margin = '0';
+        overlay.style.padding = '0';
+        overlay.style.border = 'none';
+        document.body.appendChild(overlay);
+        backup.push({ kind: 'overlay', el: overlay });
+        matchCount++;
+      });
+
+      fireReports.push({ selector, matchCount, reason });
+    }
+
+    return fireReports;
   }, serializable);
 
   // Return a cleanup function that restores the page
-  return async () => {
+  const cleanup = async (): Promise<void> => {
     await page.evaluate(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const backup = (window as any).__drpMaskBackup as
@@ -184,6 +283,7 @@ export async function applyContentMasks(
             | { kind: 'visibility'; el: HTMLElement; prev: string }
             | { kind: 'text'; el: HTMLElement; prev: string }
             | { kind: 'textNode'; node: Text; prev: string }
+            | { kind: 'overlay'; el: HTMLElement }
           >
         | undefined;
 
@@ -200,6 +300,9 @@ export async function applyContentMasks(
           case 'textNode':
             item.node.textContent = item.prev;
             break;
+          case 'overlay':
+            item.el.remove();
+            break;
         }
       }
 
@@ -207,4 +310,39 @@ export async function applyContentMasks(
       delete (window as any).__drpMaskBackup;
     });
   };
+
+  return { cleanup, fired };
 }
+
+// ---------------------------------------------------------------------------
+// Mask config file loading
+// ---------------------------------------------------------------------------
+
+/**
+ * Load and validate a region-mask config JSON file.
+ * Throws if the file is malformed.
+ */
+export async function loadMaskConfigFile(filePath: string): Promise<RegionMask[]> {
+  const { readFile } = await import('fs/promises');
+  const raw = await readFile(filePath, 'utf-8');
+  const parsed = JSON.parse(raw) as unknown;
+
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    !Array.isArray((parsed as { masks?: unknown }).masks)
+  ) {
+    throw new Error(
+      `Mask config file ${filePath} must be an object with a 'masks' array`,
+    );
+  }
+
+  const masks = (parsed as MaskConfigFile).masks;
+  for (const m of masks) {
+    if (!m.selector || typeof m.selector !== 'string') {
+      throw new Error(`Mask config entry missing required 'selector' string`);
+    }
+  }
+  return masks;
+}
+
