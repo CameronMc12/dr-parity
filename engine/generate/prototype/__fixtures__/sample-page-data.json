@@ -1,0 +1,188 @@
+{
+  "url": "https://example.com/",
+  "title": "Sample Prototype",
+  "description": "Minimal IR for exercising every prototype emitter path.",
+  "viewport": { "width": 1440, "height": 900, "deviceScaleFactor": 1 },
+  "fonts": [
+    {
+      "family": "Inter",
+      "weights": [400, 700],
+      "styles": ["normal"],
+      "source": "google",
+      "files": [],
+      "fallbacks": ["sans-serif"],
+      "usedIn": [],
+      "isVariable": false
+    }
+  ],
+  "colors": [],
+  "spacing": [],
+  "sections": [
+    {
+      "id": "hero",
+      "name": "hero",
+      "order": 0,
+      "boundingRect": { "top": 0, "left": 0, "width": 1440, "height": 600 },
+      "screenshots": { "desktop": "" },
+      "elements": [
+        {
+          "tag": "div",
+          "classes": ["hero-inner"],
+          "computedStyles": {
+            "padding": "64px 32px",
+            "background-color": "#0b0b0c",
+            "color": "#f6f6f4",
+            "display": "flex",
+            "flex-direction": "column",
+            "gap": "16px"
+          },
+          "attributes": {},
+          "children": [
+            {
+              "tag": "h1",
+              "classes": ["hero-title"],
+              "computedStyles": {
+                "font-size": "48px",
+                "font-weight": "700",
+                "color": "#f6f6f4",
+                "line-height": "1.1"
+              },
+              "textContent": "Build prototypes that just open",
+              "attributes": {},
+              "children": [],
+              "states": [],
+              "animations": [],
+              "boundingRect": { "top": 64, "left": 32, "width": 800, "height": 60 },
+              "isVisible": true
+            },
+            {
+              "tag": "p",
+              "classes": ["hero-sub"],
+              "computedStyles": {
+                "font-size": "18px",
+                "color": "#c8c8c4",
+                "line-height": "1.5"
+              },
+              "textContent": "No build step. No bundler. Just React via CDN.",
+              "attributes": {},
+              "children": [],
+              "states": [],
+              "animations": [],
+              "boundingRect": { "top": 140, "left": 32, "width": 800, "height": 30 },
+              "isVisible": true
+            },
+            {
+              "tag": "svg",
+              "classes": ["hero-icon"],
+              "computedStyles": {
+                "width": "32px",
+                "height": "32px",
+                "color": "#f6f6f4"
+              },
+              "attributes": { "viewBox": "0 0 24 24" },
+              "innerHTML": "<path d=\"M12 2l3 7h7l-5.5 4 2 7-6.5-4-6.5 4 2-7L2 9h7z\" fill=\"currentColor\"/>",
+              "children": [],
+              "states": [],
+              "animations": [],
+              "boundingRect": { "top": 200, "left": 32, "width": 32, "height": 32 },
+              "isVisible": true
+            }
+          ],
+          "states": [],
+          "animations": [],
+          "boundingRect": { "top": 0, "left": 0, "width": 1440, "height": 600 },
+          "isVisible": true
+        }
+      ],
+      "animations": [],
+      "interactionModel": "static",
+      "responsiveBreakpoints": [],
+      "zIndex": 0,
+      "position": "flow",
+      "backgroundColor": "#0b0b0c",
+      "className": "hero"
+    },
+    {
+      "id": "features",
+      "name": "features",
+      "order": 1,
+      "boundingRect": { "top": 600, "left": 0, "width": 1440, "height": 600 },
+      "screenshots": { "desktop": "" },
+      "elements": [
+        {
+          "tag": "div",
+          "classes": ["features-grid"],
+          "computedStyles": {
+            "padding": "64px 32px",
+            "background-color": "#f6f6f4",
+            "color": "#0b0b0c",
+            "display": "grid",
+            "gap": "24px"
+          },
+          "attributes": {},
+          "children": [
+            {
+              "tag": "h2",
+              "classes": ["features-title"],
+              "computedStyles": {
+                "font-size": "32px",
+                "font-weight": "700",
+                "color": "#0b0b0c"
+              },
+              "textContent": "By the numbers",
+              "attributes": {},
+              "children": [],
+              "states": [],
+              "animations": [],
+              "boundingRect": { "top": 664, "left": 32, "width": 800, "height": 40 },
+              "isVisible": true
+            },
+            {
+              "tag": "span",
+              "classes": ["features-stat"],
+              "computedStyles": {
+                "font-size": "48px",
+                "font-weight": "700",
+                "color": "#0b0b0c"
+              },
+              "textContent": "99.9%",
+              "attributes": {},
+              "children": [],
+              "states": [],
+              "animations": [],
+              "boundingRect": { "top": 720, "left": 32, "width": 200, "height": 60 },
+              "isVisible": true
+            }
+          ],
+          "states": [],
+          "animations": [],
+          "boundingRect": { "top": 600, "left": 0, "width": 1440, "height": 600 },
+          "isVisible": true
+        }
+      ],
+      "animations": [],
+      "interactionModel": "static",
+      "responsiveBreakpoints": [],
+      "zIndex": 0,
+      "position": "flow",
+      "backgroundColor": "#f6f6f4",
+      "className": "features"
+    }
+  ],
+  "globalBehaviors": [],
+  "assets": {
+    "images": [],
+    "videos": [],
+    "svgs": [],
+    "fonts": [],
+    "favicons": [],
+    "ogImages": [],
+    "other": []
+  },
+  "techStack": {
+    "animationLibraries": [],
+    "isSSR": false,
+    "hasServiceWorker": false
+  },
+  "extractedAt": "2026-05-13T00:00:00.000Z"
+}

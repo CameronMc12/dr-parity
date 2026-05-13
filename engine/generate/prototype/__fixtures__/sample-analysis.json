@@ -1,0 +1,44 @@
+{
+  "tokens": {
+    "colors": {
+      "primary": { "name": "primary", "value": "#0b0b0c", "usage": ["text"], "frequency": 5 },
+      "background": { "name": "background", "value": "#f6f6f4", "usage": ["background"], "frequency": 8 },
+      "foreground": { "name": "foreground", "value": "#0b0b0c", "usage": ["text"], "frequency": 5 },
+      "muted": { "name": "muted", "value": "#c8c8c4", "usage": ["text"], "frequency": 2 },
+      "border": { "name": "border", "value": "#e5e5e2", "usage": ["border"], "frequency": 2 },
+      "all": []
+    },
+    "typography": {
+      "fontFamilies": {
+        "sans": "Inter, sans-serif",
+        "mono": "ui-monospace, SFMono-Regular, monospace"
+      },
+      "sizes": [],
+      "weights": [400, 700]
+    },
+    "spacing": { "values": [4, 8, 16, 24, 32, 64], "baseUnit": 8 },
+    "borderRadius": { "values": [{ "name": "default", "value": "8px", "frequency": 3 }] },
+    "shadows": [],
+    "gradients": [],
+    "fonts": [],
+    "breakpoints": [768, 1024],
+    "cssVariables": {
+      "--color-primary": "#0b0b0c",
+      "--color-background": "#f6f6f4",
+      "--spacing-md": "16px"
+    }
+  },
+  "topology": {
+    "sections": [
+      { "id": "hero", "name": "hero", "order": 0, "top": 0, "height": 600, "background": "dark" },
+      { "id": "features", "name": "features", "order": 1, "top": 600, "height": 600, "background": "light" }
+    ],
+    "overlays": [
+      { "id": "site-header", "name": "Header", "type": "header", "position": "fixed", "zIndex": 100 }
+    ],
+    "scrollContainer": "window",
+    "totalHeight": 1200,
+    "hasScrollSnap": false,
+    "hasSmoothScroll": false
+  }
+}
