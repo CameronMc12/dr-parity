@@ -18,7 +18,6 @@ export interface ViewEmitterResult {
 export function buildViewJsx(section: SectionSpec): ViewEmitterResult {
   const componentName = pascalCase(section.name);
   const slug = slugify(section.name);
-  const dataVar = `${camelCase(section.name)}Data`;
 
   const childJsx = section.elements
     .map((el) => elementToJsx(el, { classPrefix: section.className || slug }))
@@ -54,11 +53,6 @@ function pascalCase(name: string): string {
     .split(/\s+/)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join('') || 'Section';
-}
-
-function camelCase(name: string): string {
-  const p = pascalCase(name);
-  return p.charAt(0).toLowerCase() + p.slice(1);
 }
 
 function slugify(name: string): string {

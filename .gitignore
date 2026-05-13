@@ -9,6 +9,10 @@ out/
 build/
 dist/
 
+# Prototype mode generated output (sibling to src/)
+clone-prototype/
+clone-prototype-fixture/
+
 # Environment
 .env
 .env.local
