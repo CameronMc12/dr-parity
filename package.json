@@ -34,7 +34,9 @@
     "typecheck": "tsc --noEmit",
     "check": "npm run lint && npm run typecheck && npm run build",
     "generate:prototype": "tsx scripts/generate-prototype.ts",
-    "generate:prototype:fixture": "tsx engine/generate/prototype/__fixtures__/run-fixture.ts"
+    "generate:prototype:fixture": "tsx engine/generate/prototype/__fixtures__/run-fixture.ts",
+    "generate:astro": "tsx scripts/generate-astro.ts",
+    "generate:astro:fixture": "tsx engine/generate/astro/__fixtures__/run-fixture.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

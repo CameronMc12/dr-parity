@@ -13,6 +13,10 @@ dist/
 clone-prototype/
 clone-prototype-fixture/
 
+# Astro production mode generated output (sibling to src/)
+clone-astro/
+clone-astro-fixture/
+
 # Environment
 .env
 .env.local
