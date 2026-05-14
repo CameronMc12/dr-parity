@@ -223,11 +223,15 @@ async function main(): Promise<void> {
   const phaseCount = dryRun ? 4 : 9;
   const progress = new ProgressReporter(phaseCount);
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: process.env.HEADED !== '1' });
 
   try {
     const context = await browser.newContext({
       viewport: VIEWPORT,
+      userAgent:
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      locale: 'en-US',
+      timezoneId: 'America/New_York',
     });
     const page = await context.newPage();
 
@@ -247,8 +251,20 @@ async function main(): Promise<void> {
 
     // Phase 2: Navigate
     progress.startPhase('Navigating to target');
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await smartWait(page);
+    console.log('  goto: starting');
+    await page.goto(url, { waitUntil: 'commit', timeout: 90_000 });
+    console.log('  goto: committed');
+    await page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {
+      console.warn('  DOMContentLoaded did not fire within 30s — continuing anyway');
+    });
+    console.log('  DOMContentLoaded reached (or skipped)');
+    await Promise.race([
+      smartWait(page).catch((err) => {
+        console.warn(`  smartWait warning: ${(err as Error).message}`);
+      }),
+      page.waitForTimeout(10_000),
+    ]);
+    console.log('  smartWait done');
     progress.endPhase();
 
     // -----------------------------------------------------------------------

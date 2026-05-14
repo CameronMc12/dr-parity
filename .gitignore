@@ -17,6 +17,18 @@ clone-prototype-fixture/
 clone-astro/
 clone-astro-fixture/
 
+# Captured test fixtures + pipeline outputs (regenerable)
+clone-enerblock/
+docs/docs/
+docs/research/captures/
+docs/research/enerblock/
+docs/research/example-test/
+analysis/
+
+# Local Claude tooling (regenerable via playwright-cli install --skills)
+.claude/skills/playwright-cli/
+.claude/commands/
+
 # Environment
 .env
 .env.local
