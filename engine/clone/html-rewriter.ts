@@ -208,12 +208,24 @@ export function rewriteHtml(args: RewriteArgs): string {
     if (replaced) $(el).attr('src', replaced);
   });
 
+  // Policy: external (cross-origin) <a href> links are stubbed so the clone
+  // never sends visitors off-site. We keep the link's text, classes, and any
+  // other attributes (target, rel, aria-*, etc.) intact and replace href with
+  // "#", stashing the original URL on data-original-href for recovery.
+  //
+  // This applies to <a> tags ONLY. External resource URLs (img/script/css/etc.)
+  // are deliberately left as-is so the clone can still load them from the
+  // origin CDN when served online.
   $('a[href]').each((_, el) => {
     const raw = $(el).attr('href');
     if (!raw) return;
     const abs = resolveUrl(args.documentUrl, raw);
     if (!abs) return;
-    if (!sameOrigin(abs, args.documentUrl)) return;
+    if (!sameOrigin(abs, args.documentUrl)) {
+      $(el).attr('href', '#');
+      $(el).attr('data-original-href', abs);
+      return;
+    }
     const hit = args.urlMap.get(abs);
     if (!hit) return;
     const replaced = relativeFromClonePath(args.ownClonePath, hit.cloneRelPath);

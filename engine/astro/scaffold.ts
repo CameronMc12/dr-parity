@@ -1,9 +1,10 @@
 /**
  * Generate the project-level scaffolding files for the Astro site:
- * package.json, astro.config.mjs, tsconfig.json, README.md.
+ * package.json, astro.config.mjs, tsconfig.json, README.md, and the
+ * SEO/tracking config trio (seo.config.ts, tracking.config.ts, SEO.astro).
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 function ensureDir(filePath: string): void {
@@ -13,6 +14,16 @@ function ensureDir(filePath: string): void {
 function writeText(filePath: string, content: string): void {
   ensureDir(filePath);
   writeFileSync(filePath, content, 'utf8');
+}
+
+function writeTextIfMissing(filePath: string, content: string): boolean {
+  if (existsSync(filePath)) return false;
+  writeText(filePath, content);
+  return true;
+}
+
+function escapeTsString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 export function writePackageJson(outDir: string, name: string): void {
@@ -80,9 +91,278 @@ export function writeReadme(outDir: string, name: string): void {
   writeText(join(outDir, 'README.md'), lines.join('\n'));
 }
 
+export function writeHeaders(outDir: string): void {
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com https://ssl.google-analytics.com https://connect.facebook.net",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https://www.google-analytics.com https://www.googletagmanager.com https://www.facebook.com",
+    "font-src 'self' data:",
+    "connect-src 'self' https://www.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://stats.g.doubleclick.net https://www.facebook.com https://connect.facebook.net",
+    "media-src 'self'",
+    "object-src 'none'",
+    "frame-src 'self' https://www.googletagmanager.com",
+    "frame-ancestors 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    'upgrade-insecure-requests',
+  ].join('; ');
+  const content =
+    '/*\n' +
+    `  Content-Security-Policy: ${csp}\n` +
+    '  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload\n' +
+    '  X-Content-Type-Options: nosniff\n' +
+    '  X-Frame-Options: SAMEORIGIN\n' +
+    '  Referrer-Policy: strict-origin-when-cross-origin\n' +
+    '  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()\n';
+  writeText(join(outDir, 'public', '_headers'), content);
+}
+
+export function writeEnvExample(outDir: string): void {
+  const content = [
+    '# Public, build-time env vars only. NO secrets in this file.',
+    '# All PUBLIC_* vars are exposed to the browser bundle.',
+    '',
+    '# Site',
+    'PUBLIC_SITE_URL=https://example.com',
+    '',
+    '# Tracking (leave blank to disable each tag)',
+    'PUBLIC_GA4_ID=',
+    'PUBLIC_GTM_ID=',
+    'PUBLIC_META_PIXEL_ID=',
+    '',
+  ].join('\n');
+  writeText(join(outDir, '.env.example'), content);
+}
+
+/**
+ * Render `src/content/seo.config.ts` with BLANK domain values per the
+ * "no link back" decision. Captured title and description are passed in so
+ * the generated config carries the source page's meta as defaults; URL
+ * fields stay empty until the operator fills them in before deploy.
+ */
+export function renderSeoConfig(title: string, description: string): string {
+  const safeTitle = escapeTsString(title);
+  const safeDescription = escapeTsString(description);
+  return [
+    '/**',
+    ' * SEO configuration for the site.',
+    ' *',
+    ' * Edit before deploying. Domain references are left blank to avoid linking',
+    ' * back to the source site. Fill these in with the destination domain:',
+    ' *   - canonicalUrl       (used by <link rel="canonical">)',
+    ' *   - defaultImage       (default Open Graph / Twitter card image)',
+    ' *   - jsonLd.logo        (Organization logo in JSON-LD)',
+    ' *   - jsonLd.organization (Organization name in JSON-LD)',
+    ' * SEO.astro skips emitting the matching tag when a value is empty.',
+    ' */',
+    '',
+    'export type SeoConfig = {',
+    '  siteTitle: string;',
+    '  siteDescription: string;',
+    '  canonicalUrl: string;',
+    '  defaultImage: string;',
+    '  defaultLocale: string;',
+    '  jsonLd: {',
+    '    logo: string;',
+    '    organization: string;',
+    '  };',
+    '};',
+    '',
+    'export const seoConfig: SeoConfig = {',
+    `  siteTitle: "${safeTitle}",`,
+    `  siteDescription: "${safeDescription}",`,
+    '  canonicalUrl: "",',
+    '  defaultImage: "",',
+    '  defaultLocale: "en",',
+    '  jsonLd: { logo: "", organization: "" },',
+    '};',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Render `src/content/tracking.config.ts` with empty IDs. All tracking
+ * components render nothing while the corresponding ID is an empty string.
+ */
+export function renderTrackingConfig(): string {
+  return [
+    '/**',
+    ' * Tracking configuration.',
+    ' *',
+    ' * IDs are env-driven via `import.meta.env.PUBLIC_*`. When an ID is unset',
+    ' * (empty string), the matching tracking component renders nothing.',
+    ' */',
+    '',
+    "export type ConsentState = 'granted' | 'denied';",
+    '',
+    'export type ConsentConfig = {',
+    '  default: ConsentState;',
+    '  storageKey: string;',
+    "  regulation: 'POPIA' | 'GDPR' | 'CCPA';",
+    '};',
+    '',
+    'export type TrackingConfig = {',
+    '  ga4Id: string;',
+    '  gtmId: string;',
+    '  metaPixelId: string;',
+    '  consent: ConsentConfig;',
+    '};',
+    '',
+    'const env = import.meta.env;',
+    '',
+    'export const trackingConfig: TrackingConfig = {',
+    "  ga4Id: (env.PUBLIC_GA4_ID ?? '').trim(),",
+    "  gtmId: (env.PUBLIC_GTM_ID ?? '').trim(),",
+    "  metaPixelId: (env.PUBLIC_META_PIXEL_ID ?? '').trim(),",
+    '  consent: {',
+    "    default: 'granted',",
+    "    storageKey: 'site_cookie_consent',",
+    "    regulation: 'POPIA',",
+    '  },',
+    '};',
+    '',
+    'export function hasGa4(): boolean {',
+    '  return trackingConfig.ga4Id.length > 0;',
+    '}',
+    '',
+    'export function hasGtm(): boolean {',
+    '  return trackingConfig.gtmId.length > 0;',
+    '}',
+    '',
+    'export function hasMetaPixel(): boolean {',
+    '  return trackingConfig.metaPixelId.length > 0;',
+    '}',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Render the `<SEO />` Astro component. Reads defaults from seo.config.ts
+ * and gates every URL/image tag behind a non-empty check so a blank config
+ * never emits broken `<link rel="canonical" href="">` or `<meta og:image="">`.
+ */
+export function renderSeoAstro(): string {
+  return [
+    '---',
+    '/**',
+    ' * <SEO /> — emits title, description, canonical, Open Graph, Twitter card,',
+    ' * and JSON-LD Organization JSON. Every URL/image field is gated on a',
+    ' * non-empty value, so a blank seo.config.ts is safe to ship.',
+    ' */',
+    'import { seoConfig } from "../../content/seo.config";',
+    '',
+    'export interface Props {',
+    '  title?: string;',
+    '  description?: string;',
+    '  canonical?: string;',
+    '  image?: string;',
+    '  imageAlt?: string;',
+    '  ogType?: "website" | "article" | "product" | "profile";',
+    '  twitterCard?: "summary" | "summary_large_image" | "app" | "player";',
+    '  noindex?: boolean;',
+    '  nofollow?: boolean;',
+    '}',
+    '',
+    'const {',
+    '  title = seoConfig.siteTitle,',
+    '  description = seoConfig.siteDescription,',
+    '  canonical,',
+    '  image = seoConfig.defaultImage,',
+    '  imageAlt,',
+    '  ogType = "website",',
+    '  twitterCard = "summary_large_image",',
+    '  noindex = false,',
+    '  nofollow = false,',
+    '} = Astro.props;',
+    '',
+    'const canonicalBase = seoConfig.canonicalUrl;',
+    'const pageUrl = canonicalBase',
+    '  ? canonical',
+    '    ? new URL(canonical, canonicalBase).toString()',
+    '    : new URL(Astro.url.pathname, canonicalBase).toString()',
+    '  : "";',
+    '',
+    'const robotsContent = `${noindex ? "noindex" : "index"}, ${nofollow ? "nofollow" : "follow"}`;',
+    '',
+    'const orgName = seoConfig.jsonLd.organization;',
+    'const orgLogo = seoConfig.jsonLd.logo;',
+    'let jsonLd: string | null = null;',
+    'if (orgName) {',
+    '  const org: Record<string, unknown> = {',
+    '    "@context": "https://schema.org",',
+    '    "@type": "Organization",',
+    '    name: orgName,',
+    '  };',
+    '  if (canonicalBase) org.url = canonicalBase;',
+    '  if (orgLogo) org.logo = orgLogo;',
+    '  jsonLd = JSON.stringify(org);',
+    '}',
+    '---',
+    '',
+    '{title && <title>{title}</title>}',
+    '{description && <meta name="description" content={description} />}',
+    '<meta name="robots" content={robotsContent} />',
+    '{pageUrl && <link rel="canonical" href={pageUrl} />}',
+    '',
+    '{title && <meta property="og:title" content={title} />}',
+    '{description && <meta property="og:description" content={description} />}',
+    '{image && <meta property="og:image" content={image} />}',
+    '{image && imageAlt && <meta property="og:image:alt" content={imageAlt} />}',
+    '<meta property="og:type" content={ogType} />',
+    '{pageUrl && <meta property="og:url" content={pageUrl} />}',
+    '{seoConfig.defaultLocale && <meta property="og:locale" content={seoConfig.defaultLocale} />}',
+    '',
+    '<meta name="twitter:card" content={twitterCard} />',
+    '{title && <meta name="twitter:title" content={title} />}',
+    '{description && <meta name="twitter:description" content={description} />}',
+    '{image && <meta name="twitter:image" content={image} />}',
+    '{image && imageAlt && <meta name="twitter:image:alt" content={imageAlt} />}',
+    '',
+    '{jsonLd && <script type="application/ld+json" set:html={jsonLd} />}',
+    '',
+  ].join('\n');
+}
+
+export interface SeoSeed {
+  title: string;
+  description: string;
+}
+
+export interface SeoEmitSummary {
+  seoConfigWritten: boolean;
+  trackingConfigWritten: boolean;
+  seoComponentWritten: boolean;
+}
+
+/**
+ * Emit seo.config.ts, tracking.config.ts, and SEO.astro into the project,
+ * skipping any file that already exists. Returns which files were written
+ * so callers can log a one-time backfill summary.
+ */
+export function writeSeoConfigs(outDir: string, seed: SeoSeed): SeoEmitSummary {
+  const seoConfigPath = join(outDir, 'src', 'content', 'seo.config.ts');
+  const trackingConfigPath = join(outDir, 'src', 'content', 'tracking.config.ts');
+  const seoComponentPath = join(outDir, 'src', 'components', 'seo', 'SEO.astro');
+
+  const seoConfigWritten = writeTextIfMissing(
+    seoConfigPath,
+    renderSeoConfig(seed.title, seed.description),
+  );
+  const trackingConfigWritten = writeTextIfMissing(
+    trackingConfigPath,
+    renderTrackingConfig(),
+  );
+  const seoComponentWritten = writeTextIfMissing(seoComponentPath, renderSeoAstro());
+
+  return { seoConfigWritten, trackingConfigWritten, seoComponentWritten };
+}
+
 export function writeScaffold(outDir: string, name: string): void {
   writePackageJson(outDir, name);
   writeAstroConfig(outDir);
   writeTsConfig(outDir);
   writeReadme(outDir, name);
+  writeHeaders(outDir);
+  writeEnvExample(outDir);
 }

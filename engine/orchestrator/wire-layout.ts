@@ -47,6 +47,26 @@ function collectAnimationModules(animationsDir: string): string[] {
     .sort();
 }
 
+/**
+ * EMIT-AGENT: Fix #9 — read the phase 7 summary to decide whether a missing
+ * animations block is worth warning about. Returns true only when the
+ * captured site had animations that should have produced editable modules
+ * (i.e. uneditable > 0). Empty/missing/all-zero summaries → silent skip.
+ */
+function hadEditableAnimationsToProcess(animationsDir: string): boolean {
+  const summaryPath = join(animationsDir, 'animations-summary.json');
+  if (!existsSync(summaryPath)) return false;
+  try {
+    const raw = readFileSync(summaryPath, 'utf8');
+    const parsed = JSON.parse(raw) as { totalCalls?: number; uneditable?: number };
+    const total = typeof parsed.totalCalls === 'number' ? parsed.totalCalls : 0;
+    const uneditable = typeof parsed.uneditable === 'number' ? parsed.uneditable : 0;
+    return total > 0 || uneditable > 0;
+  } catch {
+    return false;
+  }
+}
+
 function existingStyles(stylesDir: string): string[] {
   if (!existsSync(stylesDir)) return [];
   return STYLE_FILES.filter((file) => existsSync(join(stylesDir, file)));
@@ -222,8 +242,16 @@ export async function wireLayout(ctx: OrchestratorContext): Promise<InlineResult
   if (stylesBlock === '' && existsSync(stylesDir)) {
     warnings.push(`No style files found in ${stylesDir}`);
   }
+  // EMIT-AGENT: Fix #9 — only warn about missing animation modules when the
+  // captured site actually had animations to process. If extract-animations
+  // (phase 7) reported zero total calls AND zero uneditable entries, this is
+  // a clean "site has no animations" case and we silently skip the warning.
+  // If there ARE uneditable entries (animations existed but we couldn't make
+  // them editable), keep warning so the operator knows we missed something.
   if (animationsBlock === '' && existsSync(animationsDir)) {
-    warnings.push(`No animation modules found in ${animationsDir}`);
+    if (hadEditableAnimationsToProcess(animationsDir)) {
+      warnings.push(`No animation modules found in ${animationsDir}`);
+    }
   }
 
   const result: InlineResult = { outputs: [layoutPath] };

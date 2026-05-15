@@ -10,7 +10,8 @@ import * as cheerio from 'cheerio';
 import { extractHead } from './extract-head';
 import { sliceBody } from './slice-body';
 import { writeComponent, writeLayout, writePage } from './emit';
-import { writeScaffold } from './scaffold';
+import { prettifyEmittedDir } from './prettify';
+import { writeScaffold, writeSeoConfigs } from './scaffold';
 import type { BuildOptions, BuildSummary } from './types';
 
 const SKIP_FILES = new Set(['index.html', 'manifest.json']);
@@ -68,7 +69,7 @@ function copyAssetsToPublic(cloneDir: string, publicDir: string): { count: numbe
   return dirSizeBytes(publicDir);
 }
 
-export function buildAstroProject(options: BuildOptions): BuildSummary {
+export async function buildAstroProject(options: BuildOptions): Promise<BuildSummary> {
   const { cloneDir, outDir, name, force } = options;
   const absClone = resolve(cloneDir);
   const absOut = resolve(outDir);
@@ -122,6 +123,19 @@ export function buildAstroProject(options: BuildOptions): BuildSummary {
   summary.components.push(pageEntry);
 
   writeScaffold(absOut, name);
+  writeSeoConfigs(absOut, { title: head.title, description: head.description });
+
+  // Emit-time prettify pass — runs across every .astro file emitted into the
+  // project. Roundtrip-safe: any file whose prettified output drifts from
+  // the original AST is silently reverted. Set DR_PARITY_NO_PRETTIFY=1 to
+  // bypass entirely (escape hatch for problem fixtures).
+  const srcDir = join(absOut, 'src');
+  const prettifySummary = await prettifyEmittedDir(srcDir);
+  if (prettifySummary.failures.length > 0) {
+    for (const f of prettifySummary.failures) {
+      process.stderr.write(`prettify: skipped ${f.file} (${f.reason})\n`);
+    }
+  }
 
   return summary;
 }

@@ -22,6 +22,12 @@ export interface MultiPageOptions {
   pageList?: string[];
   /** Maximum pages to crawl in crawl mode. Default 20. */
   maxPages?: number;
+  /**
+   * Restrict discovery to URLs whose pathname starts with this prefix.
+   * Example: '/en' keeps `/en` and `/en/about`, skips `/` and `/fr/about`.
+   * Empty string or undefined disables prefix filtering.
+   */
+  pathPrefix?: string;
   extractionOptions?: {
     maxDepth?: number;
     maxElements?: number;
@@ -80,14 +86,21 @@ const ASSET_EXTENSIONS = new Set([
 /**
  * Crawl a site starting from `entryUrl` and return a deduplicated,
  * sorted list of internal page URLs (up to `maxPages`).
+ *
+ * If `pathPrefix` is provided, only URLs whose pathname starts with the
+ * prefix are returned. Useful for multi-lingual sites where a single
+ * language path (e.g. `/en`) should be cloned without picking up `/`,
+ * `/fr`, etc.
  */
 export async function discoverPages(
   page: Page,
   entryUrl: string,
   maxPages?: number,
+  pathPrefix?: string,
 ): Promise<string[]> {
   const limit = maxPages ?? DEFAULT_MAX_PAGES;
   const origin = new URL(entryUrl).origin;
+  const prefix = normalizePathPrefix(pathPrefix);
 
   const rawLinks: string[] = await page.evaluate((pageOrigin: string) => {
     const anchors = document.querySelectorAll('a[href]');
@@ -111,13 +124,48 @@ export async function discoverPages(
   }, origin);
 
   const normalized = normalizeUrls(rawLinks, origin);
-  const filtered = filterPageUrls(normalized);
+  const filtered = filterPageUrls(normalized).filter((u) => matchesPathPrefix(u, prefix));
 
-  // Always include the entry URL at the start
+  // Always include the entry URL at the start (only if it matches the prefix).
   const entryNormalized = normalizeUrl(entryUrl);
-  const withEntry = [entryNormalized, ...filtered.filter((u) => u !== entryNormalized)];
+  const entryMatches = matchesPathPrefix(entryNormalized, prefix);
+  const withEntry = entryMatches
+    ? [entryNormalized, ...filtered.filter((u) => u !== entryNormalized)]
+    : filtered;
 
   return withEntry.slice(0, limit);
+}
+
+/**
+ * Normalize a path prefix to the canonical form used for comparison:
+ *   - empty / undefined → `''` (disabled)
+ *   - ensure leading slash
+ *   - strip trailing slash (except root)
+ */
+export function normalizePathPrefix(prefix: string | undefined | null): string {
+  if (!prefix) return '';
+  let p = prefix.trim();
+  if (p === '' || p === '/') return '';
+  if (!p.startsWith('/')) p = '/' + p;
+  if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+  return p;
+}
+
+/**
+ * Returns true when the URL's pathname starts with `prefix`.
+ *
+ * Matching is segment-aware: `/en` matches `/en` and `/en/about` but NOT
+ * `/english` or `/en2`. The empty prefix matches everything.
+ */
+export function matchesPathPrefix(url: string, prefix: string): boolean {
+  if (!prefix) return true;
+  try {
+    const pathname = new URL(url).pathname;
+    if (pathname === prefix) return true;
+    return pathname.startsWith(prefix + '/');
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

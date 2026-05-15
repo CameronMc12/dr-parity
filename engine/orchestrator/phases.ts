@@ -15,6 +15,12 @@ import type {
   PhaseDefinition,
 } from './types';
 import { wireLayout } from './wire-layout';
+import { generateEditPlaybook } from '../playbook/generate-edit-playbook';
+import { centralizeContent } from '../astro/centralize-content';
+// VERIFY-AGENT: import added for Phase 13 (verify-render post-build smoke test).
+import { verifyRender } from '../verify/render';
+// MEDIA-AGENT: Phase 14 preserves captured @media rules in both safe and aggressive modes.
+import { preserveMediaRules } from '../scope-styles/media-preserve';
 
 function npmRun(scriptName: string, args: string[], cwd: string): PhaseDefinition['command'] {
   return {
@@ -142,6 +148,34 @@ export function buildPhases(ctx: OrchestratorContext): PhaseDefinition[] {
     outputs: [join(out, 'src/components/icons')],
   });
 
+  // MEDIA-AGENT: Phase 14 runs in BOTH safe and aggressive modes. It reads
+  // analysis/css-rules.json and emits src/styles/responsive.css plus a
+  // marker block appended to base.css so the layout's existing import
+  // picks it up without touching wire-layout. Aggressive scope-styles
+  // (Phase 6) detects the marker and skips re-emitting @media rules.
+  phases.push({
+    id: 14,
+    slug: 'media-preserve',
+    label: 'preserve captured @media rules',
+    command: null,
+    inline: async (innerCtx) => {
+      const result = preserveMediaRules({
+        analysisDir: innerCtx.analysisDir,
+        stylesOutDir: join(innerCtx.outDir, 'src/styles'),
+      });
+      const warning =
+        result.mediaRuleCount === 0
+          ? 'No @media rules found in css-rules.json'
+          : undefined;
+      const inlineResult: InlineResult = {
+        outputs: [result.responsiveCssPath, result.baseCssPath],
+      };
+      if (warning) inlineResult.warning = warning;
+      return inlineResult;
+    },
+    outputs: [join(out, 'src/styles/responsive.css'), join(out, 'src/styles/base.css')],
+  });
+
   phases.push({
     id: 5,
     slug: 'refactor-sections',
@@ -208,6 +242,22 @@ export function buildPhases(ctx: OrchestratorContext): PhaseDefinition[] {
     outputs: [join(out, 'src/layouts/SiteLayout.astro')],
   });
 
+  // Phase order: centralise content runs AFTER wire-layout (so all sections
+  // are in their final shape) and BEFORE build (so the import resolves).
+  phases.push({
+    id: 12,
+    slug: 'centralize-content',
+    label: 'centralise editable copy → src/content/site.ts',
+    command: null,
+    inline: async (innerCtx) => {
+      const summary = await centralizeContent(innerCtx.outDir);
+      const outputs: string[] = [];
+      if (summary.contentFile) outputs.push(summary.contentFile);
+      return { outputs };
+    },
+    outputs: [join(out, 'src/content/site.ts')],
+  });
+
   phases.push({
     id: 9,
     slug: 'build',
@@ -263,6 +313,67 @@ export function buildPhases(ctx: OrchestratorContext): PhaseDefinition[] {
       repoRoot,
     ),
     outputs: [join(out, 'parity-report')],
+    nonFatal: true,
+  });
+
+  phases.push({
+    id: 11,
+    slug: 'edit-playbook',
+    label: 'edit-playbook (generate EDIT.md)',
+    command: null,
+    inline: async (innerCtx) => {
+      if (!existsSync(innerCtx.outDir)) {
+        return { warning: 'output directory missing; skipping playbook' };
+      }
+      const result = generateEditPlaybook(innerCtx.outDir);
+      return { outputs: [result.path] };
+    },
+    outputs: [join(out, 'EDIT.md')],
+    nonFatal: true,
+  });
+
+  // VERIFY-AGENT: Phase 13 — post-build smoke test. Boots `npm run dev`,
+  // crawls every src/pages/*.astro route, and asserts the body renders
+  // visible content. Catches "build clean, page blank" regressions that a
+  // plain `astro build` cannot detect (e.g. the fluid.glass incident).
+  phases.push({
+    id: 13,
+    slug: 'verify-render',
+    label: 'verify-render (post-build smoke test)',
+    command: null,
+    inline: async (innerCtx) => {
+      if (!existsSync(innerCtx.outDir)) {
+        return { warning: 'output directory missing; skipping verify-render' };
+      }
+      if (!existsSync(join(innerCtx.outDir, 'package.json'))) {
+        return { warning: 'no package.json in output; skipping verify-render' };
+      }
+      const report = await verifyRender({ outDir: innerCtx.outDir });
+      const reportPath = join(innerCtx.outDir, 'verify-render-report.json');
+      if (report.serverError) {
+        return {
+          outputs: [reportPath],
+          warning: `verify-render: dev server failed to start: ${report.serverError}`,
+        };
+      }
+      if (report.failed > 0) {
+        const failing = report.routes
+          .filter((r) => r.status === 'fail')
+          .map((r) => `${r.route} (${r.reason ?? 'unknown'})`)
+          .join(', ');
+        process.stdout.write(
+          `\n!!! verify-render WARNING: ${report.failed}/${report.routesChecked} routes rendered blank or errored.\n` +
+            `    Failing: ${failing}\n` +
+            `    Report : ${reportPath}\n\n`,
+        );
+        return {
+          outputs: [reportPath],
+          warning: `verify-render: ${report.failed}/${report.routesChecked} routes failed`,
+        };
+      }
+      return { outputs: [reportPath] };
+    },
+    outputs: [join(out, 'verify-render-report.json')],
     nonFatal: true,
   });
 

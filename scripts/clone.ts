@@ -15,6 +15,7 @@ import { buildUrlMap } from '../engine/clone/url-map';
 import { rewriteHtml } from '../engine/clone/html-rewriter';
 import { rewriteCss } from '../engine/clone/css-rewriter';
 import { copyMappedFiles, ensureDir, writeManifest, writeText } from '../engine/clone/asset-copier';
+import { applySpaCleanup } from '../engine/clone/spa-cleanup';
 import type {
   CloneManifest,
   CloneStats,
@@ -148,8 +149,21 @@ function cloneOneViewport(args: {
     urlMap,
     unresolved,
   });
+
+  // SPA pre-hydration cleanup: detect framework markers (Nuxt/Vue/Next/
+  // generic loader) and, when present, emit _spa-cleanup.css + inject a
+  // final <link rel="stylesheet"> so the static clone is not stuck on a
+  // pre-hydration overlay.
+  const spaResult = applySpaCleanup({ html: rewrittenHtml, cloneRoot: args.cloneRoot });
+  if (spaResult.detection.detected) {
+    console.log(
+      `  [SPA cleanup] ${args.viewport}: detected ${spaResult.detection.frameworks.join(', ')} ` +
+        `(${spaResult.detection.reasons.length} marker(s)) -> wrote _spa-cleanup.css`,
+    );
+  }
+
   const htmlPath = join(args.cloneRoot, 'index.html');
-  const htmlBytes = writeText(htmlPath, rewrittenHtml);
+  const htmlBytes = writeText(htmlPath, spaResult.html);
 
   const stats: CloneStats = {
     viewport: args.viewport,

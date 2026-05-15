@@ -101,7 +101,7 @@ function printSummary(summary: BuildSummary, outDir: string): void {
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let parsed: ParsedArgs;
   try {
     parsed = parseArgs(process.argv.slice(2));
@@ -123,7 +123,7 @@ function main(): void {
   const name = parsed.name ?? deriveDefaultName(cloneDir);
 
   try {
-    const summary = buildAstroProject({
+    const summary = await buildAstroProject({
       cloneDir,
       outDir,
       name,

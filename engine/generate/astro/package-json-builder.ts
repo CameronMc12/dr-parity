@@ -14,8 +14,10 @@ export interface PackageJsonOptions {
 const ASTRO_VERSION = '^5.0.0';
 const GSAP_VERSION = '^3.13.0';
 const ASTRO_REACT_VERSION = '^4.0.0';
+const ASTRO_CLOUDFLARE_VERSION = '^12.0.0';
 const REACT_VERSION = '^18.3.1';
 const TYPES_REACT_VERSION = '^18.3.0';
+const WRANGLER_VERSION = '^3.90.0';
 
 export function buildPackageJson(options: PackageJsonOptions): string {
   const { name, hasIslands } = options;
@@ -23,8 +25,11 @@ export function buildPackageJson(options: PackageJsonOptions): string {
   const dependencies: Record<string, string> = {
     astro: ASTRO_VERSION,
     gsap: GSAP_VERSION,
+    '@astrojs/cloudflare': ASTRO_CLOUDFLARE_VERSION,
   };
-  const devDependencies: Record<string, string> = {};
+  const devDependencies: Record<string, string> = {
+    wrangler: WRANGLER_VERSION,
+  };
 
   if (hasIslands) {
     dependencies['@astrojs/react'] = ASTRO_REACT_VERSION;
@@ -45,9 +50,11 @@ export function buildPackageJson(options: PackageJsonOptions): string {
       build: 'astro build',
       preview: 'astro preview',
       astro: 'astro',
+      deploy: 'astro build && wrangler pages deploy dist',
+      'preview:cf': 'wrangler pages dev dist',
     },
     dependencies,
-    ...(Object.keys(devDependencies).length > 0 ? { devDependencies } : {}),
+    devDependencies,
   };
 
   return JSON.stringify(pkg, null, 2) + '\n';

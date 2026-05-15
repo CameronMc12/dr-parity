@@ -24,6 +24,7 @@ import { VIEWPORTS, isViewportName, type Viewport } from '../engine/extract/brow
 import { buildContextOptions, startTrace, stopTrace } from '../engine/extract/capture/recording';
 import { startNetworkRecorder } from '../engine/extract/capture/network-recorder';
 import { runTour } from '../engine/extract/capture/tour';
+import { runLazyLoadPass } from '../engine/extract/capture/lazy-load-pass';
 
 type CliArgs = {
   url?: string;
@@ -48,8 +49,12 @@ Options:
                        launch     - fresh headless Chromium (full HAR + video + trace)
                        cdp        - attach to Chrome on :9222 (no video, manual network)
                        persistent - launch shared Chrome profile (single viewport)
-  --viewport=<list>  Comma-separated viewport names (mobile,tablet,desktop,wide).
-                     Default: all four. Ignored in cdp/persistent mode.
+  --viewport=<list>  Viewport selection. One of:
+                       all                        (default, captures all 4 viewports)
+                       desktop | mobile |
+                       tablet | wide              (single viewport, ~4x faster)
+                       <name>,<name>,...          (comma-separated subset)
+                     Ignored in cdp/persistent mode.
   --out=<dir>        Output root directory. Default: docs/research/captures
   --no-tour          Skip the scroll/hover tour after page load.
   --headed           Run launch mode with a visible browser (default: headless).
@@ -93,11 +98,19 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
     if (raw.startsWith('--viewport=')) {
-      const names = raw.slice('--viewport='.length).split(',').map((s) => s.trim()).filter(Boolean);
+      const value = raw.slice('--viewport='.length).trim();
+      // Sentinel "all" preserves the default behaviour (all 4 viewports).
+      if (value === 'all' || value === '') {
+        out.viewports = VIEWPORTS;
+        continue;
+      }
+      const names = value.split(',').map((s) => s.trim()).filter(Boolean);
       const resolved: Viewport[] = [];
       for (const n of names) {
         if (!isViewportName(n)) {
-          throw new Error(`Unknown viewport: "${n}". Valid: ${VIEWPORTS.map((v) => v.name).join(', ')}`);
+          throw new Error(
+            `Unknown viewport: "${n}". Valid: all, ${VIEWPORTS.map((v) => v.name).join(', ')}`,
+          );
         }
         const v = VIEWPORTS.find((x) => x.name === n);
         if (v) resolved.push(v);
@@ -172,6 +185,15 @@ async function captureLaunchViewport(
       await runTour(page);
     }
 
+    // Fix #6: lazy-load asset re-capture. Scroll-to-bottom pass triggers
+    // IntersectionObserver-driven loads. Gated AFTER initial networkidle
+    // so we never run it on a page that hasn't finished its first paint.
+    const lazy = await runLazyLoadPass(page);
+    console.log(
+      `  [lazy-load] ${viewport.name}: ${lazy.scrollSteps} steps, ` +
+        `${lazy.finalHeightPx}px tall, ${lazy.durationMs}ms`,
+    );
+
     await page.screenshot({ path: join(dir, 'screenshot.png'), fullPage: true });
 
     await stopTrace(ctx, dir);
@@ -220,6 +242,14 @@ async function captureSharedContext(
     if (runTourEnabled) {
       await runTour(page);
     }
+
+    // Fix #6: lazy-load asset re-capture. Same pass as launch mode — the
+    // shared network-recorder will pick up any new requests automatically.
+    const lazy = await runLazyLoadPass(page);
+    console.log(
+      `  [lazy-load] ${viewportName}: ${lazy.scrollSteps} steps, ` +
+        `${lazy.finalHeightPx}px tall, ${lazy.durationMs}ms`,
+    );
 
     await page.screenshot({ path: join(dir, 'screenshot.png'), fullPage: true });
 

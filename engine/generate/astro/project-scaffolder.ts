@@ -17,7 +17,10 @@ export interface ScaffoldFiles {
   'tsconfig.json': string;
   '.gitignore': string;
   'README.md': string;
+  'wrangler.toml': string;
 }
+
+const CLOUDFLARE_COMPAT_DATE = '2026-05-15';
 
 export function buildScaffold(options: ScaffoldOptions): ScaffoldFiles {
   return {
@@ -26,6 +29,7 @@ export function buildScaffold(options: ScaffoldOptions): ScaffoldFiles {
     'tsconfig.json': buildTsconfig(),
     '.gitignore': buildGitignore(),
     'README.md': buildReadme(options.designName),
+    'wrangler.toml': buildWranglerToml(options.name),
   };
 }
 
@@ -34,9 +38,11 @@ function buildAstroConfig(hasIslands: boolean): string {
     return [
       "import { defineConfig } from 'astro/config';",
       "import react from '@astrojs/react';",
+      "import cloudflare from '@astrojs/cloudflare';",
       '',
       'export default defineConfig({',
       "  output: 'static',",
+      "  adapter: cloudflare({ mode: 'directory' }),",
       '  integrations: [react()],',
       '});',
       '',
@@ -44,10 +50,21 @@ function buildAstroConfig(hasIslands: boolean): string {
   }
   return [
     "import { defineConfig } from 'astro/config';",
+    "import cloudflare from '@astrojs/cloudflare';",
     '',
     'export default defineConfig({',
     "  output: 'static',",
+    "  adapter: cloudflare({ mode: 'directory' }),",
     '});',
+    '',
+  ].join('\n');
+}
+
+function buildWranglerToml(name: string): string {
+  return [
+    `name = "${name}"`,
+    `compatibility_date = "${CLOUDFLARE_COMPAT_DATE}"`,
+    'pages_build_output_dir = "dist"',
     '',
   ].join('\n');
 }
@@ -79,6 +96,10 @@ function buildGitignore(): string {
     '# environment variables',
     '.env',
     '.env.production',
+    '.dev.vars',
+    '',
+    '# cloudflare / wrangler',
+    '.wrangler/',
     '',
     '# macOS-specific files',
     '.DS_Store',

@@ -47,7 +47,9 @@
     "extract:primitives": "tsx scripts/extract-primitives.ts",
     "extract:tokens": "tsx scripts/extract-tokens.ts",
     "clone": "tsx scripts/clone.ts",
-    "clone-site": "tsx scripts/run-clone.ts",
+    "clone-site": "tsx scripts/clone-site.ts",
+    "clone-page": "tsx scripts/clone-page.ts",
+    "clone-end-to-end": "tsx scripts/run-clone.ts",
     "check:html-rewriter": "tsx scripts/check-html-rewriter.ts",
     "check:astro-emit": "tsx scripts/check-astro-emit.ts",
     "check:refactor": "tsx scripts/check-refactor.ts",
@@ -56,8 +58,11 @@
     "extract:animations": "tsx scripts/extract-animations.ts",
     "scope:styles": "tsx scripts/scope-styles.ts",
     "check:scope-styles": "tsx scripts/check-scope-styles.ts",
+    "check:prettify": "tsx scripts/check-prettify.ts",
+    "centralize:content": "tsx scripts/centralize-content.ts",
     "refactor:sections": "tsx scripts/refactor-sections.ts",
     "rebuild-pro": "tsx scripts/rebuild-pro.ts",
+    "generate:edit-playbook": "tsx scripts/generate-edit-playbook.ts",
     "preview": "serve"
   },
   "dependencies": {

@@ -28,8 +28,11 @@ Usage:
   tsx scripts/run-clone.ts <url> [options]
 
 Options:
-  --viewport=<list>  Comma-separated viewport names (mobile,tablet,desktop,wide).
-                     Default: all four.
+  --viewport=<list>  Viewport selection. One of:
+                       all                    (default, all 4 viewports)
+                       desktop|mobile|
+                       tablet|wide            (single viewport, ~4x faster)
+                       <name>,<name>,...      (comma-separated subset)
   --out=<dir>        Output root for captures. Default: docs/research/captures
   --no-tour          Skip the scroll/hover tour during capture.
   --no-preview       Suppress the printed preview command at the end.
