@@ -201,6 +201,15 @@ export async function planExtraction(opts: ExtractOptions): Promise<ExtractionPl
       const tags = deriveTags(source);
       const description = deriveDescription(componentName, opts.siteName, pageForSku);
 
+      // Map the section's parent page slug to its HTML entry inside dist/.
+      // Shared sections default to the home page (index.html) as the safest
+      // place to preview them. The dashboard reads parentPagePath to iframe
+      // the real page from the bundled React build.
+      const parentSlug = isShared ? "index" : folder;
+      const parentPagePath = pagesByEntry[parentSlug]
+        ? pagesByEntry[parentSlug].entry
+        : `${parentSlug}.html`;
+
       const meta: CatalogueItem = {
         sku,
         taxonomy: "section",
@@ -212,7 +221,8 @@ export async function planExtraction(opts: ExtractOptions): Promise<ExtractionPl
         tags,
         description,
         thumbnail: "thumbnail.png",
-        previewUrl: "preview.html",
+        previewUrl: parentPagePath,
+        parentPagePath,
         sourcePath: "source.tsx",
         promptPath: "prompt.md",
         dependencies: ["react@^18", "react-dom@^18"],

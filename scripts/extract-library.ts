@@ -3,7 +3,9 @@
  * extract-library CLI driver.
  *
  * Walks a multi-page Vite + React build, emits a catalogue under
- * <output>/sites/<site-id>/ with one folder per section.
+ * <output>/sites/<site-id>/ with one folder per section. Also builds the
+ * React project and copies its `dist/` into the site folder so the
+ * dashboard can iframe-embed real pages for live previews.
  *
  * See engine/library/* for the implementation modules.
  */
@@ -17,12 +19,12 @@ import {
 import { renderSectionThumbnails } from "../engine/library/render-section-preview";
 import { generatePromptMarkdown } from "../engine/library/generate-prompt";
 import {
-  sectionDir,
   writeSection,
   writeSite,
   writeThumbnail,
 } from "../engine/library/write-catalogue";
-import { isProjectType, type ProjectType } from "../engine/library/types";
+import { bundleDist } from "../engine/library/bundle-dist";
+import { isProjectType, type ProjectType, type Site } from "../engine/library/types";
 
 interface CliArgs {
   reactBuild: string;
@@ -33,6 +35,8 @@ interface CliArgs {
   output: string;
   includeShared: boolean;
   force: boolean;
+  skipBuild: boolean;
+  distOnly: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -40,6 +44,8 @@ function parseArgs(argv: string[]): CliArgs {
     projectTypes: [],
     includeShared: true,
     force: false,
+    skipBuild: false,
+    distOnly: false,
   };
 
   for (const raw of argv) {
@@ -79,6 +85,12 @@ function parseArgs(argv: string[]): CliArgs {
       case "force":
         out.force = value !== "false";
         break;
+      case "skip-build":
+        out.skipBuild = value !== "false";
+        break;
+      case "dist-only":
+        out.distOnly = value !== "false";
+        break;
       default:
         fail(`Unknown flag: --${key}`);
     }
@@ -95,10 +107,6 @@ function parseArgs(argv: string[]): CliArgs {
     fail(`Missing required flag(s): ${missing.join(", ")}`);
   }
 
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(out.siteId!)) {
-    fail(`--site-id must be kebab-case (got: ${out.siteId})`);
-  }
-
   return {
     reactBuild: resolve(out.reactBuild!),
     siteId: out.siteId!,
@@ -108,6 +116,8 @@ function parseArgs(argv: string[]): CliArgs {
     output: resolve(out.output!),
     includeShared: out.includeShared ?? true,
     force: out.force ?? false,
+    skipBuild: out.skipBuild ?? false,
+    distOnly: out.distOnly ?? false,
   };
 }
 
@@ -122,9 +132,44 @@ function pickBuildDir(reactBuildRoot: string): string {
   return reactBuildRoot;
 }
 
+async function refreshDistOnly(args: CliArgs): Promise<void> {
+  const siteRoot = `${args.output}/sites/${args.siteId}`;
+  if (!existsSync(siteRoot)) {
+    fail(`--dist-only requires an existing site at ${siteRoot}`);
+  }
+
+  console.log(`extract-library: --dist-only mode, refreshing ${siteRoot}/dist`);
+  const distDest = `${siteRoot}/dist`;
+  if (existsSync(distDest)) {
+    rmSync(distDest, { recursive: true, force: true });
+  }
+
+  const result = await bundleDist({
+    reactBuildDir: args.reactBuild,
+    siteOutDir: siteRoot,
+    skipBuild: args.skipBuild,
+    onProgress: (m) => console.log(`    ${m}`),
+  });
+
+  console.log(`\nextract-library --dist-only done`);
+  console.log(`  built:       ${result.built}`);
+  console.log(`  distSize:    ${(result.distSize / (1024 * 1024)).toFixed(2)} MB`);
+  console.log(`  pages:       ${result.distPagesCount} (${result.pageSlugs.join(", ")})`);
+  console.log(`  note:        site.json was NOT updated. Re-run a full extract to refresh metadata.`);
+  if (result.oversizedFiles.length > 0) {
+    console.warn(`  WARNING: ${result.oversizedFiles.length} file(s) exceed GitHub's 100MB limit:`);
+    for (const f of result.oversizedFiles) console.warn(`    - ${f}`);
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const capturedAt = new Date().toISOString();
+
+  if (args.distOnly) {
+    await refreshDistOnly(args);
+    return;
+  }
 
   console.log(`extract-library starting`);
   console.log(`  react-build: ${args.reactBuild}`);
@@ -132,6 +177,7 @@ async function main(): Promise<void> {
   console.log(`  output:      ${args.output}`);
   console.log(`  project-type:${args.projectTypes.join(", ")}`);
   console.log(`  shared:      ${args.includeShared}`);
+  console.log(`  skip-build:  ${args.skipBuild}`);
 
   const siteRoot = `${args.output}/sites/${args.siteId}`;
   if (existsSync(siteRoot) && args.force) {
@@ -216,7 +262,31 @@ async function main(): Promise<void> {
     failures.push(`renderer-crashed: ${(err as Error).message}`);
   }
 
-  await writeSite(args.output, plan.site);
+  // Build + bundle the React dist into the site folder for live previews.
+  console.log(`  bundle: building React project and copying dist`);
+  const distDest = `${siteRoot}/dist`;
+  if (existsSync(distDest)) {
+    rmSync(distDest, { recursive: true, force: true });
+  }
+  const bundle = await bundleDist({
+    reactBuildDir: args.reactBuild,
+    siteOutDir: siteRoot,
+    skipBuild: args.skipBuild,
+    onProgress: (m) => console.log(`    ${m}`),
+  });
+  console.log(`  bundle: ${bundle.distPagesCount} html pages, ${(bundle.distSize / (1024 * 1024)).toFixed(2)} MB total`);
+  if (bundle.oversizedFiles.length > 0) {
+    console.warn(`  WARNING: ${bundle.oversizedFiles.length} file(s) exceed GitHub's 100MB limit and will be skipped at push:`);
+    for (const f of bundle.oversizedFiles) console.warn(`    - ${f}`);
+  }
+
+  const siteWithDist: Site = {
+    ...plan.site,
+    distPath: bundle.distPath,
+    distSize: bundle.distSize,
+    distPagesCount: bundle.distPagesCount,
+  };
+  await writeSite(args.output, siteWithDist);
 
   console.log(`\nextract-library done`);
   console.log(`  sites:      1`);
@@ -224,6 +294,7 @@ async function main(): Promise<void> {
   console.log(`  thumbnails: ${thumbnailsGenerated}`);
   console.log(`  previews:   ${previewsGenerated}`);
   console.log(`  prompts:    ${promptsGenerated}`);
+  console.log(`  dist:       ${bundle.distPagesCount} pages, ${(bundle.distSize / (1024 * 1024)).toFixed(2)} MB`);
   if (failures.length > 0) {
     console.log(`  failures:`);
     for (const f of failures) console.log(`    - ${f}`);

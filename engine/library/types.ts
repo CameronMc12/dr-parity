@@ -77,6 +77,11 @@ export interface CatalogueItem {
   description?: string;
   thumbnail?: string;
   previewUrl?: string;
+  // Page within the bundled dist that this section belongs to, e.g.
+  // "index.html" or "about-us.html". The dashboard uses this to load the
+  // parent page in an iframe for a live preview. Always relative to
+  // <site>/dist/.
+  parentPagePath?: string;
   sourcePath?: string;
   promptPath?: string;
   dependencies?: string[];
@@ -94,6 +99,11 @@ export interface Site {
   sections: string[];
   capturedAt: string;
   thumbnail?: string;
+  // Bundled React build location relative to the site folder. Always "dist"
+  // when present. Absence means the dashboard should fall back to thumbnails.
+  distPath?: string;
+  distSize?: number;
+  distPagesCount?: number;
 }
 
 export interface Section extends CatalogueItem {
