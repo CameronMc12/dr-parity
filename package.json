@@ -38,6 +38,12 @@
     "generate:astro": "tsx scripts/generate-astro.ts",
     "generate:astro:fixture": "tsx engine/generate/astro/__fixtures__/run-fixture.ts",
     "build-astro": "tsx scripts/build-astro.ts",
+    "build:astro": "tsx scripts/build.ts --target=astro",
+    "build:react": "tsx scripts/build.ts --target=react",
+    "build:react:multi": "tsx scripts/clone-urls.ts --target=react",
+    "build:astro:multi": "tsx scripts/clone-urls.ts --target=astro",
+    "test:parity:astro": "tsx engine/tests/multi-viewport-parity.spec.ts",
+    "test:parity:react": "tsx engine/tests/multi-viewport-parity-react.spec.ts",
     "capture": "tsx scripts/capture.ts",
     "parse:har": "tsx scripts/parse-har.ts",
     "parse:trace": "tsx scripts/parse-trace.ts",
@@ -48,6 +54,7 @@
     "extract:tokens": "tsx scripts/extract-tokens.ts",
     "clone": "tsx scripts/clone.ts",
     "clone-site": "tsx scripts/clone-site.ts",
+    "clone-urls": "tsx scripts/clone-urls.ts",
     "clone-page": "tsx scripts/clone-page.ts",
     "clone-end-to-end": "tsx scripts/run-clone.ts",
     "check:html-rewriter": "tsx scripts/check-html-rewriter.ts",
@@ -63,6 +70,7 @@
     "refactor:sections": "tsx scripts/refactor-sections.ts",
     "rebuild-pro": "tsx scripts/rebuild-pro.ts",
     "generate:edit-playbook": "tsx scripts/generate-edit-playbook.ts",
+    "extract:library": "tsx scripts/extract-library.ts",
     "preview": "serve"
   },
   "dependencies": {
