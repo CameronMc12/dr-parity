@@ -24,6 +24,7 @@ import {
   writeThumbnail,
 } from "../engine/library/write-catalogue";
 import { bundleDist } from "../engine/library/bundle-dist";
+import { captureBoundingBoxes, type BBoxRequest } from "../engine/library/capture-bbox";
 import { isProjectType, type ProjectType, type Site } from "../engine/library/types";
 
 interface CliArgs {
@@ -198,6 +199,44 @@ async function main(): Promise<void> {
   });
 
   console.log(`  plan: ${plan.sections.length} sections across ${plan.site.pages.length} pages`);
+
+  // Capture per-section bounding boxes from the built dist so the dashboard
+  // can crop iframe previews to each section.
+  const buildDirForBbox = pickBuildDir(args.reactBuild);
+  const bboxRequests: BBoxRequest[] = plan.sections.map((s) => ({
+    sku: s.sku,
+    pageEntry: s.meta.parentPagePath ?? "index.html",
+    role: s.role,
+    mainChildIndex: s.mainChildIndex,
+    headingText: s.headingText,
+  }));
+  console.log(`  bbox: capturing ${bboxRequests.length} bounding boxes from ${buildDirForBbox}`);
+  let bboxAttached = 0;
+  let bboxFailed = 0;
+  try {
+    const bboxResults = await captureBoundingBoxes({
+      buildDir: buildDirForBbox,
+      port: 47214,
+      requests: bboxRequests,
+      viewportWidth: 1440,
+      viewportHeight: 900,
+      onProgress: (m) => console.log(`    ${m}`),
+    });
+    const bySku = new Map(bboxResults.map((r) => [r.sku, r] as const));
+    for (const section of plan.sections) {
+      const res = bySku.get(section.sku);
+      if (res && res.bbox) {
+        section.meta.boundingBox = res.bbox;
+        section.meta.boundingBoxViewportWidth = 1440;
+        bboxAttached += 1;
+      } else {
+        bboxFailed += 1;
+      }
+    }
+  } catch (err) {
+    console.warn(`bbox capture failed: ${(err as Error).message}`);
+  }
+  console.log(`  bbox: attached ${bboxAttached}, failed ${bboxFailed}`);
 
   // Write the per-section artefacts (meta + source + preview + prompt).
   let promptsGenerated = 0;

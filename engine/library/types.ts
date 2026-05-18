@@ -64,6 +64,13 @@ export const COMPONENT_CATEGORIES = [
 
 export type ComponentCategory = (typeof COMPONENT_CATEGORIES)[number];
 
+export interface SectionBoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface CatalogueItem {
   sku: string;
   taxonomy: Taxonomy;
@@ -86,6 +93,14 @@ export interface CatalogueItem {
   promptPath?: string;
   dependencies?: string[];
   cssDeps?: string[];
+  /**
+   * Optional captured bounding box (in document coordinates at viewport
+   * width 1440) for the section's DOM element on its parent page. The
+   * dashboard uses this to crop the iframe preview to the section.
+   */
+  boundingBox?: SectionBoundingBox;
+  /** Width of the viewport used when boundingBox was captured. */
+  boundingBoxViewportWidth?: number;
   createdAt: string;
   updatedAt: string;
 }
