@@ -2,9 +2,11 @@
  * Path normalisation utilities.
  *
  * Captured clones use `<base href="./"/>` so all asset references are written
- * as relative paths (`./_astro/...` or `imgs/...`). In Astro static output we
- * serve from `public/` at the root, so each non-absolute reference must be
+ * as relative paths (`./_astro/...` or `imgs/...`). In static framework output
+ * we serve from `public/` at the root, so each non-absolute reference must be
  * rewritten to a root-anchored absolute path.
+ *
+ * Target-agnostic: every framework target needs root-anchored paths.
  */
 
 import type { CheerioAPI, Cheerio } from 'cheerio';

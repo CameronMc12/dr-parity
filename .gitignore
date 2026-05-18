@@ -67,3 +67,11 @@ next-env.d.ts
 
 # Local temp files
 temp/
+
+# Loose probe/debug scripts (one-off)
+/footer-extract.mjs
+/measure-live.mjs
+/probe-bbox.mts
+/screenshot.mjs
+/medusa-footer-shot.mjs
+/enerblock-urls.txt

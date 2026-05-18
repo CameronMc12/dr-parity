@@ -1,5 +1,5 @@
 /**
- * Smoke test for engine/astro/{extract-head,emit,paths,is-inline}.
+ * Smoke test for engine/targets/{shared,astro}/{extract-head,emit,paths,is-inline}.
  *
  * Verifies two invariants in the generated .astro output:
  *
@@ -19,9 +19,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as cheerio from 'cheerio';
 
-import { extractHead } from '../engine/astro/extract-head';
-import { sliceBody } from '../engine/astro/slice-body';
-import { writeComponent, writeLayout, writePage } from '../engine/astro/emit';
+import { extractHead } from '../engine/targets/shared/extract-head';
+import { sliceBody } from '../engine/targets/shared/slice-body';
+import { writeComponent, writeLayout, writePage } from '../engine/targets/astro/emit';
 
 const FIXTURE_HTML = `<!doctype html>
 <html lang="en">

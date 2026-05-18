@@ -3,6 +3,8 @@
  *
  * Order of precedence: id, aria-label, data-section, role, first heading,
  * first distinctive class, finally the tag name.
+ *
+ * Target-agnostic: slugs are framework-independent component identifiers.
  */
 
 import type { Element } from 'domhandler';

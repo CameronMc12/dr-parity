@@ -28,7 +28,7 @@ import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 import { crawlSite } from '../engine/extract/site-crawler';
-import { buildAstroMulti } from '../engine/astro/build-multi';
+import { buildAstroMulti } from '../engine/targets/astro/build-multi';
 import { runPostEmitMulti } from '../engine/orchestrator/post-build/post-emit-multi';
 
 // CRAWLER-AGENT: path-prefix support (Fix #4)

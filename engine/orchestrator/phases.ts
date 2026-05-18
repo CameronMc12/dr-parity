@@ -16,7 +16,7 @@ import type {
 } from './types';
 import { wireLayout } from './wire-layout';
 import { generateEditPlaybook } from '../playbook/generate-edit-playbook';
-import { centralizeContent } from '../astro/centralize-content';
+import { centralizeContent } from '../targets/astro/centralize-content';
 // VERIFY-AGENT: import added for Phase 13 (verify-render post-build smoke test).
 import { verifyRender } from '../verify/render';
 // MEDIA-AGENT: Phase 14 preserves captured @media rules in both safe and aggressive modes.

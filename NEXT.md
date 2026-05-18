@@ -148,6 +148,30 @@ Once you use this for an actual client, capture every gotcha in a `LEARNINGS.md`
 
 After those, the system is genuinely ready for a paying client engagement.
 
+## React target (multi-target architecture)
+
+The pipeline now emits two framework targets behind a single CLI. Same captured clone, two outputs, same 2% pixel-diff bar.
+
+Build:
+```bash
+# Astro (existing behaviour, still works via npm run build-astro)
+npx tsx scripts/build.ts --clone-dir=./clone-enerblock --out-dir=./clone-enerblock --target=astro
+
+# React + Vite + TS
+npx tsx scripts/build.ts --clone-dir=./clone-enerblock --out-dir=./clone-enerblock-react --target=react
+```
+
+Output (React target): Vite + React + TS project with verbatim captured CSS for 1:1 visual parity. Section markup is converted to TSX; captured `<script>` blocks and complex inline HTML are emitted via `dangerouslySetInnerHTML`. Custom elements (`<a-link>`, `<scroll-frames>`, etc.) are typed in `engine/targets/react/jsx-custom-elements.d.ts` so JSX accepts them without prop bleed.
+
+Verification:
+- `npm run test:parity:astro` — pixel-diff Astro build at 4 viewports against captured originals, 2% threshold.
+- `npm run test:parity:react` — boots Vite dev server on 5173 and runs the same harness against the React build.
+
+Known limitations:
+- Inline `<script>` tags ship via `dangerouslySetInnerHTML` — captured analytics/CDN scripts run as-is, no rehydration.
+- React build needs its own dev server (Vite) — slightly slower first paint than the static Astro `dist/`.
+- Custom-element prop typing is permissive (string-only) — strict typing waits until usage patterns surface.
+
 ## Today's sign-off (2026-05-14)
 
 Status: full pipeline shipped + verified 1:1 parity on enerblock test 3 across all 4 viewports. astro-pro is a real, idiomatic Astro project — same shape as `npm create astro@latest`. Add SEO/forms/security/tracking as additive layers; no foundation rewrite needed.

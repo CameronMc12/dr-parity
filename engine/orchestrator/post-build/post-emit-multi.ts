@@ -35,7 +35,7 @@ import {
 } from '../../analyze/css/parser';
 import type { CssRule } from '../../analyze/css/types';
 import { preserveMediaRules } from '../../scope-styles/media-preserve';
-import { centralizeContent } from '../../astro/centralize-content';
+import { centralizeContent } from '../../targets/astro/centralize-content';
 import { generateEditPlaybook } from '../../playbook/generate-edit-playbook';
 import { verifyRender, type VerifyRenderReport } from '../../verify/render';
 

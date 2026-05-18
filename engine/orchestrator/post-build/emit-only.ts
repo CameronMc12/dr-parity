@@ -26,7 +26,7 @@ import {
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
-import { buildAstroMulti, type MultiPageInput } from '../../astro/build-multi';
+import { buildAstroMulti, type MultiPageInput } from '../../targets/astro/build-multi';
 import { verifyRender, type VerifyRenderReport } from '../../verify/render';
 
 export interface EmitOnlyOptions {

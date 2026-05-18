@@ -12,7 +12,7 @@
 import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
-import { centralizeContent } from '../engine/astro/centralize-content';
+import { centralizeContent } from '../engine/targets/astro/centralize-content';
 
 async function main(): Promise<void> {
   const arg = process.argv[2];

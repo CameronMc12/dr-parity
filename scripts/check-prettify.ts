@@ -17,7 +17,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { prettifyAstro, structurallyEquivalent } from '../engine/astro/prettify';
+import { prettifyAstro, structurallyEquivalent } from '../engine/targets/astro/prettify';
 
 interface CaseResult {
   label: string;

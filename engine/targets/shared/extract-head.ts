@@ -4,6 +4,9 @@
  * - Strips the injected `<base href="./"/>` element.
  * - Normalises asset paths in head children (href, src, srcset, inline style/<style>).
  * - Pulls a best-effort title + description for use by the page wrapper.
+ *
+ * Target-agnostic: returns a JSON description (ExtractedHead). Each framework
+ * target formats this into its own layout/head syntax.
  */
 
 import type { CheerioAPI } from 'cheerio';

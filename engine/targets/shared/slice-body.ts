@@ -1,5 +1,5 @@
 /**
- * Walk the body and group its children into Astro components.
+ * Walk the body and group its children into target-agnostic components.
  *
  * Top-level grouping (in document order):
  *   nodes before first landmark         -> BodyPreamble
@@ -19,10 +19,17 @@
  * Inside <main>: each element child that is <section>, <article>, <aside>,
  * or <div> becomes a SectionNN_<slug> component. Text nodes and comments at
  * the body or main level are retained inside the nearest wrapper component.
+ *
+ * IMPORTANT: this module is target-agnostic. The Main wrapper body it emits
+ * uses an Astro-style `---` import block for legacy compatibility with the
+ * existing Astro target; non-Astro targets must rewrite that frontmatter
+ * during their own emit step. Splitting the wrapper-shape out cleanly is a
+ * future refactor — for now this keeps byte-identical Astro output.
  */
 
 import type { CheerioAPI } from 'cheerio';
 import type { AnyNode, Element } from 'domhandler';
+import { findLandmarks } from './find-landmarks';
 import { normaliseElementPaths } from './paths';
 import { deriveSlug, pascalCase } from './slug';
 import type { ComponentDef } from './types';
@@ -43,26 +50,9 @@ function isTag(node: AnyNode): node is Element {
   return node.type === 'tag' || node.type === 'script' || node.type === 'style';
 }
 
-function isLandmark(node: AnyNode): node is Element {
-  return node.type === 'tag';
-}
-
 function trimText(node: AnyNode): string {
   if (node.type === 'text') return (node.data ?? '').trim();
   return '';
-}
-
-function pickHeader(nodes: AnyNode[]): { headerIdx: number; mainIdx: number; footerIdx: number } {
-  let headerIdx = -1;
-  let mainIdx = -1;
-  let footerIdx = -1;
-  nodes.forEach((node, i) => {
-    if (!isLandmark(node)) return;
-    if (headerIdx === -1 && node.tagName === 'header') headerIdx = i;
-    if (mainIdx === -1 && node.tagName === 'main') mainIdx = i;
-    if (node.tagName === 'footer') footerIdx = i;
-  });
-  return { headerIdx, mainIdx, footerIdx };
 }
 
 function buildWrapper($: CheerioAPI, nodes: AnyNode[], wrapTag: string): string {
@@ -173,15 +163,27 @@ export function sliceBody($: CheerioAPI): SliceBodyResult {
   }
   normaliseElementPaths($, body);
 
-  const nodes: AnyNode[] = (body.get(0) as Element).children as AnyNode[];
-  const { headerIdx, mainIdx, footerIdx } = pickHeader(nodes);
+  // Locate landmarks. Primary path: body.children. Fallback path: descend into
+  // wrapper layers (real-world example: vivre.agency wraps everything in a
+  // single <div class="wrapper">, which used to defeat the direct-child search).
+  const bodyEl = body.get(0) as Element;
+  const {
+    effectiveChildren: nodes,
+    preambleSiblings,
+    headerIdx,
+    mainIdx,
+    footerIdx,
+  } = findLandmarks(bodyEl);
 
   const firstLandmarkIdx = [headerIdx, mainIdx, footerIdx]
     .filter((i) => i !== -1)
     .reduce((min, i) => (min === -1 || i < min ? i : min), -1);
 
   const preambleEnd = firstLandmarkIdx === -1 ? nodes.length : firstLandmarkIdx;
-  const preambleNodes = nodes.slice(0, preambleEnd);
+  // Body-root siblings of the wrapper (tracking iframes, hidden SVG masks)
+  // come first so they remain part of the preamble blob without swallowing
+  // the real content that lives inside the wrapper.
+  const preambleNodes = [...preambleSiblings, ...nodes.slice(0, preambleEnd)];
 
   let interstitialNodes: AnyNode[] = [];
   let postMainNodes: AnyNode[] = [];

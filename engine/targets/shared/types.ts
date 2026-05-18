@@ -1,5 +1,10 @@
 /**
- * Types for the deterministic clone -> Astro slicer.
+ * Target-agnostic types shared across framework targets.
+ *
+ * These describe the intermediate representation produced by parsing a clone:
+ * a head description plus a list of component definitions. They contain no
+ * framework-specific syntax (no `.astro` frontmatter, no JSX) so a React (or
+ * any other) target can consume the same output.
  */
 
 export type ComponentRole =
@@ -16,7 +21,7 @@ export interface ComponentDef {
   /** Final file name (without extension), e.g. "Header" or "Section01_hero". */
   name: string;
   role: ComponentRole;
-  /** Raw outerHTML for the node (already path-normalised by the emitter). */
+  /** Raw outerHTML for the node (already path-normalised). */
   html: string;
   /** Optional sub-components (used for Main wrapping its sections). */
   children?: ComponentDef[];
@@ -29,7 +34,7 @@ export interface ExtractedHead {
   htmlAttrs: string;
   /** Attribute string for <body>. May be empty. */
   bodyAttrs: string;
-  /** Document title (best-effort), used by pages/index.astro. */
+  /** Document title (best-effort). */
   title: string;
   /** Document description (best-effort). */
   description: string;
@@ -38,17 +43,4 @@ export interface ExtractedHead {
 export interface SliceResult {
   head: ExtractedHead;
   components: ComponentDef[];
-}
-
-export interface BuildOptions {
-  cloneDir: string;
-  outDir: string;
-  name: string;
-  force: boolean;
-}
-
-export interface BuildSummary {
-  components: Array<{ name: string; bytes: number }>;
-  assetCount: number;
-  assetBytes: number;
 }
