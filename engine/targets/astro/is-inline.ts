@@ -14,7 +14,8 @@
  * - The directive is idempotent: tags that already carry `is:inline` are skipped.
  */
 
-import * as cheerio from 'cheerio';
+import * as cheerioModule from 'cheerio';
+const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 
 /**
  * Add `is:inline` to every <script> and <style> tag in the supplied HTML

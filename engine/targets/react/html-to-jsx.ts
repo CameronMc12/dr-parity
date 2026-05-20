@@ -26,7 +26,8 @@
  * sidestep edge cases that don't roundtrip cleanly through JSX.
  */
 
-import * as cheerio from 'cheerio';
+import * as cheerioModule from 'cheerio';
+const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 import type { AnyNode, Element } from 'domhandler';
 
 const VOID_ELEMENTS = new Set([

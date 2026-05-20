@@ -9,7 +9,8 @@
 
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import * as cheerio from 'cheerio';
+import * as cheerioModule from 'cheerio';
+const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 
 import { extractHead, sliceBody, copyAssetsToPublic } from '../shared';
 import { writeComponent, writeLayout, writePage } from './emit';

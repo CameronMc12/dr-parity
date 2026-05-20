@@ -1,4 +1,5 @@
-import * as cheerio from 'cheerio';
+import * as cheerioModule from 'cheerio';
+const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 import type { CheerioAPI } from 'cheerio';
 import type { Element, AnyNode } from 'domhandler';
 import { rewritePlaceholders } from './post-process';

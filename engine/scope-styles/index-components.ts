@@ -9,7 +9,8 @@
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
-import * as cheerio from 'cheerio';
+import * as cheerioModule from 'cheerio';
+const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 import type { ComponentInfo } from './types';
 
 const ASTRO_EXT = '.astro';

@@ -13,7 +13,8 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import * as cheerio from 'cheerio';
+import * as cheerioModule from 'cheerio';
+const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 import type { ClassCatalogEntry, CssRule } from './types';
 
 interface DomHit {
