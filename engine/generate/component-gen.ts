@@ -650,7 +650,7 @@ function buildAttributes(el: ElementSpec, tokens: DesignTokens): string {
   const inlineStyles = stylesToInline(el.computedStyles, tokens);
   if (Object.keys(inlineStyles).length > 0) {
     const styleStr = Object.entries(inlineStyles)
-      .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+      .map(([k, v]) => `${k}: ${typeof v === 'number' ? String(v) : JSON.stringify(v)}`)
       .join(', ');
     parts.push(`style={{ ${styleStr} }}`);
   }
@@ -1052,11 +1052,61 @@ function stylesToTailwind(
   return classes;
 }
 
+/**
+ * React's CSSProperties types these properties as `number`. When a value is a
+ * bare unit-less number (no px/%/rem/calc/var) it must be emitted as a JS
+ * number to satisfy `React.CSSProperties` — emitting `"600"` for fontWeight
+ * blows up tsc with "Type 'string' is not assignable to type 'number'".
+ *
+ * Values with units (e.g. "1.5rem", "56px"), calc(), var(), or non-numeric
+ * tokens stay strings.
+ */
+const UNITLESS_NUMERIC_PROPS = new Set<string>([
+  'zIndex',
+  'opacity',
+  'fontWeight',
+  'order',
+  'flex',
+  'flexGrow',
+  'flexShrink',
+  'flexOrder',
+  'lineHeight',
+  'columnCount',
+  'columns',
+  'tabSize',
+  'widows',
+  'orphans',
+  'gridRow',
+  'gridColumn',
+  'aspectRatio',
+  'zoom',
+  'fillOpacity',
+  'strokeOpacity',
+  'strokeWidth',
+  'stopOpacity',
+  'floodOpacity',
+]);
+
+const BARE_NUMERIC_RE = /^-?\d+(\.\d+)?$/;
+const IMPORTANT_RE = /\s*!important\s*$/i;
+
+function stripImportant(value: string): string {
+  return value.replace(IMPORTANT_RE, '').trim();
+}
+
+function coerceUnitlessNumeric(key: string, value: string): string | number {
+  const stripped = stripImportant(value);
+  if (UNITLESS_NUMERIC_PROPS.has(key) && BARE_NUMERIC_RE.test(stripped)) {
+    return Number(stripped);
+  }
+  return stripped;
+}
+
 function stylesToInline(
   styles: Record<string, string>,
   tokens?: DesignTokens,
-): Record<string, string> {
-  const result: Record<string, string> = {};
+): Record<string, string | number> {
+  const result: Record<string, string | number> = {};
 
   for (const [prop, value] of Object.entries(styles)) {
     const kebab = camelToKebab(prop);
@@ -1064,7 +1114,7 @@ function stylesToInline(
     // Force-inline properties that have no Tailwind equivalent (Item 2.3)
     if (FORCE_INLINE.has(prop) || FORCE_INLINE.has(kebab)) {
       const camelProp = kebabToCamel(kebab);
-      result[camelProp] = value;
+      result[camelProp] = coerceUnitlessNumeric(camelProp, value);
       continue;
     }
 
@@ -1075,13 +1125,14 @@ function stylesToInline(
 
     // Convert kebab-case to camelCase for React style objects
     const camelProp = kebabToCamel(kebab);
-    result[camelProp] = value;
+    result[camelProp] = coerceUnitlessNumeric(camelProp, value);
   }
 
   // Emit complex gradients as inline backgroundImage if they couldn't map to Tailwind
   for (const gradientProp of ['background', 'backgroundImage', 'background-image'] as const) {
-    const val = styles[gradientProp];
-    if (val && val.includes('gradient') && !mapGradientToTailwind(val)) {
+    const rawVal = styles[gradientProp];
+    if (rawVal && rawVal.includes('gradient') && !mapGradientToTailwind(rawVal)) {
+      const val = stripImportant(rawVal);
       // Check if there's a matching CSS variable from tokens
       const matchingToken = tokens?.gradients.find((g) => g.value === val);
       if (matchingToken?.cssVariable) {

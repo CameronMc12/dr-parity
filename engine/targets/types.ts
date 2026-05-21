@@ -62,7 +62,7 @@ export interface TargetMultiBuildSummary {
 }
 
 export interface TargetAdapter {
-  name: 'astro' | 'react';
+  name: 'astro' | 'react' | 'webapp';
   build(options: TargetBuildOptions): Promise<TargetBuildSummary>;
   /**
    * Optional multi-page build. Adapters that support multi-page emission

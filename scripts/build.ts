@@ -25,7 +25,7 @@ import type {
   TargetMultiBuildSummary,
 } from '../engine/targets/types';
 
-type TargetName = 'astro' | 'react';
+type TargetName = 'astro' | 'react' | 'webapp';
 
 interface MultiCloneSpec {
   cloneDir: string;
@@ -43,7 +43,7 @@ interface ParsedArgs {
 }
 
 const HELP = `Usage:
-  tsx scripts/build.ts <clone-dir> --target=<astro|react> [options]            # single-page
+  tsx scripts/build.ts <clone-dir> --target=<astro|react|webapp> [options]     # single-page
   tsx scripts/build.ts --target=<astro|react> --clone-dir=<path>:<pathname> \\  # multi-page
                        --clone-dir=<path2>:<pathname2> --out-dir=<dir>
 
@@ -54,7 +54,7 @@ Arguments:
                         --clone-dir=<path>:<pathname> two or more times.
 
 Required:
-  --target=<name>       One of: astro, react.
+  --target=<name>       One of: astro, react, webapp.
 
 Options:
   --out=<dir>           Output directory. For single-page defaults to a
@@ -73,7 +73,7 @@ Each value must be path:pathname, e.g. './clone-home:/' or
 
 The script never modifies the clone directories.`;
 
-const VALID_TARGETS: ReadonlySet<TargetName> = new Set(['astro', 'react']);
+const VALID_TARGETS: ReadonlySet<TargetName> = new Set(['astro', 'react', 'webapp']);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {
@@ -224,6 +224,15 @@ async function loadAdapter(target: TargetName): Promise<TargetAdapter> {
   if (target === 'astro') {
     const mod = await import('../engine/targets/astro/index');
     return mod.astroAdapter;
+  }
+  if (target === 'webapp') {
+    const mod = (await import('../engine/targets/webapp/index')) as { webappAdapter: TargetAdapter };
+    if (!mod || typeof mod.webappAdapter?.build !== 'function') {
+      throw new Error(
+        'Webapp adapter not available — engine/targets/webapp/index.ts does not export webappAdapter yet.',
+      );
+    }
+    return mod.webappAdapter;
   }
   // React adapter — import lazily so this script still works when the
   // React target hasn't been scaffolded yet.

@@ -49,6 +49,7 @@ const VOID_ELEMENTS = new Set([
 
 const BOOLEAN_ATTRS = new Set([
   'allowfullscreen',
+  'allowtransparency',
   'async',
   'autofocus',
   'autoplay',
@@ -93,6 +94,10 @@ const ATTR_MAP: Record<string, string> = {
   rowspan: 'rowSpan',
   usemap: 'useMap',
   frameborder: 'frameBorder',
+  allowtransparency: 'allowTransparency',
+  allowfullscreen: 'allowFullScreen',
+  webkitallowfullscreen: 'allowFullScreen',
+  mozallowfullscreen: 'allowFullScreen',
   contenteditable: 'contentEditable',
   crossorigin: 'crossOrigin',
   datetime: 'dateTime',
@@ -294,7 +299,7 @@ function renderElement(
     return renderRawTextElement(el, tag);
   }
 
-  const attrs = renderAttributes(el.attribs ?? {});
+  const attrs = renderAttributes(el.attribs ?? {}, tag);
   const isVoid = VOID_ELEMENTS.has(tag);
   const children = (el.children ?? []) as AnyNode[];
 
@@ -324,11 +329,11 @@ function renderScriptOrStyle(el: Element, tag: 'script' | 'style'): string {
   }
 
   if (raw.length === 0) {
-    const attrs = renderAttributes(attribs);
+    const attrs = renderAttributes(attribs, tag);
     return `<${tag}${attrs} />`;
   }
 
-  const attrs = renderAttributes(attribs);
+  const attrs = renderAttributes(attribs, tag);
   return `<${tag}${attrs} dangerouslySetInnerHTML={{ __html: ${quoteForJs(raw)} }} />`;
 }
 
@@ -350,18 +355,68 @@ function renderRawTextElement(el: Element, tag: string): string {
       raw += (child as { data?: string }).data ?? '';
     }
   }
-  const attrs = renderAttributes(attribs);
+  const attrs = renderAttributes(attribs, tag);
   if (raw.length === 0) {
     return `<${tag}${attrs}></${tag}>`;
   }
   return `<${tag}${attrs} dangerouslySetInnerHTML={{ __html: ${quoteForJs(raw)} }} />`;
 }
 
-function renderAttributes(attribs: Record<string, string>): string {
+/**
+ * React types these HTML attributes as `number`. When emitted as JSX, a bare
+ * numeric string must be wrapped as `{N}` rather than quoted as `"N"`, or tsc
+ * blows up with "Type 'string' is not assignable to type 'number'".
+ * Keys are the camelCased React prop names (post-ATTR_MAP/camelise).
+ */
+const NUMERIC_HTML_ATTRS = new Set<string>([
+  'tabIndex',
+  'rowSpan',
+  'colSpan',
+  'span',
+  'start',
+  'max',
+  'min',
+  'maxLength',
+  'minLength',
+  'size',
+  'cols',
+  'rows',
+  'step',
+  'seamless',
+]);
+
+/**
+ * React only accepts the `type` attribute on a fixed set of elements. The
+ * captured source sometimes copies `type="button"` onto plain `<div>` or `<a>`
+ * wrappers (common in Radix/HeadlessUI output), which tsc rejects with
+ * "Property 'type' does not exist on type 'DetailedHTMLProps<...>'".
+ */
+const TYPE_ATTR_ALLOWED_TAGS = new Set<string>([
+  'button',
+  'input',
+  'command',
+  'embed',
+  'link',
+  'menu',
+  'object',
+  'ol',
+  'param',
+  'script',
+  'source',
+  'style',
+]);
+
+function renderAttributes(attribs: Record<string, string>, tag: string): string {
   const parts: string[] = [];
   for (const [rawKey, rawValue] of Object.entries(attribs)) {
     if (rawValue === undefined || rawValue === null) continue;
     const lower = rawKey.toLowerCase();
+
+    // Skip `type` when emitted on an element React types don't accept it on
+    // (e.g. div/a). Carried over from captured Radix/HeadlessUI markup.
+    if (lower === 'type' && !TYPE_ATTR_ALLOWED_TAGS.has(tag)) {
+      continue;
+    }
 
     // data-* and aria-* pass through verbatim.
     if (lower.startsWith('data-') || lower.startsWith('aria-')) {
@@ -373,7 +428,7 @@ function renderAttributes(attribs: Record<string, string>): string {
     if (lower === 'style') {
       const obj = parseInlineStyle(rawValue);
       if (Object.keys(obj).length > 0) {
-        parts.push(`style={${serialiseStyleObject(obj)}}`);
+        parts.push(`style={${serialiseStyleObject(coerceStyleNumerics(obj))}}`);
       }
       continue;
     }
@@ -393,6 +448,14 @@ function renderAttributes(attribs: Record<string, string>): string {
 
     const jsxKey =
       ATTR_MAP[lower] ?? (lower.startsWith('on') && lower.length > 2 ? rawKey : camelise(rawKey));
+
+    // Numeric HTML attrs (tabIndex, rowSpan, etc): emit `{N}` not `"N"` when
+    // value is a bare number, mirroring coerceStyleNumerics for inline styles.
+    if (NUMERIC_HTML_ATTRS.has(jsxKey) && BARE_NUMERIC_RE.test(rawValue.trim())) {
+      parts.push(`${jsxKey}={${Number(rawValue)}}`);
+      continue;
+    }
+
     parts.push(`${jsxKey}=${quoteForJsx(rawValue)}`);
   }
   return parts.length === 0 ? '' : ' ' + parts.join(' ');
@@ -452,13 +515,71 @@ function cssPropToJs(prop: string): string {
   return prop.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
 }
 
-function serialiseStyleObject(obj: Record<string, string>): string {
+function serialiseStyleObject(obj: Record<string, string | number>): string {
   const parts: string[] = [];
   for (const [key, value] of Object.entries(obj)) {
     const k = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
-    parts.push(`${k}: ${JSON.stringify(value)}`);
+    const serialised = typeof value === 'number' ? String(value) : JSON.stringify(value);
+    parts.push(`${k}: ${serialised}`);
   }
   return `{ ${parts.join(', ')} }`;
+}
+
+/**
+ * React's CSSProperties types these properties as `number`. When a value is
+ * a bare unit-less number (no px/%/rem/calc/var) it must be emitted as a
+ * JS number to satisfy `React.CSSProperties` — emitting `"600"` for fontWeight
+ * blows up tsc with "Type 'string' is not assignable to type 'number'".
+ *
+ * Values with units (e.g. "1.5rem", "56px"), calc(), var(), or non-numeric
+ * tokens stay strings.
+ */
+const UNITLESS_NUMERIC_PROPS = new Set<string>([
+  'zIndex',
+  'opacity',
+  'fontWeight',
+  'order',
+  'flex',
+  'flexGrow',
+  'flexShrink',
+  'flexOrder',
+  'lineHeight',
+  'columnCount',
+  'columns',
+  'tabSize',
+  'widows',
+  'orphans',
+  'gridRow',
+  'gridColumn',
+  'aspectRatio',
+  'zoom',
+  'fillOpacity',
+  'strokeOpacity',
+  'strokeWidth',
+  'stopOpacity',
+  'floodOpacity',
+]);
+
+const BARE_NUMERIC_RE = /^-?\d+(\.\d+)?$/;
+const IMPORTANT_RE = /\s*!important\s*$/i;
+
+function stripImportant(value: string): string {
+  return value.replace(IMPORTANT_RE, '').trim();
+}
+
+function coerceStyleNumerics(
+  obj: Record<string, string>,
+): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const stripped = stripImportant(value);
+    if (UNITLESS_NUMERIC_PROPS.has(key) && BARE_NUMERIC_RE.test(stripped)) {
+      out[key] = Number(stripped);
+    } else {
+      out[key] = stripped;
+    }
+  }
+  return out;
 }
 
 /**
