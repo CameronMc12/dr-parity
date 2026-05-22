@@ -74,18 +74,28 @@ function resolveAbs(documentUrl: string, ref: string): string | null {
 }
 
 function splitSrcset(raw: string): string[] {
-  // Comma-separated, each candidate is "url descriptor?" where descriptor
-  // is optional. data: URIs in srcset are rare but legal — the regex below
-  // is tolerant of commas inside data: URIs.
+  // Comma-separated list of "url descriptor?" candidates.
+  //
+  // Two complications:
+  //   (a) data: URIs sometimes appear as placeholders, and the base64
+  //       payload may contain commas. A naive comma split would chop a
+  //       data URI in half and feed the tail (e.g. "R0lGOD...==") to
+  //       URL resolution, which then absolutises it against the
+  //       document origin and yields a bogus 404 candidate.
+  //   (b) the URL part of a real candidate never contains a comma, so
+  //       splitting is safe once we exclude the all-data-URI case.
+  //
+  // Strategy: if the whole srcset starts with `data:`, treat it as a
+  // single placeholder and skip. Otherwise split on `,` as before.
   const out: string[] = [];
-  if (!raw.trim()) return out;
-  // Quick path: split on `, ` then trim. If a part starts with data: and
-  // contains an unbalanced base64 chunk, the simple split is wrong, but
-  // we then defer to URL parsing which will reject malformed entries.
-  for (const part of raw.split(',')) {
-    const trimmed = part.trim();
-    if (!trimmed) continue;
-    const url = trimmed.split(/\s+/, 1)[0];
+  const trimmed = raw.trim();
+  if (!trimmed) return out;
+  if (trimmed.toLowerCase().startsWith('data:')) return out;
+  for (const part of trimmed.split(',')) {
+    const piece = part.trim();
+    if (!piece) continue;
+    if (piece.toLowerCase().startsWith('data:')) continue;
+    const url = piece.split(/\s+/, 1)[0];
     if (url) out.push(url);
   }
   return out;
