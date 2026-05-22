@@ -25,14 +25,24 @@ import { buildContextOptions, startTrace, stopTrace } from '../engine/extract/ca
 import { startNetworkRecorder } from '../engine/extract/capture/network-recorder';
 import { runTour } from '../engine/extract/capture/tour';
 import { runLazyLoadPass } from '../engine/extract/capture/lazy-load-pass';
+import {
+  CANONICAL_ROOT,
+  canonicalTimestamp,
+  cloneSubdir,
+  defaultTargetFromHost,
+} from '../engine/cli/canonical-paths';
+
+const LEGACY_CAPTURE_ROOT = 'docs/research/captures';
 
 type CliArgs = {
   url?: string;
   viewports: readonly Viewport[];
-  out: string;
+  out?: string;
   tour: boolean;
   mode: CaptureMode;
   headless: boolean;
+  legacyOutput: boolean;
+  target?: string;
   help: boolean;
 };
 
@@ -55,7 +65,12 @@ Options:
                        tablet | wide              (single viewport, ~4x faster)
                        <name>,<name>,...          (comma-separated subset)
                      Ignored in cdp/persistent mode.
-  --out=<dir>        Output root directory. Default: docs/research/captures
+  --out=<dir>        Output directory override.
+                       Default (canonical): clones/<target>/<iso-timestamp>/captures
+                       With --legacy-output: docs/research/captures/<host>/<iso-timestamp>
+  --target=<name>    Override the canonical target slug (defaults to host without TLD).
+  --legacy-output    Write into docs/research/captures/<host>/<iso-timestamp> instead
+                       of the canonical layout. Defaults off.
   --no-tour          Skip the scroll/hover tour after page load.
   --headed           Run launch mode with a visible browser (default: headless).
   -h, --help         Show this help.
@@ -72,10 +87,12 @@ function parseArgs(argv: string[]): CliArgs {
   const out: CliArgs = {
     url: undefined,
     viewports: VIEWPORTS,
-    out: 'docs/research/captures',
+    out: undefined,
     tour: true,
     mode: 'launch',
     headless: true,
+    legacyOutput: false,
+    target: undefined,
     help: false,
   };
 
@@ -122,6 +139,14 @@ function parseArgs(argv: string[]): CliArgs {
       out.out = raw.slice('--out='.length);
       continue;
     }
+    if (raw === '--legacy-output') {
+      out.legacyOutput = true;
+      continue;
+    }
+    if (raw.startsWith('--target=')) {
+      out.target = raw.slice('--target='.length).trim() || undefined;
+      continue;
+    }
     if (raw.startsWith('--')) {
       throw new Error(`Unknown flag: ${raw}`);
     }
@@ -132,6 +157,29 @@ function parseArgs(argv: string[]): CliArgs {
   return out;
 }
 
+/**
+ * Resolve the capture output directory.
+ *
+ * Default (canonical): `clones/<target>/<iso>/captures/`.
+ * `--legacy-output`: `docs/research/captures/<host>/<iso>/`.
+ * `--out=<dir>`: explicit override, used verbatim (no host/timestamp suffix).
+ */
+function resolveCaptureRoot(args: CliArgs, host: string, stamp: string): string {
+  if (args.out) {
+    if (args.legacyOutput) {
+      // Legacy semantic: --out is the parent root, host/stamp are appended.
+      return join(args.out, host, stamp);
+    }
+    // Treat explicit --out as the exact directory.
+    return args.out;
+  }
+  if (args.legacyOutput) {
+    return join(LEGACY_CAPTURE_ROOT, host, stamp);
+  }
+  const target = args.target ?? defaultTargetFromHost(host);
+  return cloneSubdir(target, stamp, 'captures', CANONICAL_ROOT);
+}
+
 function validateUrl(input: string | undefined): URL {
   if (!input) throw new Error('Missing required <url> argument. Run with --help for usage.');
   try {
@@ -139,10 +187,6 @@ function validateUrl(input: string | undefined): URL {
   } catch {
     throw new Error(`Invalid URL: "${input}"`);
   }
-}
-
-function isoStamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
 type ViewportResult = {
@@ -344,17 +388,24 @@ async function runPersistent(
   return [result];
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+export interface CaptureRunResult {
+  /** Root directory where the capture landed. */
+  readonly rootDir: string;
+  /** Per-viewport result rows. */
+  readonly viewports: readonly ViewportResult[];
+}
+
+export async function runCapture(argv: string[]): Promise<CaptureRunResult> {
+  const args = parseArgs(argv);
   if (args.help) {
     console.log(HELP_TEXT);
-    return;
+    return { rootDir: '', viewports: [] };
   }
 
   const url = validateUrl(args.url);
   const host = url.hostname || 'unknown-host';
-  const stamp = isoStamp();
-  const root = join(args.out, host, stamp);
+  const stamp = canonicalTimestamp();
+  const root = resolveCaptureRoot(args, host, stamp);
   mkdirSync(root, { recursive: true });
 
   const handle = await openBrowser({ mode: args.mode, headless: args.headless });
@@ -392,15 +443,29 @@ async function main(): Promise<void> {
   printSummary(manifest);
 
   if (fatal) {
-    console.error('[capture] fatal:', fatal.message);
+    throw fatal;
+  }
+  return { rootDir: root, viewports: results };
+}
+
+async function cli(): Promise<void> {
+  let result: CaptureRunResult;
+  try {
+    result = await runCapture(process.argv.slice(2));
+  } catch (err) {
+    console.error('[capture] fatal:', err instanceof Error ? err.message : err);
     process.exit(1);
   }
-  if (results.length > 0 && results.every((r) => !r.ok)) {
+  if (result.viewports.length > 0 && result.viewports.every((r) => !r.ok)) {
     process.exit(1);
   }
 }
 
-main().catch((err) => {
-  console.error('[capture] fatal:', err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+// Only run as CLI when invoked directly (not when imported).
+const isDirect = process.argv[1] && process.argv[1].endsWith('capture.ts');
+if (isDirect) {
+  cli().catch((err) => {
+    console.error('[capture] fatal:', err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}
