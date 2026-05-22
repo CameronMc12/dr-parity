@@ -79,3 +79,6 @@ temp/
 /screenshot.mjs
 /medusa-footer-shot.mjs
 /enerblock-urls.txt
+
+# Regression corpus regenerable artefacts (per-fixture screenshots + diffs)
+tests/fixtures/sites/*/rebuild-pixel-diff/

@@ -18,6 +18,7 @@ export type ComparisonMode =
   | "bytes"
   | "pixel-diff"
   | "manifest-shape"
+  | "rebuild-pixel-diff"
   | "both";
 export type FixtureViewport = "mobile" | "tablet" | "desktop" | "wide";
 
@@ -50,6 +51,7 @@ const VALID_COMPARISON_MODES: ReadonlySet<ComparisonMode> = new Set([
   "bytes",
   "pixel-diff",
   "manifest-shape",
+  "rebuild-pixel-diff",
   "both",
 ]);
 
@@ -96,7 +98,7 @@ function assertComparisonMode(value: unknown, slug: string): ComparisonMode {
   const str = assertString(value, "comparison_mode", slug);
   if (!VALID_COMPARISON_MODES.has(str as ComparisonMode)) {
     throw new Error(
-      `fixture ${slug}: comparison_mode "${str}" must be one of bytes, pixel-diff, manifest-shape, both`,
+      `fixture ${slug}: comparison_mode "${str}" must be one of bytes, pixel-diff, manifest-shape, rebuild-pixel-diff, both`,
     );
   }
   return str as ComparisonMode;

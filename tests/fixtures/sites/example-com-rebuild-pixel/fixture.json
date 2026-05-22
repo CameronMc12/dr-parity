@@ -1,0 +1,10 @@
+{
+  "slug": "example-com-rebuild-pixel",
+  "target": "astro",
+  "url": "https://example.com/",
+  "captured_at": "2026-05-14T12:54:35.266Z",
+  "captured_at_sha": "8c5ba3ab6a732077abef6df0f269f7c635810d37",
+  "parity_threshold": 0.99,
+  "comparison_mode": "rebuild-pixel-diff",
+  "notes": "Proof fixture for the rebuild-pixel-diff comparison mode. Rebuilds the example.com capture via the astro target, runs npm install + npm run build, boots a static server on both the original clone and the rebuilt dist, screenshots at the desktop viewport, and pixel-diffs. Passes when diffRatio is within 1 minus parity_threshold (0.01). Slow path: ~85 seconds per run including npm install."
+}

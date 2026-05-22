@@ -16,6 +16,7 @@
 import { resolve } from "node:path";
 import { ok, type Stage, type StageResult } from "../stage.js";
 import { compareManifestShape, type ComparisonResult } from "./manifest-shape.js";
+import { compareRebuildPixelDiff } from "./rebuild-pixel-diff.js";
 import { loadFixtures, type Fixture } from "./fixture-schema.js";
 
 export interface FixtureOutcome {
@@ -53,10 +54,10 @@ function unsupportedMode(mode: Fixture["comparisonMode"]): FixtureOutcome {
     mode,
     passed: false,
     score: 0,
-    summary: `comparison_mode "${mode}" not yet implemented in V0`,
+    summary: `comparison_mode "${mode}" not yet implemented`,
     diagnostics: [],
     skipped: true,
-    skipReason: `comparison_mode "${mode}" lands in V1; V0 ships manifest-shape only.`,
+    skipReason: `comparison_mode "${mode}" is not wired into the runner. Supported: manifest-shape, rebuild-pixel-diff.`,
   };
 }
 
@@ -64,7 +65,10 @@ async function evaluateFixture(
   fixture: Fixture,
   repoRoot: string,
 ): Promise<FixtureOutcome> {
-  if (fixture.comparisonMode !== "manifest-shape") {
+  if (
+    fixture.comparisonMode !== "manifest-shape" &&
+    fixture.comparisonMode !== "rebuild-pixel-diff"
+  ) {
     return {
       ...unsupportedMode(fixture.comparisonMode),
       slug: fixture.slug,
@@ -89,14 +93,22 @@ async function evaluateFixture(
     };
   }
 
-  const result: ComparisonResult = await compareManifestShape({
-    slug: fixture.slug,
-    fixtureDir: fixture.dir,
-    captureRef: fixture.captureRef,
-    repoRoot,
-    parityThreshold: fixture.parityThreshold,
-    expectedViewport: fixture.viewport,
-  });
+  let result: ComparisonResult;
+  if (fixture.comparisonMode === "rebuild-pixel-diff") {
+    result = await compareRebuildPixelDiff({
+      fixture,
+      repoRoot,
+    });
+  } else {
+    result = await compareManifestShape({
+      slug: fixture.slug,
+      fixtureDir: fixture.dir,
+      captureRef: fixture.captureRef,
+      repoRoot,
+      parityThreshold: fixture.parityThreshold,
+      expectedViewport: fixture.viewport,
+    });
+  }
 
   return {
     slug: fixture.slug,
