@@ -73,20 +73,41 @@ Tour pass remains untouched. The fix is at the asset-completer layer, not the ca
 
 ## Before vs after measurement
 
-Before (reference run on 2026-05-22):
+Before (reference run `clones/www-apple/2026-05-22T11-23-38-769Z`):
 - distinct local image refs in astro `src/`: 101
 - missing in `public/`: 78
 - broken-ref rate: 77%
+- `complete:assets` fetched=41 failed=153
+- parsed assets total: 107
 
-After (re-run pending — see commit log for hash):
-- to be measured
+After (re-run `clones/www-apple/2026-05-22T11-45-37-226Z`):
+- distinct local image refs in astro `src/`: 119
+- missing in `public/`: 0
+- broken-ref rate: 0%
+- `complete:assets` fetched=236 failed=154
+- parsed assets total: 302
+
+Net result: every image reference emitted into the Astro components
+now resolves to a real file in `public/`. The remaining 154 failures
+in `complete:assets` are entirely Apple's gated SF Pro font endpoints
+plus a handful of cross-origin tracking pixels — all expected, none
+images.
+
+### Commits
+
+- `feat(extract): scan parsed DOM for srcset and picture variants` (new asset-inventory module)
+- `feat(complete-assets): fetch HTML derived image variants` (wire it in)
+- `fix(extract): include noscript children in asset inventory` (the breakthrough — Apple stashes full responsive variants inside noscript and parse5 hides them by default)
+- `fix(extract): skip data URI srcset placeholders cleanly` (avoid bogus origin-relative fetch candidates from base64 placeholder splits)
 
 ## Anomalies and surprises
 
 - Astro emit is faithful. The components carry exactly what `clone/index.html` produced, including the unrewritten variants. Earlier suspicion that astro emit dropped the rewrite map was wrong.
 - `parse:har` already records every captured asset correctly. The hole is purely "the browser never asked for the sibling variants".
-- The static clone's html-rewriter does the right thing per-URL (lookup → rewrite if hit, leave alone if miss). Leaving alone is fine for an externally-loadable URL, but the variants are relative root paths (`/v/home/...`) which become 404s when served locally. A second fix option would be to absolutise unrewritten same-origin paths back to the original host. Decided against it because (a) the user wants images downloaded, not externally served, and (b) absolutising would create an inconsistent experience (some refs local, some live).
-- `complete-assets.ts` already had the machinery for this — CSS scanning, concurrency, dedup, MIME classification, ext inference. The fix is a 60-line additive module plus a small wiring change.
+- The static clone's html-rewriter does the right thing per-URL (lookup if hit, leave alone if miss). Leaving alone is fine for an externally-loadable URL, but the variants are relative root paths (`/v/home/...`) which become 404s when served locally. A second fix option would be to absolutise unrewritten same-origin paths back to the original host. Decided against it because (a) the user wants images downloaded, not externally served, and (b) absolutising would create an inconsistent experience (some refs local, some live).
+- `complete-assets.ts` already had the machinery for this. CSS scanning, concurrency, dedup, MIME classification, ext inference were all reusable. The fix is a small additive module plus a small wiring change.
+- **The biggest surprise** was that the first iteration only recovered 30 of the 78 missing variants. Investigation revealed Apple wraps every below-the-fold tile's full responsive variant list inside a `<noscript>` block, and cheerio (via parse5) defaults to `scriptingEnabled: true`, which makes noscript contents opaque text. Switching to `scriptingEnabled: false` lifted the noscript subtrees into a real DOM and surfaced the remaining variants. This is a hidden-DOM gotcha that the same scanner approach would have missed otherwise.
+- The data URI placeholder split bug only became visible once the noscript fix exposed many `<source srcset="data:image/gif;base64,...">` placeholders. Cheap to fix once seen.
 
 ## Hard-constraint compliance
 
