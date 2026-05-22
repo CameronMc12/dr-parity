@@ -13,6 +13,7 @@ import * as cheerioModule from 'cheerio';
 const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 
 import { extractHead, sliceBody, copyAssetsToPublic } from '../shared';
+import { normaliseElementPaths } from '../shared/paths';
 import {
   collectAndStripBodyScripts,
   renderHoistedScripts,
@@ -67,6 +68,17 @@ export async function buildReactProject(options: BuildOptions): Promise<BuildSum
   const $ = cheerio.load(html, null, true);
 
   const head = extractHead($);
+
+  // Normalise body asset paths BEFORE collecting hoisted scripts. The
+  // captured clone serialises every reference as `./foo` because it
+  // injects a `<base href="./">`. Vite resolves `<script src="./foo">`
+  // against the project root (not /public), so without this rewrite
+  // Vite fails the build with "Could not resolve ./foo". `sliceBody`
+  // also normalises body paths later, but that runs after script
+  // collection so the hoisted scripts would otherwise keep their
+  // original `./` prefixes. Calling it twice is idempotent: the
+  // second pass sees absolute paths and skips them.
+  normaliseElementPaths($, $('body'));
 
   // Collect body-level <script> tags BEFORE slicing, then remove them
   // from the cheerio tree so the JSX emitter doesn't render them

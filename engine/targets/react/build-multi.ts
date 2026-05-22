@@ -30,6 +30,7 @@ import {
   copyAssetsToPublic,
   dirSizeBytes,
 } from '../shared';
+import { normaliseElementPaths } from '../shared/paths';
 import {
   collectAndStripBodyScripts,
   renderHoistedScripts,
@@ -144,6 +145,14 @@ export async function buildReactMulti(
   const slices: ReactPageSlice[] = perPageRawHtml.map((p) => {
     const $ = cheerio.load(p.html, null, true);
     const head = extractHead($);
+
+    // Normalise body paths BEFORE collecting scripts. Captured clones
+    // serialise refs as `./foo` due to <base href="./">. Vite resolves
+    // hoisted `<script src="./foo">` against the project root and fails
+    // the build with "Could not resolve" because the file lives in
+    // /public. sliceBody() also normalises, but runs after collection;
+    // the second pass is a no-op against already-absolute paths.
+    normaliseElementPaths($, $('body'));
 
     // Strip body scripts BEFORE slicing so JSX emitter doesn't render
     // them; then splice back into this page's <body>.
