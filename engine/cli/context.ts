@@ -36,6 +36,14 @@ export interface CreateRunContextOptions {
   readonly outDir?: string;
   /** Disable file writes; only stdout. Useful for tests. */
   readonly noFiles?: boolean;
+  /** Suppress non essential stdout. Errors still print. */
+  readonly quiet?: boolean;
+  /** Emit full debug output. Overrides quiet for the duration of the run. */
+  readonly verbose?: boolean;
+  /** Disable ANSI color sequences (kept for future use, see global-flags.ts). */
+  readonly noColor?: boolean;
+  /** Emit Logger output as JSON lines on stdout instead of human readable text. */
+  readonly json?: boolean;
 }
 
 /**
@@ -96,6 +104,23 @@ export async function createRunContext(
   const runId = options.runId ?? generateRunId();
   const outDir = options.outDir ?? resolve(process.cwd(), ".runs", runId);
   const noFiles = options.noFiles ?? false;
+  const quiet = options.quiet === true && options.verbose !== true;
+  const verbose = options.verbose === true;
+  const json = options.json === true;
+
+  /**
+   * info/metric/event lines suppressed when quiet is on.
+   * warn and error always print (errors to stderr).
+   */
+  const writeStdout = (line: string, level: "info" | "warn"): void => {
+    if (quiet && level === "info") return;
+    process.stdout.write(line);
+  };
+  const writeStderr = (line: string): void => {
+    process.stderr.write(line);
+  };
+  const fmtJson = (record: Record<string, unknown>): string =>
+    `${JSON.stringify(record)}\n`;
 
   if (!noFiles) {
     await fs.mkdir(outDir, { recursive: true });
@@ -126,7 +151,10 @@ export async function createRunContext(
   /** Root logger: writes to stdout/stderr plus JSONL. No stage attribution. */
   const rootLogger: Logger = {
     info(msg, meta) {
-      process.stdout.write(`[${runId}] info  ${msg}${fmtMeta(meta)}\n`);
+      const line = json
+        ? fmtJson({ runId, level: "info", stage: "run", msg, meta })
+        : `[${runId}] info  ${msg}${fmtMeta(meta)}\n`;
+      writeStdout(line, "info");
       emit({
         type: "log",
         stage: "run",
@@ -137,7 +165,10 @@ export async function createRunContext(
       });
     },
     warn(msg, meta) {
-      process.stdout.write(`[${runId}] warn  ${msg}${fmtMeta(meta)}\n`);
+      const line = json
+        ? fmtJson({ runId, level: "warn", stage: "run", msg, meta })
+        : `[${runId}] warn  ${msg}${fmtMeta(meta)}\n`;
+      writeStdout(line, "warn");
       emit({
         type: "warning",
         stage: "run",
@@ -147,7 +178,10 @@ export async function createRunContext(
       });
     },
     error(msg, meta) {
-      process.stderr.write(`[${runId}] error ${msg}${fmtMeta(meta)}\n`);
+      const line = json
+        ? fmtJson({ runId, level: "error", stage: "run", msg, meta })
+        : `[${runId}] error ${msg}${fmtMeta(meta)}\n`;
+      writeStderr(line);
       emit({
         type: "error",
         stage: "run",
@@ -157,9 +191,14 @@ export async function createRunContext(
       });
     },
     metric(name, value, meta) {
-      process.stdout.write(
-        `[${runId}] metric ${name}=${String(value)}${fmtMeta(meta)}\n`,
-      );
+      if (!verbose && quiet) {
+        // metrics are info level; suppress in quiet mode.
+      } else {
+        const line = json
+          ? fmtJson({ runId, kind: "metric", stage: "run", name, value, meta })
+          : `[${runId}] metric ${name}=${String(value)}${fmtMeta(meta)}\n`;
+        writeStdout(line, "info");
+      }
       emit({
         type: "metric",
         stage: "run",
@@ -170,14 +209,21 @@ export async function createRunContext(
       });
     },
     event(name, fields) {
-      process.stdout.write(`[${runId}] event ${name}${fmtMeta(fields)}\n`);
+      if (quiet) return;
+      const line = json
+        ? fmtJson({ runId, kind: "event", stage: "run", name, fields })
+        : `[${runId}] event ${name}${fmtMeta(fields)}\n`;
+      writeStdout(line, "info");
     },
   };
 
   const forStage = (stage: string): Logger => ({
     info(msg, meta) {
       const line = `info  ${msg}${fmtMeta(meta)}`;
-      process.stdout.write(`[${runId}] ${stage} ${line}\n`);
+      const stdoutLine = json
+        ? fmtJson({ runId, level: "info", stage, msg, meta })
+        : `[${runId}] ${stage} ${line}\n`;
+      writeStdout(stdoutLine, "info");
       writeStageLog(stage, line);
       emit({
         type: "log",
@@ -190,7 +236,10 @@ export async function createRunContext(
     },
     warn(msg, meta) {
       const line = `warn  ${msg}${fmtMeta(meta)}`;
-      process.stdout.write(`[${runId}] ${stage} ${line}\n`);
+      const stdoutLine = json
+        ? fmtJson({ runId, level: "warn", stage, msg, meta })
+        : `[${runId}] ${stage} ${line}\n`;
+      writeStdout(stdoutLine, "warn");
       writeStageLog(stage, line);
       emit({
         type: "warning",
@@ -202,7 +251,10 @@ export async function createRunContext(
     },
     error(msg, meta) {
       const line = `error ${msg}${fmtMeta(meta)}`;
-      process.stderr.write(`[${runId}] ${stage} ${line}\n`);
+      const stderrLine = json
+        ? fmtJson({ runId, level: "error", stage, msg, meta })
+        : `[${runId}] ${stage} ${line}\n`;
+      writeStderr(stderrLine);
       writeStageLog(stage, line);
       emit({
         type: "error",
@@ -214,7 +266,12 @@ export async function createRunContext(
     },
     metric(name, value, meta) {
       const line = `metric ${name}=${String(value)}${fmtMeta(meta)}`;
-      process.stdout.write(`[${runId}] ${stage} ${line}\n`);
+      if (!quiet || verbose) {
+        const stdoutLine = json
+          ? fmtJson({ runId, kind: "metric", stage, name, value, meta })
+          : `[${runId}] ${stage} ${line}\n`;
+        writeStdout(stdoutLine, "info");
+      }
       writeStageLog(stage, line);
       emit({
         type: "metric",
@@ -227,7 +284,12 @@ export async function createRunContext(
     },
     event(name, fields) {
       const line = `event ${name}${fmtMeta(fields)}`;
-      process.stdout.write(`[${runId}] ${stage} ${line}\n`);
+      if (!quiet) {
+        const stdoutLine = json
+          ? fmtJson({ runId, kind: "event", stage, name, fields })
+          : `[${runId}] ${stage} ${line}\n`;
+        writeStdout(stdoutLine, "info");
+      }
       writeStageLog(stage, line);
     },
   });

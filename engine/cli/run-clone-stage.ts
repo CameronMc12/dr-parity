@@ -37,6 +37,9 @@ export interface ParityCloneInput {
   tour: boolean;
   outDir?: string;
   runId?: string;
+  quiet?: boolean;
+  verbose?: boolean;
+  json?: boolean;
 }
 
 export interface ParityCloneResult {
@@ -118,7 +121,12 @@ async function runCloneInProcess(
 export async function runParityClone(
   input: ParityCloneInput,
 ): Promise<ParityCloneResult> {
-  const ctx = await createRunContext({ runId: input.runId });
+  const ctx = await createRunContext({
+    runId: input.runId,
+    quiet: input.quiet,
+    verbose: input.verbose,
+    json: input.json,
+  });
   const startedAt = new Date().toISOString();
 
   const command = `parity clone ${input.url}${input.target ? ` ${input.target}` : ""}`;

@@ -20,6 +20,11 @@ import { defineCommand, runMain } from "citty";
 import { runRegressionTest } from "../engine/cli/regression/run-test.js";
 import { runParityClone } from "../engine/cli/run-clone-stage.js";
 import { runsHarvestCommand } from "../engine/cli/runs-harvest-cli.js";
+import {
+  applyGlobalFlagEnv,
+  readGlobalFlags,
+  withGlobalFlags,
+} from "../engine/cli/global-flags.js";
 
 const PARITY_VERSION = "2.0.0-dev";
 
@@ -27,232 +32,269 @@ function stub(name: string): void {
   process.stdout.write(`stage: ${name} (not yet wired)\n`);
 }
 
-const testCommand = defineCommand({
-  meta: {
-    name: "test",
-    description:
-      "Run the regression corpus against every fixture under tests/fixtures/sites/. Exits non-zero on any regression.",
-  },
-  args: {
-    root: {
-      type: "string",
-      description: "Override the repo root used to resolve fixtures.",
-      valueHint: "path",
-    },
-  },
-  async run({ args }) {
-    const root = typeof args.root === "string" ? args.root : undefined;
-    const exitCode = await runRegressionTest(root);
-    process.exit(exitCode);
-  },
-});
-
-const cloneCommand = defineCommand({
-  meta: {
-    name: "clone",
-    description:
-      "Capture a single URL and emit a static clone (full pipeline).",
-  },
-  args: {
-    url: {
-      type: "positional",
-      description: "Origin URL to clone.",
-      required: true,
-    },
-    target: {
-      type: "positional",
-      description: "Target name. Defaults to a slug derived from the host.",
-      required: false,
-    },
-    viewport: {
-      type: "string",
+const testCommand = defineCommand(
+  withGlobalFlags({
+    meta: {
+      name: "test",
       description:
-        "Comma separated viewport list. Accepts mobile,tablet,desktop,wide or all.",
-      default: "all",
-      valueHint: "list",
+        "Run the regression corpus against every fixture under tests/fixtures/sites/. Exits non-zero on any regression.",
     },
-    tour: {
-      type: "boolean",
-      description: "Run the scroll and hover tour to wake lazy content.",
-      default: true,
-      negativeDescription: "Skip the tour pass.",
+    args: {
+      root: {
+        type: "string",
+        description: "Override the repo root used to resolve fixtures.",
+        valueHint: "path",
+      },
     },
-    parity: {
-      type: "boolean",
-      description: "Run the parity verification stage after build.",
-      default: true,
-      negativeDescription: "Skip parity verification.",
+    async run({ args }) {
+      applyGlobalFlagEnv(readGlobalFlags(args as Record<string, unknown>));
+      const root = typeof args.root === "string" ? args.root : undefined;
+      const exitCode = await runRegressionTest(root);
+      process.exit(exitCode);
     },
-    "parity-threshold": {
-      type: "string",
-      description: "Pixel diff threshold for parity verification.",
-      default: "0.02",
-      valueHint: "ratio",
-    },
-    out: {
-      type: "string",
-      description: "Override the base output directory.",
-      valueHint: "path",
-    },
-  },
-  async run({ args }) {
-    const url = String(args.url);
-    const targetArg =
-      typeof args.target === "string" && args.target.length > 0
-        ? (args.target as "astro" | "react" | "webapp" | "html-mirror")
-        : undefined;
-    const viewports =
-      typeof args.viewport === "string" && args.viewport !== "all"
-        ? args.viewport
-        : undefined;
-    const outDir = typeof args.out === "string" ? args.out : undefined;
-    const tour = args.tour !== false;
+  }),
+);
 
-    const result = await runParityClone({
-      url,
-      target: targetArg,
-      viewports,
-      tour,
-      outDir,
-    });
-    process.stdout.write(
-      `\nparity clone finished: status=${result.status}\n` +
-        `  runId : ${result.runId}\n` +
-        `  runDir: ${result.runDir}\n` +
-        `  summary: ${result.summaryPath}\n`,
-    );
-    process.exit(result.status === "ok" ? 0 : 1);
-  },
-});
+const cloneCommand = defineCommand(
+  withGlobalFlags({
+    meta: {
+      name: "clone",
+      description:
+        "Capture a single URL and emit a static clone (full pipeline).",
+    },
+    args: {
+      url: {
+        type: "positional",
+        description: "Origin URL to clone.",
+        required: true,
+      },
+      target: {
+        type: "positional",
+        description: "Target name. Defaults to a slug derived from the host.",
+        required: false,
+      },
+      viewport: {
+        type: "string",
+        description:
+          "Comma separated viewport list. Accepts mobile,tablet,desktop,wide or all.",
+        default: "all",
+        valueHint: "list",
+      },
+      tour: {
+        type: "boolean",
+        description: "Run the scroll and hover tour to wake lazy content.",
+        default: true,
+        negativeDescription: "Skip the tour pass.",
+      },
+      parity: {
+        type: "boolean",
+        description: "Run the parity verification stage after build.",
+        default: true,
+        negativeDescription: "Skip parity verification.",
+      },
+      "parity-threshold": {
+        type: "string",
+        description: "Pixel diff threshold for parity verification.",
+        default: "0.02",
+        valueHint: "ratio",
+      },
+      out: {
+        type: "string",
+        description: "Override the base output directory.",
+        valueHint: "path",
+      },
+    },
+    async run({ args }) {
+      const flags = readGlobalFlags(args as Record<string, unknown>);
+      applyGlobalFlagEnv(flags);
+      const url = String(args.url);
+      const targetArg =
+        typeof args.target === "string" && args.target.length > 0
+          ? (args.target as "astro" | "react" | "webapp" | "html-mirror")
+          : undefined;
+      const viewports =
+        typeof args.viewport === "string" && args.viewport !== "all"
+          ? args.viewport
+          : undefined;
+      const outDir = typeof args.out === "string" ? args.out : undefined;
+      const tour = args.tour !== false;
 
-const captureCommand = defineCommand({
-  meta: {
-    name: "capture",
-    description:
-      "Run the Playwright capture stage for one URL. Produces HAR, trace, screenshots, and DOM snapshots.",
-  },
-  args: {
-    url: {
-      type: "positional",
-      description: "Origin URL to capture.",
-      required: true,
+      const result = await runParityClone({
+        url,
+        target: targetArg,
+        viewports,
+        tour,
+        outDir,
+        runId: flags.runId,
+        quiet: flags.quiet,
+        verbose: flags.verbose,
+        json: flags.json,
+      });
+      if (!flags.quiet) {
+        process.stdout.write(
+          `\nparity clone finished: status=${result.status}\n` +
+            `  runId : ${result.runId}\n` +
+            `  runDir: ${result.runDir}\n` +
+            `  summary: ${result.summaryPath}\n`,
+        );
+      }
+      process.exit(result.status === "ok" ? 0 : 1);
     },
-    viewport: {
-      type: "string",
-      description: "Comma separated viewport list or all.",
-      default: "all",
-    },
-    mode: {
-      type: "enum",
-      description: "Capture mode.",
-      options: ["launch", "cdp", "persistent"],
-      default: "launch",
-    },
-    tour: {
-      type: "boolean",
-      description: "Run the scroll and hover tour.",
-      default: true,
-      negativeDescription: "Skip the tour pass.",
-    },
-    headed: {
-      type: "boolean",
-      description: "Run the browser with a visible window.",
-      default: false,
-    },
-    out: {
-      type: "string",
-      description: "Override the base output directory.",
-      valueHint: "path",
-    },
-  },
-  run({ args }) {
-    process.stdout.write(
-      `parity capture (stub): url=${args.url} mode=${args.mode} viewport=${args.viewport} tour=${args.tour} headed=${args.headed}\n`,
-    );
-    stub("capture");
-  },
-});
+  }),
+);
 
-const parseCommand = defineCommand({
-  meta: {
-    name: "parse",
-    description:
-      "Parse a capture directory into structured assets. Wraps parse:har and parse:trace.",
-  },
-  args: {
-    captureDir: {
-      type: "positional",
-      description: "Path to the capture directory produced by parity capture.",
-      required: true,
+const captureCommand = defineCommand(
+  withGlobalFlags({
+    meta: {
+      name: "capture",
+      description:
+        "Run the Playwright capture stage for one URL. Produces HAR, trace, screenshots, and DOM snapshots.",
     },
-    har: {
-      type: "boolean",
-      description: "Parse the HAR network log only.",
-      default: false,
+    args: {
+      url: {
+        type: "positional",
+        description: "Origin URL to capture.",
+        required: true,
+      },
+      viewport: {
+        type: "string",
+        description: "Comma separated viewport list or all.",
+        default: "all",
+      },
+      mode: {
+        type: "enum",
+        description: "Capture mode.",
+        options: ["launch", "cdp", "persistent"],
+        default: "launch",
+      },
+      tour: {
+        type: "boolean",
+        description: "Run the scroll and hover tour.",
+        default: true,
+        negativeDescription: "Skip the tour pass.",
+      },
+      headed: {
+        type: "boolean",
+        description: "Run the browser with a visible window.",
+        default: false,
+      },
+      out: {
+        type: "string",
+        description: "Override the base output directory.",
+        valueHint: "path",
+      },
     },
-    trace: {
-      type: "boolean",
-      description: "Parse the Playwright trace only.",
-      default: false,
+    run({ args }) {
+      const flags = readGlobalFlags(args as Record<string, unknown>);
+      applyGlobalFlagEnv(flags);
+      if (!flags.quiet) {
+        process.stdout.write(
+          `parity capture (stub): url=${args.url} mode=${args.mode} viewport=${args.viewport} tour=${args.tour} headed=${args.headed}\n`,
+        );
+      }
+      stub("capture");
     },
-    all: {
-      type: "boolean",
-      description: "Parse HAR and trace. Default behaviour.",
-      default: true,
-      negativeDescription: "Disable the all parse default.",
-    },
-  },
-  run({ args }) {
-    process.stdout.write(
-      `parity parse (stub): dir=${args.captureDir} har=${args.har} trace=${args.trace} all=${args.all}\n`,
-    );
-    stub("parse");
-  },
-});
+  }),
+);
 
-const cloneStaticCommand = defineCommand({
-  meta: {
-    name: "clone-static",
-    description:
-      "Build the static 1:1 clone from a parsed capture directory. Equivalent to the existing scripts/clone.ts step.",
-  },
-  args: {
-    captureDir: {
-      type: "positional",
-      description: "Path to the parsed capture directory.",
-      required: true,
+const parseCommand = defineCommand(
+  withGlobalFlags({
+    meta: {
+      name: "parse",
+      description:
+        "Parse a capture directory into structured assets. Wraps parse:har and parse:trace.",
     },
-    viewport: {
-      type: "string",
-      description: "Comma separated viewport list or all.",
-      default: "all",
+    args: {
+      captureDir: {
+        type: "positional",
+        description: "Path to the capture directory produced by parity capture.",
+        required: true,
+      },
+      har: {
+        type: "boolean",
+        description: "Parse the HAR network log only.",
+        default: false,
+      },
+      trace: {
+        type: "boolean",
+        description: "Parse the Playwright trace only.",
+        default: false,
+      },
+      all: {
+        type: "boolean",
+        description: "Parse HAR and trace. Default behaviour.",
+        default: true,
+        negativeDescription: "Disable the all parse default.",
+      },
     },
-    out: {
-      type: "string",
-      description: "Override the base output directory.",
-      valueHint: "path",
+    run({ args }) {
+      const flags = readGlobalFlags(args as Record<string, unknown>);
+      applyGlobalFlagEnv(flags);
+      if (!flags.quiet) {
+        process.stdout.write(
+          `parity parse (stub): dir=${args.captureDir} har=${args.har} trace=${args.trace} all=${args.all}\n`,
+        );
+      }
+      stub("parse");
     },
-  },
-  run({ args }) {
-    process.stdout.write(
-      `parity clone-static (stub): dir=${args.captureDir} viewport=${args.viewport} out=${args.out ?? "default"}\n`,
-    );
-    stub("clone-static");
-  },
-});
+  }),
+);
 
-const targetsListCommand = defineCommand({
-  meta: {
-    name: "list",
-    description: "List registered framework targets.",
-  },
-  run() {
-    process.stdout.write(
-      "targets (stub): astro, react, webapp, html-mirror\n",
-    );
-    stub("targets list");
-  },
-});
+const cloneStaticCommand = defineCommand(
+  withGlobalFlags({
+    meta: {
+      name: "clone-static",
+      description:
+        "Build the static 1:1 clone from a parsed capture directory. Equivalent to the existing scripts/clone.ts step.",
+    },
+    args: {
+      captureDir: {
+        type: "positional",
+        description: "Path to the parsed capture directory.",
+        required: true,
+      },
+      viewport: {
+        type: "string",
+        description: "Comma separated viewport list or all.",
+        default: "all",
+      },
+      out: {
+        type: "string",
+        description: "Override the base output directory.",
+        valueHint: "path",
+      },
+    },
+    run({ args }) {
+      const flags = readGlobalFlags(args as Record<string, unknown>);
+      applyGlobalFlagEnv(flags);
+      if (!flags.quiet) {
+        process.stdout.write(
+          `parity clone-static (stub): dir=${args.captureDir} viewport=${args.viewport} out=${args.out ?? "default"}\n`,
+        );
+      }
+      stub("clone-static");
+    },
+  }),
+);
+
+const targetsListCommand = defineCommand(
+  withGlobalFlags({
+    meta: {
+      name: "list",
+      description: "List registered framework targets.",
+    },
+    run({ args }) {
+      const flags = readGlobalFlags(args as Record<string, unknown>);
+      applyGlobalFlagEnv(flags);
+      if (!flags.quiet) {
+        process.stdout.write(
+          "targets (stub): astro, react, webapp, html-mirror\n",
+        );
+      }
+      stub("targets list");
+    },
+  }),
+);
 
 const targetsCommand = defineCommand({
   meta: {
@@ -264,30 +306,36 @@ const targetsCommand = defineCommand({
   },
 });
 
-const runsListCommand = defineCommand({
-  meta: {
-    name: "list",
-    description: "List recent runs from the .runs directory.",
-  },
-  args: {
-    last: {
-      type: "string",
-      description: "Limit to the most recent N runs.",
-      valueHint: "N",
+const runsListCommand = defineCommand(
+  withGlobalFlags({
+    meta: {
+      name: "list",
+      description: "List recent runs from the .runs directory.",
     },
-    target: {
-      type: "string",
-      description: "Filter by target host or slug.",
-      valueHint: "name",
+    args: {
+      last: {
+        type: "string",
+        description: "Limit to the most recent N runs.",
+        valueHint: "N",
+      },
+      target: {
+        type: "string",
+        description: "Filter by target host or slug.",
+        valueHint: "name",
+      },
     },
-  },
-  run({ args }) {
-    process.stdout.write(
-      `parity runs list (stub): last=${args.last ?? "all"} target=${args.target ?? "any"}\n`,
-    );
-    stub("runs list");
-  },
-});
+    run({ args }) {
+      const flags = readGlobalFlags(args as Record<string, unknown>);
+      applyGlobalFlagEnv(flags);
+      if (!flags.quiet) {
+        process.stdout.write(
+          `parity runs list (stub): last=${args.last ?? "all"} target=${args.target ?? "any"}\n`,
+        );
+      }
+      stub("runs list");
+    },
+  }),
+);
 
 const runsCommand = defineCommand({
   meta: {
@@ -300,15 +348,23 @@ const runsCommand = defineCommand({
   },
 });
 
-const versionCommand = defineCommand({
-  meta: {
-    name: "version",
-    description: "Print the parity CLI version.",
-  },
-  run() {
-    process.stdout.write(`${PARITY_VERSION}\n`);
-  },
-});
+const versionCommand = defineCommand(
+  withGlobalFlags({
+    meta: {
+      name: "version",
+      description: "Print the parity CLI version.",
+    },
+    run({ args }) {
+      const flags = readGlobalFlags(args as Record<string, unknown>);
+      applyGlobalFlagEnv(flags);
+      if (flags.json) {
+        process.stdout.write(`${JSON.stringify({ version: PARITY_VERSION })}\n`);
+      } else {
+        process.stdout.write(`${PARITY_VERSION}\n`);
+      }
+    },
+  }),
+);
 
 const main = defineCommand({
   meta: {
