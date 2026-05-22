@@ -18,6 +18,7 @@
 
 import { defineCommand, runMain } from "citty";
 import { runRegressionTest } from "../engine/cli/regression/run-test.js";
+import { runParityClone } from "../engine/cli/run-clone-stage.js";
 
 const PARITY_VERSION = "2.0.0-dev";
 
@@ -93,11 +94,33 @@ const cloneCommand = defineCommand({
       valueHint: "path",
     },
   },
-  run({ args }) {
+  async run({ args }) {
+    const url = String(args.url);
+    const targetArg =
+      typeof args.target === "string" && args.target.length > 0
+        ? (args.target as "astro" | "react" | "webapp" | "html-mirror")
+        : undefined;
+    const viewports =
+      typeof args.viewport === "string" && args.viewport !== "all"
+        ? args.viewport
+        : undefined;
+    const outDir = typeof args.out === "string" ? args.out : undefined;
+    const tour = args.tour !== false;
+
+    const result = await runParityClone({
+      url,
+      target: targetArg,
+      viewports,
+      tour,
+      outDir,
+    });
     process.stdout.write(
-      `parity clone (stub): url=${args.url} target=${args.target ?? "auto"} viewport=${args.viewport} tour=${args.tour} parity=${args.parity} threshold=${args["parity-threshold"]} out=${args.out ?? "default"}\n`,
+      `\nparity clone finished: status=${result.status}\n` +
+        `  runId : ${result.runId}\n` +
+        `  runDir: ${result.runDir}\n` +
+        `  summary: ${result.summaryPath}\n`,
     );
-    stub("clone");
+    process.exit(result.status === "ok" ? 0 : 1);
   },
 });
 
