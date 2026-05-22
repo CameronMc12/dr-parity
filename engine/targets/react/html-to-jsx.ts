@@ -423,6 +423,16 @@ function renderAttributes(attribs: Record<string, string>, tag: string): string 
       continue;
     }
 
+    // Sanitize non-standard HTML attributes that JSX intrinsic-element types
+    // reject (e.g. `x-ms-format-detection`). Returning a `data-` prefixed name
+    // keeps the information in the DOM while satisfying React's prop typing.
+    const sanitized = sanitizeNonStandardAttr(rawKey, lower);
+    if (sanitized !== null) {
+      if (sanitized === '') continue; // dropped entirely (warned)
+      parts.push(`${sanitized}=${quoteForJsx(rawValue)}`);
+      continue;
+    }
+
     // style="color: red" -> style={{ color: 'red' }}
     if (lower === 'style') {
       const obj = parseInlineStyle(rawValue);
@@ -458,6 +468,87 @@ function renderAttributes(attribs: Record<string, string>, tag: string): string 
     parts.push(`${jsxKey}=${quoteForJsx(rawValue)}`);
   }
   return parts.length === 0 ? '' : ' ' + parts.join(' ');
+}
+
+/**
+ * Namespace prefixes that JSX accepts verbatim. `xml:`, `xmlns:`, and `xlink:`
+ * are valid JSXNamespacedName forms and `xlink:*` is also remapped via ATTR_MAP
+ * to React's camelCase equivalents (e.g. `xlinkHref`). Anything else with a
+ * colon falls into the sanitizer.
+ */
+const VALID_NAMESPACED_PREFIXES = ['xml:', 'xmlns:', 'xlink:'];
+
+/**
+ * Vendor / non-standard HTML attribute prefixes that should be hoisted onto
+ * `data-` so React's JSX intrinsic types accept them. Apple ships
+ * `x-ms-format-detection`; many older sites emit `ms-*`, `webkit-*`, and
+ * `moz-*` HTML attributes (distinct from the matching CSS properties).
+ */
+const NON_STANDARD_ATTR_PREFIXES = ['x-ms-', 'ms-', 'webkit-', 'moz-'];
+
+/**
+ * JSX prop names must start with a letter or underscore and otherwise contain
+ * only letters, digits, hyphens, or underscores. Anything else (a colon in an
+ * unknown namespace, leading digit, stray punctuation) is unsafe to emit.
+ */
+const JSX_PROP_NAME_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/**
+ * Return value semantics:
+ *   - `null`   → not a non-standard attribute, let the normal mapping handle it
+ *   - `''`     → drop the attribute entirely (logged once via `warnDroppedAttr`)
+ *   - string   → emit this sanitized name (already in `data-` form, safe for JSX)
+ *
+ * Standard HTML attributes (those present in `ATTR_MAP`, `BOOLEAN_ATTRS`, or
+ * the `on*` event family) pass through here untouched so existing camelCase
+ * conversions remain authoritative.
+ */
+function sanitizeNonStandardAttr(rawKey: string, lower: string): string | null {
+  // Known attributes already handled by the rest of the pipeline.
+  if (ATTR_MAP[lower] !== undefined) return null;
+  if (BOOLEAN_ATTRS.has(lower)) return null;
+  if (lower.startsWith('on') && lower.length > 2) return null;
+
+  // Allowed namespaced attrs (SVG / XML) flow through normally.
+  if (VALID_NAMESPACED_PREFIXES.some((p) => lower.startsWith(p))) return null;
+  if (lower === 'xmlns') return null;
+
+  // Vendor / non-standard prefixes: hoist onto data-.
+  for (const prefix of NON_STANDARD_ATTR_PREFIXES) {
+    if (lower.startsWith(prefix)) {
+      return toDataAttr(lower);
+    }
+  }
+
+  // Any colon outside the allow-list above: convert to data-, swap colons for
+  // dashes so the result is a valid JSX prop name.
+  if (lower.includes(':')) {
+    return toDataAttr(lower.replace(/:/g, '-'));
+  }
+
+  // Anything that still fails the JSX prop name regex (leading digit, stray
+  // punctuation, whitespace) gets dropped with a warning. We can't safely
+  // emit it, and a data- fallback may collide with real attributes.
+  if (!JSX_PROP_NAME_RE.test(rawKey)) {
+    warnDroppedAttr(rawKey);
+    return '';
+  }
+
+  // Otherwise this is a plain hyphenated attribute we don't know about. Defer
+  // to the existing camelise path so prior behaviour is preserved.
+  return null;
+}
+
+function toDataAttr(name: string): string {
+  return name.startsWith('data-') ? name : `data-${name}`;
+}
+
+const warnedAttrs = new Set<string>();
+function warnDroppedAttr(name: string): void {
+  if (warnedAttrs.has(name)) return;
+  warnedAttrs.add(name);
+  // eslint-disable-next-line no-console
+  console.warn(`[html-to-jsx] dropped invalid attribute "${name}"`);
 }
 
 /**
@@ -616,4 +707,5 @@ export const __internal = {
   camelise,
   quoteForJs,
   quoteForJsx,
+  sanitizeNonStandardAttr,
 };
