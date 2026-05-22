@@ -265,13 +265,13 @@ async function runMswBootCheck(
 // Phase: route-render-check (Playwright)
 // ---------------------------------------------------------------------------
 
-interface PreviewServer {
+export interface PreviewServer {
   child: ChildProcess;
   port: number;
   baseUrl: string;
 }
 
-function startVitePreview(
+export function startVitePreview(
   outDir: string,
   readyTimeoutMs: number,
   log: (line: string) => void,
@@ -347,7 +347,7 @@ function startVitePreview(
   });
 }
 
-async function stopPreview(server: PreviewServer): Promise<void> {
+export async function stopPreview(server: PreviewServer): Promise<void> {
   if (server.child.killed || server.child.exitCode !== null) return;
   await new Promise<void>((res) => {
     const fallback = setTimeout(() => {
