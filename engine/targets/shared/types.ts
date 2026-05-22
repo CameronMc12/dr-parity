@@ -21,10 +21,31 @@ export interface ComponentDef {
   /** Final file name (without extension), e.g. "Header" or "Section01_hero". */
   name: string;
   role: ComponentRole;
-  /** Raw outerHTML for the node (already path-normalised). */
+  /**
+   * Raw outerHTML for the node (already path-normalised). When this component
+   * is a pure composition wrapper (see `wrapper` + `childComponentNames`),
+   * `html` is the empty string and the target emitter assembles the wrapper
+   * body from `wrapper` and the composed child tags.
+   */
   html: string;
   /** Optional sub-components (used for Main wrapping its sections). */
   children?: ComponentDef[];
+  /**
+   * Opening + closing tag for a composition wrapper (e.g. `<main id="page">`
+   * + `</main>`). Set on the `Main` component returned by `sliceBody`. When
+   * present together with `childComponentNames`, the target emitter renders
+   * the wrapper around composed child references in that target's native
+   * syntax. Null/undefined for leaf components whose `html` is the full
+   * node and need no composition.
+   */
+  wrapper?: { openTag: string; closeTag: string };
+  /**
+   * Names of child components composed inside this component. Each entry is
+   * a sibling component name (e.g. `Section01_Hero`) that the target emitter
+   * should reference inside `wrapper.openTag` / `wrapper.closeTag`. Empty
+   * means "wrapper renders as an empty pair of tags."
+   */
+  childComponentNames?: string[];
 }
 
 export interface ExtractedHead {

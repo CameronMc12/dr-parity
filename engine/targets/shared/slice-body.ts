@@ -20,11 +20,12 @@
  * or <div> becomes a SectionNN_<slug> component. Text nodes and comments at
  * the body or main level are retained inside the nearest wrapper component.
  *
- * IMPORTANT: this module is target-agnostic. The Main wrapper body it emits
- * uses an Astro-style `---` import block for legacy compatibility with the
- * existing Astro target; non-Astro targets must rewrite that frontmatter
- * during their own emit step. Splitting the wrapper-shape out cleanly is a
- * future refactor — for now this keeps byte-identical Astro output.
+ * IMPORTANT: this module is target-agnostic. The Main wrapper is returned as
+ * structured data (`wrapper.openTag` + `wrapper.closeTag` + `childComponentNames`)
+ * with `html: ''`. Each target emitter (Astro, React, Webapp) assembles that
+ * data into its own native composition syntax — frontmatter for Astro, ES
+ * imports + JSX for React/Webapp. The shared IR carries no framework-specific
+ * strings.
  */
 
 import type { CheerioAPI } from 'cheerio';
@@ -79,7 +80,7 @@ function sliceMain($: CheerioAPI, mainEl: Element): SliceMainResult {
   const usedSlugs = new Map<string, number>();
   const childNodes: AnyNode[] = mainEl.children as AnyNode[];
 
-  const mainImportTokens: string[] = [];
+  const childComponentNames: string[] = [];
 
   let chromeBuffer: string[] = [];
   const flushChrome = (): void => {
@@ -92,7 +93,7 @@ function sliceMain($: CheerioAPI, mainEl: Element): SliceMainResult {
       role: 'section',
       html: chromeBuffer.join('\n'),
     });
-    mainImportTokens.push(componentName);
+    childComponentNames.push(componentName);
     chromeBuffer = [];
   };
 
@@ -108,7 +109,7 @@ function sliceMain($: CheerioAPI, mainEl: Element): SliceMainResult {
       const componentName = `Section${padded}_${pascalCase(uniqueSlug)}`;
       const html = outerHTML($, node);
       sections.push({ name: componentName, role: 'section', html });
-      mainImportTokens.push(componentName);
+      childComponentNames.push(componentName);
     } else {
       const text = trimText(node);
       if (text.length > 0 || isTag(node)) {
@@ -119,24 +120,20 @@ function sliceMain($: CheerioAPI, mainEl: Element): SliceMainResult {
   flushChrome();
 
   const attrsString = serialiseAttrs(mainAttribs);
-  const mainOpen = `<${mainTag}${attrsString}>`;
-  const mainClose = `</${mainTag}>`;
-
-  const importLines = mainImportTokens
-    .map((n) => `import ${n} from './${n}.astro';`)
-    .join('\n');
-
-  const composed = mainImportTokens.map((token) => `  <${token} />`).join('\n');
-
-  const mainBody = [
-    '---',
-    importLines,
-    '---',
-    composed.length > 0 ? `${mainOpen}\n${composed}\n${mainClose}` : `${mainOpen}${mainClose}`,
-  ].join('\n');
+  const wrapper = {
+    openTag: `<${mainTag}${attrsString}>`,
+    closeTag: `</${mainTag}>`,
+  };
 
   return {
-    main: { name: 'Main', role: 'main', html: mainBody, children: sections },
+    main: {
+      name: 'Main',
+      role: 'main',
+      html: '',
+      wrapper,
+      childComponentNames,
+      children: sections,
+    },
     sections,
   };
 }
