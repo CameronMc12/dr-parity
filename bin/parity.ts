@@ -263,16 +263,41 @@ const cloneStaticCommand = defineCommand(
         description: "Override the base output directory.",
         valueHint: "path",
       },
+      "manifest-only": {
+        type: "boolean",
+        description:
+          "Skip capture and rebuild the clone manifest from the existing parsed data. parse:har / parse:trace still run lazily for viewports that lack parsed/document.html.",
+        default: false,
+      },
     },
-    run({ args }) {
+    async run({ args }) {
       const flags = readGlobalFlags(args as Record<string, unknown>);
       applyGlobalFlagEnv(flags);
-      if (!flags.quiet) {
-        process.stdout.write(
-          `parity clone-static (stub): dir=${args.captureDir} viewport=${args.viewport} out=${args.out ?? "default"}\n`,
-        );
+      const manifestOnly = args["manifest-only"] === true;
+      if (!manifestOnly) {
+        if (!flags.quiet) {
+          process.stdout.write(
+            `parity clone-static (stub): dir=${args.captureDir} viewport=${args.viewport} out=${args.out ?? "default"}\n`,
+          );
+        }
+        stub("clone-static");
+        return;
       }
-      stub("clone-static");
+      // --manifest-only is the only wired clone-static path right now.
+      // It reuses the canonical scripts/run-clone.ts manifest-only flow.
+      const { runCloneEntry } = await import("../scripts/run-clone.js");
+      const viewport =
+        typeof args.viewport === "string" && args.viewport !== "all"
+          ? args.viewport
+          : undefined;
+      const passthrough: string[] = [
+        "--manifest-only",
+        `--capture-dir=${String(args.captureDir)}`,
+        "--no-preview",
+      ];
+      if (viewport) passthrough.push(`--viewport=${viewport}`);
+      const result = await runCloneEntry(passthrough);
+      process.exit(result.exitCode);
     },
   }),
 );

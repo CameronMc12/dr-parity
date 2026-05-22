@@ -6,6 +6,13 @@
  *
  * Usage:
  *   tsx scripts/run-clone.ts <url> [--viewport=desktop,...] [--out=<dir>] [--no-tour] [--no-preview]
+ *   tsx scripts/run-clone.ts --manifest-only --capture-dir=<dir> [--viewport=desktop,...]
+ *
+ * --manifest-only re-emits the clone manifest (and the parity summary it
+ * feeds) from an existing capture directory without running capture again.
+ * The parse:har and parse:trace stages still run lazily, but only for
+ * viewports that do not already have parsed/document.html on disk. This is
+ * the fast path for re-verifying a fixture after a code change.
  */
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
@@ -33,6 +40,10 @@ type CliArgs = {
   tour: boolean;
   preview: boolean;
   legacyOutput: boolean;
+  /** Skip capture and rebuild the clone manifest from existing parsed data. */
+  manifestOnly: boolean;
+  /** Required when manifestOnly is set; ignored otherwise. */
+  captureDir?: string;
   help: boolean;
 };
 
@@ -41,20 +52,28 @@ dr-parity clone-site (end-to-end)
 
 Usage:
   tsx scripts/run-clone.ts <url> [options]
+  tsx scripts/run-clone.ts --manifest-only --capture-dir=<dir> [options]
 
 Options:
-  --viewport=<list>  Viewport selection. One of:
-                       all                    (default, all 4 viewports)
-                       desktop|mobile|
-                       tablet|wide            (single viewport, ~4x faster)
-                       <name>,<name>,...      (comma-separated subset)
-  --target=<slug>    Override the canonical target slug (defaults to host without TLD).
-  --out=<dir>        Output root override. Default (canonical): clones/<target>/<iso>/.
-                     With --legacy-output: docs/research/captures.
-  --legacy-output    Use the legacy docs/research/captures layout.
-  --no-tour          Skip the scroll/hover tour during capture.
-  --no-preview       Suppress the printed preview command at the end.
-  -h, --help         Show this help.
+  --viewport=<list>      Viewport selection. One of:
+                           all                  (default, all 4 viewports)
+                           desktop|mobile|
+                           tablet|wide          (single viewport, ~4x faster)
+                           <name>,<name>,...    (comma-separated subset)
+  --target=<slug>        Override the canonical target slug (defaults to host without TLD).
+  --out=<dir>            Output root override. Default (canonical): clones/<target>/<iso>/.
+                         With --legacy-output: docs/research/captures.
+  --legacy-output        Use the legacy docs/research/captures layout.
+  --no-tour              Skip the scroll/hover tour during capture.
+  --no-preview           Suppress the printed preview command at the end.
+  --manifest-only        Skip the capture stage and rebuild the clone manifest
+                         from an existing capture directory. Requires
+                         --capture-dir=<dir>. parse:har and parse:trace run
+                         lazily, only for viewports that lack parsed data.
+  --capture-dir=<dir>    Required when --manifest-only is set. Points at an
+                         existing dated capture directory containing per
+                         viewport subdirs (with parsed/document.html).
+  -h, --help             Show this help.
 `.trim();
 
 function parseArgs(argv: string[]): CliArgs {
@@ -66,6 +85,8 @@ function parseArgs(argv: string[]): CliArgs {
     tour: true,
     preview: true,
     legacyOutput: false,
+    manifestOnly: false,
+    captureDir: undefined,
     help: false,
   };
   const positional: string[] = [];
@@ -86,6 +107,10 @@ function parseArgs(argv: string[]): CliArgs {
       out.legacyOutput = true;
       continue;
     }
+    if (raw === '--manifest-only') {
+      out.manifestOnly = true;
+      continue;
+    }
     if (raw.startsWith('--viewport=')) {
       out.viewports = raw.slice('--viewport='.length);
       continue;
@@ -96,6 +121,10 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (raw.startsWith('--target=')) {
       out.target = raw.slice('--target='.length).trim() || undefined;
+      continue;
+    }
+    if (raw.startsWith('--capture-dir=')) {
+      out.captureDir = raw.slice('--capture-dir='.length).trim() || undefined;
       continue;
     }
     if (raw.startsWith('--')) {
@@ -203,6 +232,172 @@ export interface RunCloneResult {
   viewports: string[];
 }
 
+/**
+ * Decide which viewports under `captureDir` already have parsed/document.html.
+ * Used by --manifest-only to skip parse stages that have nothing new to do.
+ */
+function viewportsNeedingParse(captureDir: string, requested?: string[]): {
+  needs: string[];
+  ready: string[];
+} {
+  if (!existsSync(captureDir)) return { needs: requested ?? [], ready: [] };
+  const allDirs = readdirSync(captureDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
+  const candidates = requested && requested.length > 0
+    ? requested.filter((v) => allDirs.includes(v))
+    : allDirs;
+  const ready: string[] = [];
+  const needs: string[] = [];
+  for (const vp of candidates) {
+    const parsedDoc = join(captureDir, vp, 'parsed', 'document.html');
+    if (existsSync(parsedDoc)) ready.push(vp);
+    else needs.push(vp);
+  }
+  return { needs, ready };
+}
+
+/**
+ * Manifest only flow.
+ *
+ * Skips capture entirely. Runs parse:har / parse:trace lazily, only when
+ * at least one selected viewport is missing parsed/document.html. Then runs
+ * complete:assets and clone for the requested viewports against the same
+ * capture directory.
+ */
+async function runManifestOnly(
+  args: CliArgs,
+  phases: RunCloneStagePhase[],
+): Promise<RunCloneResult> {
+  const captureDir = resolve(args.captureDir!);
+  if (!existsSync(captureDir) || !statSync(captureDir).isDirectory()) {
+    console.error(`--capture-dir does not exist or is not a directory: ${captureDir}`);
+    return { exitCode: 2, phases, viewports: [] };
+  }
+
+  const requestedViewports = args.viewports
+    ? args.viewports.split(',').map((s) => s.trim()).filter(Boolean)
+    : undefined;
+  const { needs, ready } = viewportsNeedingParse(captureDir, requestedViewports);
+  if (needs.length === 0 && ready.length === 0) {
+    console.error(`No viewports found under ${captureDir}.`);
+    return { exitCode: 2, phases, viewports: [] };
+  }
+
+  console.log(`\n[manifest-only] capture dir: ${captureDir}`);
+  console.log(`[manifest-only] viewports ready: ${ready.join(', ') || '<none>'}`);
+  console.log(`[manifest-only] viewports needing parse: ${needs.join(', ') || '<none>'}`);
+
+  if (needs.length > 0) {
+    const t1 = Date.now();
+    const harCode = await runStage(
+      'parse:har',
+      [captureDir],
+      () => parseHarMain([captureDir]),
+    );
+    phases.push({
+      label: 'parse:har',
+      ms: Date.now() - t1,
+      status: harCode === 0 ? 'ok' : 'fail',
+      exitCode: harCode,
+    });
+    if (harCode !== 0) {
+      return { exitCode: harCode, captureRoot: captureDir, runRoot: captureDir, phases, viewports: [] };
+    }
+
+    const t2 = Date.now();
+    const traceCode = await runStage(
+      'parse:trace',
+      [captureDir],
+      () => parseTraceMain([captureDir]),
+    );
+    phases.push({
+      label: 'parse:trace',
+      ms: Date.now() - t2,
+      status: traceCode === 0 ? 'ok' : 'fail',
+      exitCode: traceCode,
+    });
+    if (traceCode !== 0) {
+      return { exitCode: traceCode, captureRoot: captureDir, runRoot: captureDir, phases, viewports: [] };
+    }
+  } else {
+    console.log('[manifest-only] all selected viewports already parsed; skipping parse stages.');
+  }
+
+  const viewportList = requestedViewports && requestedViewports.length > 0
+    ? requestedViewports
+    : readdirSync(captureDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+        .filter((name) => existsSync(join(captureDir, name, 'parsed', 'document.html')));
+
+  const t2b = Date.now();
+  let completeStatus: 'ok' | 'warn' = 'ok';
+  let lastCompleteCode = 0;
+  for (const vp of viewportList) {
+    const completeCliArgs = [captureDir, `--viewport=${vp}`];
+    const completeCode = await runStage(
+      'complete:assets',
+      completeCliArgs,
+      () => completeAssetsMain(completeCliArgs),
+    );
+    if (completeCode !== 0) {
+      console.warn(`complete:assets exited non-zero for ${vp} (continuing)`);
+      completeStatus = 'warn';
+      lastCompleteCode = completeCode;
+    }
+  }
+  phases.push({
+    label: 'complete:assets',
+    ms: Date.now() - t2b,
+    status: completeStatus,
+    exitCode: lastCompleteCode,
+  });
+
+  const cloneCliArgs = [captureDir];
+  if (args.viewports) cloneCliArgs.push(`--viewport=${args.viewports}`);
+  const t3 = Date.now();
+  const cloneCode = await runStage('clone', cloneCliArgs, () => cloneMain(cloneCliArgs));
+  phases.push({
+    label: 'clone',
+    ms: Date.now() - t3,
+    status: cloneCode === 0 ? 'ok' : 'fail',
+    exitCode: cloneCode,
+  });
+  if (cloneCode !== 0) {
+    return {
+      exitCode: cloneCode,
+      captureRoot: captureDir,
+      runRoot: captureDir,
+      phases,
+      viewports: [],
+    };
+  }
+
+  console.log('\nPhase timings (manifest-only):');
+  for (const p of phases) console.log(`  ${p.label.padEnd(12)} ${fmtMs(p.ms)}`);
+
+  const producedViewports = readdirSync(captureDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .filter((name) => existsSync(join(captureDir, name, 'clone', 'index.html')));
+
+  if (args.preview && producedViewports.length > 0) {
+    console.log('\nClone manifest refreshed. Preview with:');
+    for (const vp of producedViewports) {
+      console.log(`  npx serve "${join(captureDir, vp, 'clone')}"`);
+    }
+  }
+
+  return {
+    exitCode: 0,
+    captureRoot: captureDir,
+    runRoot: captureDir,
+    phases,
+    viewports: producedViewports,
+  };
+}
+
 async function main(argv: string[] = process.argv.slice(2)): Promise<RunCloneResult> {
   const phases: RunCloneStagePhase[] = [];
   let args: CliArgs;
@@ -217,6 +412,17 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<RunCloneRes
     console.log(HELP_TEXT);
     return { exitCode: 0, phases, viewports: [] };
   }
+
+  // --manifest-only short-circuits the capture stage entirely.
+  if (args.manifestOnly) {
+    if (!args.captureDir) {
+      console.error('--manifest-only requires --capture-dir=<dir>.');
+      console.error(HELP_TEXT);
+      return { exitCode: 2, phases, viewports: [] };
+    }
+    return runManifestOnly(args, phases);
+  }
+
   if (!args.url) {
     console.error('Missing <url> positional argument.');
     console.error(HELP_TEXT);
