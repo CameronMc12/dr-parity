@@ -29,11 +29,20 @@ export interface Logger {
   event(name: string, fields?: LogMeta): void;
 }
 
+/** Optional async finaliser registered by the Stage author for cleanup. */
+export type DisposeFn = () => void | Promise<void>;
+
 export interface RunContext {
   readonly runId: string;
+  /** `.runs/<runId>/` absolute path. */
   readonly outDir: string;
   readonly logger: Logger;
   readonly startedAt: number;
+  /**
+   * Register a finaliser. Runs in LIFO order on `finaliseRun`, regardless of
+   * success or failure. Use for browser teardown, file handles, etc.
+   */
+  onDispose?(fn: DisposeFn): void;
 }
 
 export interface StageResult<O> {

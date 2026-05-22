@@ -17,7 +17,16 @@
  * one and only seam where logging output is materialised.
  */
 
+import type { FullRunContext } from "./context.js";
+import { nowIso } from "./event-stream.js";
 import type { RunContext, Stage, StageResult, StageStatus } from "./stage.js";
+
+function hasEmit(ctx: RunContext): ctx is FullRunContext {
+  return (
+    typeof (ctx as Partial<FullRunContext>).emit === "function" &&
+    typeof (ctx as Partial<FullRunContext>).finalise === "function"
+  );
+}
 
 /** A stage erased to `unknown` for storage inside a list. */
 export type AnyStage = Stage<unknown, unknown>;
@@ -83,6 +92,9 @@ export async function runPipeline(
       stage: stage.name,
       runId: ctx.runId,
     });
+    if (hasEmit(ctx)) {
+      ctx.emit({ type: "stage_start", stage: stage.name, at: nowIso() });
+    }
 
     let result: StageResult<unknown>;
     try {
@@ -110,6 +122,15 @@ export async function runPipeline(
         status: "fail",
         durationMs: record.durationMs,
       });
+      if (hasEmit(ctx)) {
+        ctx.emit({
+          type: "stage_end",
+          stage: stage.name,
+          at: nowIso(),
+          status: "fail",
+          durationMs: record.durationMs,
+        });
+      }
       if (stopOnFail) {
         break;
       }
@@ -135,6 +156,16 @@ export async function runPipeline(
       durationMs,
       metrics: result.metrics,
     });
+    if (hasEmit(ctx)) {
+      ctx.emit({
+        type: "stage_end",
+        stage: stage.name,
+        at: nowIso(),
+        status: result.status,
+        durationMs,
+        metrics: result.metrics as Record<string, number | string> | undefined,
+      });
+    }
 
     if (result.status === "fail") {
       pipelineStatus = "fail";
