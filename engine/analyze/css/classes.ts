@@ -14,6 +14,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as cheerioModule from 'cheerio';
+import type { CheerioAPI } from 'cheerio';
+import type { Element } from 'domhandler';
 const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 import type { ClassCatalogEntry, CssRule } from './types';
 
@@ -54,11 +56,11 @@ function collectDomUsage(cloneDir: string): Map<string, DomHit> {
   const $ = cheerio.load(html);
   const map = new Map<string, DomHit>();
 
-  $('[class]').each((_, el) => {
-    const classAttr = (el as cheerio.Element & { attribs?: Record<string, string> }).attribs?.class;
+  $('[class]').each((_: number, el: Element) => {
+    const classAttr = (el as Element & { attribs?: Record<string, string> }).attribs?.class;
     if (!classAttr) return;
     const classes = classAttr.split(/\s+/).filter(Boolean);
-    const parent = (el as cheerio.Element).parent;
+    const parent = (el as Element).parent;
     const parentContext = describeParent($, parent);
     for (const cls of classes) {
       const existing = map.get(cls);
@@ -76,7 +78,7 @@ function collectDomUsage(cloneDir: string): Map<string, DomHit> {
   return map;
 }
 
-function describeParent($: cheerio.CheerioAPI, parent: unknown): string {
+function describeParent($: CheerioAPI, parent: unknown): string {
   if (!parent || typeof parent !== 'object') return '(root)';
   const tag = (parent as { tagName?: string; name?: string }).tagName
     ?? (parent as { tagName?: string; name?: string }).name
