@@ -115,7 +115,12 @@ function collectCssUrls(css: string): string[] {
  */
 export function collectHtmlAssetCandidates(args: CollectArgs): string[] {
   const found = new Set<string>();
-  const $ = cheerio.load(args.html, { xmlMode: false });
+  // scriptingEnabled: false makes the parser treat <noscript> contents as
+  // a real DOM subtree rather than opaque text. Apple and many large
+  // sites wrap their full responsive srcset variants inside <noscript>
+  // for SEO and no-JS fallback. Without this flag cheerio skips them
+  // entirely, leaving the inventory missing ~70 percent of variants.
+  const $ = cheerio.load(args.html, { xmlMode: false, scriptingEnabled: false });
 
   const push = (raw: string | undefined): void => {
     if (!raw) return;
