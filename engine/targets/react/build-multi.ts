@@ -40,6 +40,7 @@ import {
 } from './collect-hoistable';
 import { emitMultiPageReact, routeToPageName, type ReactPageSlice } from './emit-multi';
 import { writePostHydrationSyncLib } from './post-hydration-sync';
+import { buildResponsiveSheet } from './responsive-sheet';
 import { writeMultiScaffold } from './scaffold-multi';
 
 export interface ReactMultiPageInput {
@@ -107,6 +108,16 @@ export async function buildReactMulti(
     totalAssetBytes = after.bytes;
   }
 
+  // Build the dr-parity responsive @media sheet ahead of slicing. We
+  // publish it into /public so every emitted <page>.html can link it via
+  // extraStylesheetHrefs. This replaces the previous post-emit HTML patch:
+  // a re-emit run now reproduces the same <link> tag because the href is
+  // baked into the slice, not patched in afterwards.
+  const responsive = buildResponsiveSheet({
+    outDir: absOut,
+    cloneDirs: pages.map((p) => p.cloneDir),
+  });
+
   // Slice each page.
   const slices: ReactPageSlice[] = pages.map((p) => {
     const absClone = resolve(p.cloneDir);
@@ -128,6 +139,23 @@ export async function buildReactMulti(
     const sourceStylesheetHrefs = extractSourceStylesheetHrefs(html);
     const plannedLinks = planCssLinks({ sourceStylesheetHrefs, publicCssFiles });
     const extraStylesheetHrefs = filterAlreadyLinked(head.innerHTML, plannedLinks);
+
+    // Append the dr-parity responsive sheet href so the link is written
+    // at emit time. Appending at the end keeps it last in the cascade so
+    // it loses any specificity tie with earlier captured rules. That
+    // matches how the source site would have loaded the same @media block
+    // via the last-loaded captured stylesheet.
+    if (responsive.publicHref) {
+      const filteredResponsive = filterAlreadyLinked(head.innerHTML, [
+        responsive.publicHref,
+      ]);
+      if (
+        filteredResponsive.length > 0 &&
+        !extraStylesheetHrefs.includes(responsive.publicHref)
+      ) {
+        extraStylesheetHrefs.push(responsive.publicHref);
+      }
+    }
 
     const pageName = routeToPageName(p.pathname);
     return {
