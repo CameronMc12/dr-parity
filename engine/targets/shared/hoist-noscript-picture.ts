@@ -2,35 +2,36 @@
  * Hoist <noscript>-embedded <picture> sources into their visible sibling.
  *
  * Many large sites (Apple in particular) render lazy <picture> elements in
- * a "JS will fill me in later" shape:
+ * one of two equivalent "JS will fill me in later" shapes:
  *
- *   <picture data-anim-lazy-image="">
- *     <source data-empty="" srcset="data:image/gif;..." media="..." />
- *     <img src="/real-large.jpg" alt="..." />
- *   </picture>
- *   <noscript>
- *     <picture>
- *       <source srcset="/real-small.jpg, /real-small_2x.jpg 2x" media="(max-width:734px)" />
- *       <source srcset="/real-medium.jpg, /real-medium_2x.jpg 2x" media="(max-width:1068px)" />
- *       <source srcset="/real-large.jpg, /real-large_2x.jpg 2x" media="(min-width:0px)" />
+ *   Shape A (data-empty source):
+ *     <picture data-anim-lazy-image="">
+ *       <source data-empty="" srcset="data:image/gif;..." media="..." />
  *       <img src="/real-large.jpg" alt="..." />
  *     </picture>
- *   </noscript>
+ *     <noscript> <picture>...real sources...</picture> </noscript>
+ *
+ *   Shape B (data-lazy picture with placeholder source):
+ *     <picture data-lazy="">
+ *       <source srcset="data:image/gif;..." media="..." />
+ *       <img src="/real-large.jpg" alt="..." />
+ *     </picture>
+ *     <noscript> <picture>...real sources...</picture> </noscript>
  *
  * In a real browser the captured site's runtime JS rewrites the visible
- * <source data-empty> attribute to point at the real responsive variants.
+ * <source> srcset to the real responsive variants on scroll-into-view.
  * Without that JS (and our generated clones do not ship Apple's runtime),
  * the browser picks the data: URI placeholder and the tile renders blank.
+ * Worse, in React clones, even when the runtime IS shipped, React's
+ * StrictMode dev-only double-render races the runtime and overwrites the
+ * real srcset back to the JSX placeholder. So the same fix applies to
+ * both static and React targets: rewrite the visible <picture> to carry
+ * the real <source> set at emit time.
  *
- * This pass rewrites the visible <picture> to carry the same <source> set
- * as the <noscript> sibling, while leaving the <noscript> block intact.
- * The result is a static <picture> that picks the right variant on its
- * own. Idempotent: a second pass detects sources without `data-empty` and
- * leaves them alone.
- *
- * Capability-detected: only mutates when both the placeholder <source
- * data-empty> AND a sibling <noscript><picture> exist. Untouched on every
- * other site shape.
+ * Capability-detected: only mutates when both a placeholder source
+ * pattern (data-empty OR srcset starting with `data:image/gif`) AND a
+ * sibling <noscript><picture> exist. Idempotent: a second pass finds no
+ * more placeholders and leaves the document alone.
  */
 
 import * as cheerioModule from 'cheerio';
@@ -55,12 +56,17 @@ export function hoistNoscriptPictureSources($: CheerioRoot): HoistNoscriptPictur
   let picturesHoisted = 0;
   let sourcesWritten = 0;
 
-  // Selector: any <picture> with a child <source data-empty>. This is the
-  // strongest signal that the visible picture is awaiting JS. Sites that
-  // do not use this pattern won't match.
+  // Selector: any <picture> with a child <source> that is awaiting JS.
+  // Two signals qualify (capability-detected):
+  //   1. <source data-empty>           — explicit placeholder marker
+  //   2. <source srcset="data:image/gif;..."> on a <picture data-lazy>
+  // Either pattern, paired with a <noscript><picture> sibling carrying
+  // real responsive sources, indicates a lazy picture whose runtime JS
+  // would otherwise be responsible for substituting the real srcset.
+  // Sites that do not use either pattern won't match.
   $('picture').each((_: number, pictureEl: AnyNode) => {
     const $picture = $(pictureEl);
-    const placeholderSources = $picture.children('source[data-empty]');
+    const placeholderSources = collectPlaceholderSources($picture);
     if (placeholderSources.length === 0) return;
 
     // Find the noscript that immediately follows the visible picture.
@@ -83,8 +89,9 @@ export function hoistNoscriptPictureSources($: CheerioRoot): HoistNoscriptPictur
     const realSources = $realPicture.children('source').toArray() as Element[];
     if (realSources.length === 0) return;
 
-    // Remove the visible picture's placeholder <source data-empty>
-    // elements. Then prepend the real ones in document order. Prepending
+    // Remove the visible picture's placeholder <source> elements (either
+    // data-empty markers or data:image/gif srcsets on a data-lazy
+    // picture). Then prepend the real ones in document order. Prepending
     // (not appending) keeps the inner <img> as the final child, which is
     // the <picture> spec contract (img must come after sources).
     placeholderSources.remove();
@@ -124,6 +131,31 @@ export function hoistNoscriptPictureSources($: CheerioRoot): HoistNoscriptPictur
   });
 
   return { picturesHoisted, sourcesWritten };
+}
+
+/**
+ * Returns the set of placeholder <source> children of the given
+ * <picture>. A source is a placeholder when EITHER:
+ *   - it carries `data-empty` (Apple's explicit marker), OR
+ *   - the parent <picture> has `data-lazy` AND the source's srcset is
+ *     a `data:image/gif` data-URI (Apple's other lazy pattern).
+ * The two checks together cover the patterns observed on apple.com and
+ * remain narrow enough to avoid touching unrelated <picture> elements.
+ */
+function collectPlaceholderSources($picture: any): any {
+  const explicit = $picture.children('source[data-empty]');
+  if (explicit.length > 0) return explicit;
+
+  // Only treat data:image/gif sources as placeholders when the parent is
+  // explicitly marked lazy. Without that gate, ordinary inline-data
+  // images on unrelated sites would be misclassified.
+  const isLazy = $picture.is('[data-lazy]');
+  if (!isLazy) return $picture.children('source[data-empty]'); // empty cheerio set
+
+  return $picture.children('source').filter((_: number, el: any) => {
+    const srcset = (el?.attribs?.srcset ?? '') as string;
+    return /^\s*data:image\/gif\b/i.test(srcset);
+  });
 }
 
 /**
