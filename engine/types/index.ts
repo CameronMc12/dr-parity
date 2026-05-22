@@ -2,7 +2,7 @@
  * Barrel export for the cloning engine type system.
  *
  * Usage:
- *   import type { PageData, ComponentTree, QAReport } from '@/../../engine/types';
+ *   import type { PageData, ComponentTree, QAReport } from 'engine/types';
  */
 
 export * from './extraction';
