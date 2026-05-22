@@ -23,6 +23,8 @@ import {
 import { join, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 
+import { collectHtmlAssetCandidates } from '../engine/extract/asset-inventory/from-html';
+
 type CliArgs = {
   captureDir?: string;
   viewport?: string;
@@ -54,7 +56,13 @@ const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36';
 const FETCH_TIMEOUT_MS = 10_000;
 const CONCURRENCY = 6;
-const MAX_CANDIDATES = 500;
+/**
+ * Per-viewport candidate cap. Image-heavy origins (apple.com, news, e-com)
+ * routinely emit several hundred unrequested srcset siblings per page.
+ * Cap is generous enough for them while still preventing runaway scans
+ * on pathological pages.
+ */
+const MAX_CANDIDATES = 2000;
 
 const URL_FUNC_RE = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
 const AT_IMPORT_BARE_RE = /@import\s+(['"])([^'"]+)\1/g;
@@ -262,6 +270,34 @@ async function completeForViewport(viewportDir: string): Promise<{
       if (known.has(abs)) continue;
       if (candidates.has(abs)) continue;
       candidates.set(abs, { url: abs, sourceFile: css.file });
+    }
+  }
+
+  // Walk the parsed HTML for image / media / preload references the
+  // browser never actually requested (typically srcset siblings outside
+  // the captured viewport's <picture> match). Capability-detected:
+  // trips only when parsed/document.html and document.url both exist.
+  const documentHtmlPath = join(parsedDir, 'document.html');
+  const documentUrlPath = join(parsedDir, 'document.url');
+  if (existsSync(documentHtmlPath) && existsSync(documentUrlPath)) {
+    try {
+      const documentHtml = readFileSync(documentHtmlPath, 'utf8');
+      const documentUrl = readFileSync(documentUrlPath, 'utf8').trim();
+      if (documentUrl) {
+        const htmlCandidates = collectHtmlAssetCandidates({
+          html: documentHtml,
+          documentUrl,
+        });
+        for (const abs of htmlCandidates) {
+          if (known.has(abs)) continue;
+          if (candidates.has(abs)) continue;
+          candidates.set(abs, { url: abs, sourceFile: documentHtmlPath });
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `  [WARN] HTML asset inventory failed: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 
