@@ -120,6 +120,7 @@ export interface CompareInput {
   readonly captureRef: string;
   readonly repoRoot: string;
   readonly parityThreshold: number;
+  readonly expectedViewport?: string;
 }
 
 export async function compareManifestShape(
@@ -178,6 +179,13 @@ export async function compareManifestShape(
   if (expected.documentUrl && expected.documentUrl !== live.documentUrl) {
     diagnostics.push(
       `documentUrl: expected ${expected.documentUrl}, got ${live.documentUrl ?? "missing"}`,
+    );
+    checks.push(false);
+  }
+
+  if (input.expectedViewport && live.viewport && live.viewport !== input.expectedViewport) {
+    diagnostics.push(
+      `viewport: fixture declares ${input.expectedViewport}, live manifest reports ${live.viewport}`,
     );
     checks.push(false);
   }

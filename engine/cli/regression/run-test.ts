@@ -21,6 +21,7 @@ import { loadFixtures, type Fixture } from "./fixture-schema.js";
 export interface FixtureOutcome {
   readonly slug: string;
   readonly target: Fixture["target"];
+  readonly viewport: Fixture["viewport"];
   readonly threshold: number;
   readonly mode: Fixture["comparisonMode"];
   readonly passed: boolean;
@@ -47,6 +48,7 @@ function unsupportedMode(mode: Fixture["comparisonMode"]): FixtureOutcome {
   return {
     slug: "",
     target: "astro",
+    viewport: "desktop",
     threshold: 0,
     mode,
     passed: false,
@@ -67,6 +69,7 @@ async function evaluateFixture(
       ...unsupportedMode(fixture.comparisonMode),
       slug: fixture.slug,
       target: fixture.target,
+      viewport: fixture.viewport,
       threshold: fixture.parityThreshold,
     };
   }
@@ -75,6 +78,7 @@ async function evaluateFixture(
     return {
       slug: fixture.slug,
       target: fixture.target,
+      viewport: fixture.viewport,
       threshold: fixture.parityThreshold,
       mode: fixture.comparisonMode,
       passed: false,
@@ -91,11 +95,13 @@ async function evaluateFixture(
     captureRef: fixture.captureRef,
     repoRoot,
     parityThreshold: fixture.parityThreshold,
+    expectedViewport: fixture.viewport,
   });
 
   return {
     slug: fixture.slug,
     target: fixture.target,
+    viewport: fixture.viewport,
     threshold: fixture.parityThreshold,
     mode: fixture.comparisonMode,
     passed: result.passed,
@@ -168,7 +174,7 @@ export async function runRegressionTest(repoRoot?: string): Promise<number> {
       ? "n/a"
       : `${(outcome.score * 100).toFixed(1)}%`;
     process.stdout.write(
-      `${status} ${outcome.slug.padEnd(20)} target=${outcome.target.padEnd(7)} score=${scoreLabel.padStart(6)} threshold=${(outcome.threshold * 100).toFixed(1)}% ${outcome.summary}\n`,
+      `${status} ${outcome.slug.padEnd(24)} target=${outcome.target.padEnd(7)} viewport=${outcome.viewport.padEnd(7)} score=${scoreLabel.padStart(6)} threshold=${(outcome.threshold * 100).toFixed(1)}% ${outcome.summary}\n`,
     );
     if (outcome.diagnostics.length > 0) {
       for (const line of outcome.diagnostics) {

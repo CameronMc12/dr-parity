@@ -1,0 +1,10 @@
+{
+  "slug": "example-com-mobile",
+  "target": "astro",
+  "url": "https://example.com/",
+  "captured_at": "2026-05-22T10:09:04.071Z",
+  "parity_threshold": 0.99,
+  "comparison_mode": "manifest-shape",
+  "viewport": "mobile",
+  "notes": "Mobile viewport variant of example-com. Locks the smallest deterministic baseline for the mobile viewport so per viewport parity baselines are testable. Sets the precedent for tablet and wide variants."
+}

@@ -19,6 +19,7 @@ export type ComparisonMode =
   | "pixel-diff"
   | "manifest-shape"
   | "both";
+export type FixtureViewport = "mobile" | "tablet" | "desktop" | "wide";
 
 export interface Fixture {
   readonly slug: string;
@@ -27,6 +28,7 @@ export interface Fixture {
   readonly capturedAt: string;
   readonly parityThreshold: number;
   readonly comparisonMode: ComparisonMode;
+  readonly viewport: FixtureViewport;
   readonly notes: string;
   readonly dir: string;
   readonly captureRef: string;
@@ -43,6 +45,13 @@ const VALID_COMPARISON_MODES: ReadonlySet<ComparisonMode> = new Set([
   "pixel-diff",
   "manifest-shape",
   "both",
+]);
+
+const VALID_VIEWPORTS: ReadonlySet<FixtureViewport> = new Set([
+  "mobile",
+  "tablet",
+  "desktop",
+  "wide",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -87,6 +96,17 @@ function assertComparisonMode(value: unknown, slug: string): ComparisonMode {
   return str as ComparisonMode;
 }
 
+function assertViewport(value: unknown, slug: string): FixtureViewport {
+  if (value === undefined || value === null) return "desktop";
+  const str = assertString(value, "viewport", slug);
+  if (!VALID_VIEWPORTS.has(str as FixtureViewport)) {
+    throw new Error(
+      `fixture ${slug}: viewport "${str}" must be one of mobile, tablet, desktop, wide`,
+    );
+  }
+  return str as FixtureViewport;
+}
+
 async function readFixture(dir: string, slug: string): Promise<Fixture> {
   const fixturePath = join(dir, "fixture.json");
   const raw = await readFile(fixturePath, "utf8");
@@ -124,6 +144,7 @@ async function readFixture(dir: string, slug: string): Promise<Fixture> {
     capturedAt: assertString(parsed.captured_at, "captured_at", slug),
     parityThreshold: assertNumber(parsed.parity_threshold, "parity_threshold", slug),
     comparisonMode: assertComparisonMode(parsed.comparison_mode, slug),
+    viewport: assertViewport(parsed.viewport, slug),
     notes: typeof parsed.notes === "string" ? parsed.notes : "",
     dir,
     captureRef,
