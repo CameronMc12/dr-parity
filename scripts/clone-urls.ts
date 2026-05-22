@@ -54,6 +54,11 @@ import { runPostEmitMulti } from '../engine/orchestrator/post-build/post-emit-mu
 import { runPostEmitMultiReact } from '../engine/orchestrator/post-build/post-emit-multi-react';
 import { runPostEmitMultiWebapp } from '../engine/orchestrator/post-build/post-emit-multi-webapp';
 import {
+  loadCrawlGraph,
+  inferStateGroups,
+  type InferenceResult,
+} from '../engine/targets/webapp/inference';
+import {
   CANONICAL_ROOT,
   canonicalTimestamp,
   cloneOutDir,
@@ -80,6 +85,13 @@ interface CliArgs {
   target: TargetName;
   targetSlug?: string;
   legacyOutput: boolean;
+  /**
+   * Path to a webapp crawl directory (graph.json + states/ + screenshots).
+   * When set with --target=webapp, threads the crawl graph and inferred
+   * state through the webapp build and post-emit pipeline. Without this
+   * the pixel-parity stretch phase reports skipped=no-crawlDir.
+   */
+  crawlDir?: string;
   help: boolean;
 }
 
@@ -110,6 +122,10 @@ Options:
   --no-post-emit       Skip post-emit pipeline (only meaningful for astro).
   --force              Overwrite existing project output dir.
   --skip-failed        Skip URLs already marked failed in prior state.
+  --crawl-dir=<dir>    Webapp crawl directory (graph.json + states + screenshots).
+                       Required for pixel-parity stretch phase. Threads
+                       inference into webapp post-emit. Ignored for non-webapp
+                       targets.
   -h, --help           Show this help.
 `.trim();
 
@@ -128,6 +144,7 @@ function parseArgs(argv: string[]): CliArgs {
     target: 'astro',
     targetSlug: undefined,
     legacyOutput: false,
+    crawlDir: undefined,
     help: false,
   };
   for (const raw of argv) {
@@ -170,6 +187,12 @@ function parseArgs(argv: string[]): CliArgs {
         throw new Error(`Invalid --target: ${v} (must be astro, react, or webapp)`);
       }
       out.target = v;
+      continue;
+    }
+    if (raw.startsWith('--crawl-dir=')) {
+      const v = raw.slice('--crawl-dir='.length).trim();
+      if (!v) throw new Error('Empty --crawl-dir value');
+      out.crawlDir = v;
       continue;
     }
     if (raw.startsWith('--')) throw new Error(`Unknown flag: ${raw}`);
@@ -477,12 +500,18 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   // page adapter contract using the first captured clone as the seed, then
   // run the dedicated webapp post-emit pipeline.
   if (args.target === 'webapp') {
+    const absCrawlDir = args.crawlDir ? resolve(args.crawlDir) : undefined;
+    if (args.crawlDir) {
+      console.log(`  crawl dir: ${absCrawlDir}`);
+    }
+
     const seedPage = state.completed[0];
     const buildSummary = await adapter.build({
       cloneDir: seedPage.cloneDir,
       outDir: projectOut,
       name: host.replace(/[^a-z0-9.-]/gi, '-'),
       force: args.force,
+      ...(absCrawlDir ? { crawlDir: absCrawlDir } : {}),
     });
     console.log(`\n${args.target} project: ${projectOut}`);
     console.log(`  components emitted: ${buildSummary.componentsEmitted}`);
@@ -499,8 +528,35 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
       return 0;
     }
 
+    // Thread crawl graph and inferred state into the post-emit pipeline so
+    // the pixel-parity stretch phase can run. Without --crawl-dir the
+    // stretch phase is skipped with reason "no crawlDir" by design.
+    let inference: InferenceResult | undefined;
+    if (absCrawlDir) {
+      try {
+        const loaded = await loadCrawlGraph(absCrawlDir);
+        inference = await inferStateGroups(loaded.graph, loaded.getStateDom);
+        const toggleCount = inference.routes.reduce(
+          (sum, r) => sum + r.baseStateGroup.toggles.length,
+          0,
+        );
+        console.log(
+          `  inference: ${inference.routes.length} routes, ${toggleCount} toggles`,
+        );
+      } catch (err) {
+        console.warn(
+          `  warning: failed to load crawl graph at ${absCrawlDir}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        inference = undefined;
+      }
+    }
+
     console.log(`\n=== Post-emit pipeline (webapp) ===`);
-    const webappPostEmit = await runPostEmitMultiWebapp({ outDir: projectOut });
+    const webappPostEmit = await runPostEmitMultiWebapp({
+      outDir: projectOut,
+      ...(absCrawlDir ? { crawlDir: absCrawlDir } : {}),
+      ...(inference ? { inference } : {}),
+    });
     console.log(`\nPost-emit summary:`);
     for (const phase of webappPostEmit.phases) {
       const dur = phase.metrics.durationMs;
