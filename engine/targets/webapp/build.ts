@@ -23,11 +23,42 @@ import { loadCrawlGraph, inferStateGroups } from './inference';
 import type { RouteGroup } from './inference';
 import { emitStatefulComponent, writeStatefulPage } from './emit-stateful';
 import { emitRouter, emitStatefulMain } from './emit-router';
+import type { ComponentDef } from '../shared/types';
 import type {
   WebappBuildOptions,
   WebappBuildSummary,
   WebappComponentDef,
 } from './types';
+
+/**
+ * Webapp Phase 1 emits one component per route from the flattened body. The
+ * shared IR represents `<main>` as a composition wrapper (`html: ''` plus
+ * structured `wrapper` and `childComponentNames`), so we expand it inline
+ * here, drop the now-empty Main entry, and drop the per-section components
+ * that the wrapper already inlines.
+ */
+function flattenComponentsForRoute(components: readonly ComponentDef[]): string {
+  let mainSectionNames: Set<string> | null = null;
+  const parts: string[] = [];
+  for (const comp of components) {
+    if (comp.role === 'main' && comp.wrapper) {
+      const wrapper = comp.wrapper;
+      const childNames = comp.childComponentNames ?? [];
+      mainSectionNames = new Set(childNames);
+      const inner = childNames
+        .map((n) => components.find((c) => c.name === n)?.html ?? '')
+        .join('\n');
+      parts.push(`${wrapper.openTag}\n${inner}\n${wrapper.closeTag}`);
+      continue;
+    }
+    if (mainSectionNames && comp.role === 'section' && mainSectionNames.has(comp.name)) {
+      // Already inlined inside the main wrapper.
+      continue;
+    }
+    if (comp.html.length > 0) parts.push(comp.html);
+  }
+  return parts.join('\n');
+}
 
 export function validateCloneDir(cloneDir: string): void {
   const abs = resolve(cloneDir);
@@ -147,7 +178,16 @@ export async function buildWebappProject(
 
   // Phase 1: every route renders the same captured body. Phase 2's crawler
   // will pair routes with their own clone dirs and slice each independently.
-  const pageHtml = components.map((c) => c.html).join('\n');
+  //
+  // The shared slicer returns Main as a composition wrapper (`html: ''` plus
+  // structured `wrapper` + `childComponentNames`). We inline-expand it here
+  // so the captured `<main>` opener/closer is preserved around the section
+  // HTML in source order, and the per-section components are skipped (they
+  // already live inside the expanded wrapper). This replaces the previous
+  // `components.map((c) => c.html).join('\n')` which dropped the wrapper
+  // tag and (worse) baked the leaky Astro frontmatter into the JSX as
+  // literal text.
+  const pageHtml = flattenComponentsForRoute(components);
   const pageJsx = htmlToJsx(pageHtml);
 
   for (const route of routeEntries) {
