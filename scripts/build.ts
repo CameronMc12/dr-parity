@@ -2,17 +2,23 @@
 /**
  * Unified multi-target clone -> framework CLI.
  *
- * Dispatches to the requested `TargetAdapter` (Astro or React) via dynamic
- * import so that one target failing to load (e.g. while it's still being
- * scaffolded) does not break the other.
+ * Dispatches to the requested `TargetAdapter` (Astro, React, or Webapp) via
+ * dynamic import so that one target failing to load (e.g. while it's still
+ * being scaffolded) does not break the other.
  *
  * Usage:
  *   tsx scripts/build.ts <clone-dir> --target=astro [--out=<dir>] [--name=<slug>] [--force]
  *   tsx scripts/build.ts <clone-dir> --target=react [--out=<dir>] [--name=<slug>] [--force]
+ *   tsx scripts/build.ts <clone-dir> --target=webapp --crawl-dir=<path> [--out=<dir>]
  *   tsx scripts/build.ts --help
  *
  * Also supports `--clone-dir=<path>` and `--out-dir=<path>` as long-form
  * equivalents to the positional clone dir and `--out` flag.
+ *
+ * `--crawl-dir=<path>` is consumed exclusively by the webapp target. It
+ * points at a crawler output directory (graph.json plus per-state DOM
+ * snapshots) and lands on TargetBuildOptions.crawlDir. Other targets
+ * ignore the flag entirely.
  */
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -40,6 +46,7 @@ interface ParsedArgs {
   name: string | null;
   target: string | null;
   force: boolean;
+  crawlDir: string | null;
 }
 
 const HELP = `Usage:
@@ -64,6 +71,10 @@ Options:
   --name=<slug>         Project name written into package.json. Defaults to
                         the documentUrl host from manifest.json (or the
                         clone folder).
+  --crawl-dir=<path>    Path to a crawler output directory (graph.json plus
+                        per-state DOM snapshots). Consumed by the webapp
+                        target only; ignored by astro and react. Lands on
+                        TargetBuildOptions.crawlDir.
   --force               Overwrite the output directory if it already exists.
   --help                Show this help text.
 
@@ -84,6 +95,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     name: null,
     target: null,
     force: false,
+    crawlDir: null,
   };
   for (const raw of argv) {
     if (raw === '--help' || raw === '-h') {
@@ -124,6 +136,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.name = raw.slice('--name='.length);
     } else if (raw.startsWith('--target=')) {
       result.target = raw.slice('--target='.length);
+    } else if (raw.startsWith('--crawl-dir=')) {
+      result.crawlDir = raw.slice('--crawl-dir='.length);
     } else if (raw.startsWith('--')) {
       throw new Error(`Unknown flag: ${raw}`);
     } else if (result.cloneDir === null) {
@@ -367,7 +381,15 @@ export async function runBuild({ argv, forcedTarget }: RunBuildArgs): Promise<vo
       outDir,
       name,
       force: parsed.force,
+      ...(parsed.crawlDir
+        ? { crawlDir: isAbsolute(parsed.crawlDir) ? parsed.crawlDir : resolve(parsed.crawlDir) }
+        : {}),
     };
+    if (parsed.crawlDir && target !== 'webapp') {
+      console.warn(
+        `Warning: --crawl-dir is only consumed by --target=webapp; ignored for target "${target}".`,
+      );
+    }
     const summary = await adapter.build(buildOptions);
     printSummary(target, summary);
   } catch (err) {
