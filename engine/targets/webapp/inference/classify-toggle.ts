@@ -35,6 +35,18 @@ function nestedHasRole(el: SerializedElement, role: string): boolean {
   return el.innerHTML.includes(`role="${role}"`);
 }
 
+/**
+ * The original code attempted attr(triggerEdge.interaction.selector, 'aria-haspopup')
+ * but interaction.selector is a CSS selector string, not a SerializedElement. The
+ * SerializedElement type has no place on Interaction, so the only signal available
+ * is the selector text itself. CSS selectors like [aria-haspopup="menu"] surface
+ * the attribute directly; substring containment is a faithful approximation.
+ */
+function triggerHasHaspopup(triggerEdge: StateEdge): boolean {
+  const selector = triggerEdge.interaction.selector ?? '';
+  return selector.includes('aria-haspopup');
+}
+
 export function classifyToggle(
   diff: DomDiff,
   triggerEdge: StateEdge,
@@ -47,7 +59,7 @@ export function classifyToggle(
   }
   if (nestedHasRole(target, 'dialog')) return 'modal';
 
-  if (hasRole(target, 'menu') || attr(triggerEdge.interaction.selector || '', 'aria-haspopup')) {
+  if (hasRole(target, 'menu') || triggerHasHaspopup(triggerEdge)) {
     return 'dropdown';
   }
   if (nestedHasRole(target, 'menu')) return 'dropdown';
