@@ -1,0 +1,9 @@
+{
+  "slug": "enerblock-net",
+  "target": "astro",
+  "url": "https://enerblock.net/en/faqs/",
+  "captured_at": "2026-05-15T18:07:59.099Z",
+  "parity_threshold": 0.99,
+  "comparison_mode": "manifest-shape",
+  "notes": "Real-world astro target referenced in docs/V2.0/03-targets-audit.md and 05-action-plan.md as the canonical astro success. 161 assets, 14 scripts, 1 style, 27 unresolvedExternal CDN refs."
+}

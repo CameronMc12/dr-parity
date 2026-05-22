@@ -1,0 +1,24 @@
+{
+  "target": "react",
+  "projectDir": "/Users/cameronmcallister/Github/dr-parity/docs/research/captures/www.apple.com/react-site-urls",
+  "referenceDir": "/Users/cameronmcallister/Github/dr-parity/docs/research/captures/www.apple.com/2026-05-22T07-07-41-024Z",
+  "threshold": 0.05,
+  "timestamp": "2026-05-22T07:09:33.568Z",
+  "viewports": [
+    {
+      "name": "desktop",
+      "width": 1280,
+      "height": 800,
+      "diffPixels": 2486373,
+      "totalPixels": 8135680,
+      "diffRatio": 0.30561342137350533,
+      "passed": false,
+      "rebuiltScreenshot": "/Users/cameronmcallister/Github/dr-parity/docs/research/captures/www.apple.com/react-site-urls/desktop/rebuilt.png",
+      "referenceScreenshot": "/Users/cameronmcallister/Github/dr-parity/docs/research/captures/www.apple.com/2026-05-22T07-07-41-024Z/desktop/screenshot.png",
+      "diffImage": "/Users/cameronmcallister/Github/dr-parity/docs/research/captures/www.apple.com/react-site-urls/desktop/diff.png",
+      "note": "diff 30.561% > 5.00%"
+    }
+  ],
+  "allPassed": false,
+  "reportPath": "/Users/cameronmcallister/Github/dr-parity/docs/research/captures/www.apple.com/react-site-urls/parity-report.json"
+}

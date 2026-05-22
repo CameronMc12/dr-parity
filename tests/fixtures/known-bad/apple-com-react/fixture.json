@@ -1,0 +1,9 @@
+{
+  "slug": "apple-com-react",
+  "target": "react",
+  "url": "https://www.apple.com/",
+  "captured_at": "2026-05-22T07:07:41.024Z",
+  "parity_threshold": 0.95,
+  "comparison_mode": "pixel-diff",
+  "notes": "Triage target. Current pixel diff is 30.56 percent on desktop. Tracked here so the harvest loop has a concrete failing baseline. NOT a gate."
+}
