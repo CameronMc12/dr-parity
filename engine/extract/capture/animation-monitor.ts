@@ -17,7 +17,7 @@
  * during V2.1 cleanup. No behavioural changes; only the import home moved.
  */
 
-import type { Page } from "playwright";
+import type { BrowserContext, Page } from "playwright";
 import type {
   AnimationSpec,
   AnimationType,
@@ -220,8 +220,42 @@ const HOVER_PAUSE_MS = 150;
  * own JavaScript.
  */
 export async function injectAnimationMonitors(page: Page): Promise<void> {
+  await page.addInitScript(esbuildHelperShim);
   await page.addInitScript(runtimeMonitoringScript);
 }
+
+/**
+ * Context-level installer. Identical shims, but applied via
+ * `BrowserContext.addInitScript` so every page the context spawns inherits
+ * the monitor without the caller needing to re-inject. Prefer this in the
+ * capture pipeline where the context is created fresh per viewport.
+ */
+export async function injectAnimationMonitorsOnContext(
+  context: BrowserContext,
+): Promise<void> {
+  await context.addInitScript(esbuildHelperShim);
+  await context.addInitScript(runtimeMonitoringScript);
+}
+
+/**
+ * Shim for esbuild/tsx helpers (`__name`, `__defProp`) that the page
+ * evaluation pipeline references in transpiled function bodies. Without
+ * this, page.evaluate(() => ...) calls inside detectAnimations throw
+ * `ReferenceError: __name is not defined` in the browser context.
+ *
+ * This is a no-op for any function it wraps; it exists purely to satisfy
+ * the helper reference. Defined as a plain string so esbuild does not
+ * inject its own helpers when transpiling the page.addInitScript call.
+ */
+const esbuildHelperShim = `(() => {
+  if (typeof window === "undefined") return;
+  if (typeof window.__name !== "function") {
+    window.__name = function(fn) { return fn; };
+  }
+  if (typeof window.__defProp !== "function") {
+    window.__defProp = Object.defineProperty;
+  }
+})();`;
 
 const runtimeMonitoringScript = `(() => {
   "use strict";

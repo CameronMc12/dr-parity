@@ -26,6 +26,11 @@ import { startNetworkRecorder } from '../engine/extract/capture/network-recorder
 import { runTour } from '../engine/extract/capture/tour';
 import { runLazyLoadPass } from '../engine/extract/capture/lazy-load-pass';
 import {
+  installAnimationMonitor,
+  installAnimationMonitorOnPage,
+  runAnimationsPass,
+} from '../engine/extract/capture/animations-pass';
+import {
   CANONICAL_ROOT,
   canonicalTimestamp,
   cloneSubdir,
@@ -219,6 +224,9 @@ async function captureLaunchViewport(
   let ctx: BrowserContext | null = null;
   try {
     ctx = await handle.newContext(buildContextOptions({ viewport, outDir: dir }));
+    // Install animation monitor shims at the context level so they run
+    // before any page script. MUST happen before the first page.goto.
+    await installAnimationMonitor(ctx);
     await startTrace(ctx);
 
     const page = await ctx.newPage();
@@ -238,6 +246,11 @@ async function captureLaunchViewport(
         `${lazy.finalHeightPx}px tall, ${lazy.durationMs}ms`,
     );
 
+    // Animation detection pass: static rules, runtime monitor data, and
+    // active probes. Runs after the tour and lazy-load so any animations
+    // they trigger are observed. Failures are non-fatal.
+    await runAnimationsPass(page, { outDir: dir, label: viewport.name });
+
     await page.screenshot({ path: join(dir, 'screenshot.png'), fullPage: true });
 
     await stopTrace(ctx, dir);
@@ -247,7 +260,7 @@ async function captureLaunchViewport(
     return {
       name: viewport.name,
       dir,
-      files: ['screenshot.png', 'network.har', 'trace.zip', 'video/'],
+      files: ['screenshot.png', 'network.har', 'trace.zip', 'video/', 'animations.json'],
       ok: true,
     };
   } catch (err) {
@@ -280,6 +293,11 @@ async function captureSharedContext(
     await startTrace(ctx);
 
     const page = await ctx.newPage();
+    // Install animation monitor on the page before navigation. We attach
+    // at page level rather than context level because the shared context
+    // belongs to the user's profile (cdp) or to a persistent profile, so
+    // we avoid polluting other pages with our shims.
+    await installAnimationMonitorOnPage(page);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
 
@@ -295,6 +313,9 @@ async function captureSharedContext(
         `${lazy.finalHeightPx}px tall, ${lazy.durationMs}ms`,
     );
 
+    // Animation detection pass. Same contract as the launch path.
+    await runAnimationsPass(page, { outDir: dir, label: viewportName });
+
     await page.screenshot({ path: join(dir, 'screenshot.png'), fullPage: true });
 
     await stopTrace(ctx, dir);
@@ -303,7 +324,7 @@ async function captureSharedContext(
     }
     await page.close();
 
-    const files = ['screenshot.png', 'trace.zip'];
+    const files = ['screenshot.png', 'trace.zip', 'animations.json'];
     if (recorder) files.push('network.json');
 
     return { name: viewportName, dir, files, ok: true };
