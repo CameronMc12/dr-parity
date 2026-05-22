@@ -1,20 +1,24 @@
 /**
  * Webapp pixel parity stage (V2.1 stretch goal toward ~99% pixel parity).
  *
- * Phase A in this module: boot the built SPA via `vite preview` and capture
- * per-viewport full-page screenshots of every inferred route. The diff and
- * report-emit phases land in follow-up commits.
+ * Phase A: boot the built SPA via `vite preview` and capture per-viewport
+ * full-page screenshots of every inferred route.
+ * Phase B: pixel-diff each captured screenshot against the crawl graph's
+ * reference screenshot for that route. Only the viewport whose width
+ * matches the crawl viewport produces a hard pass/fail; other viewports
+ * are captured for human inspection but are not gated.
  *
- * Why we re-use `startVitePreview`/`stopPreview` from `post-emit-multi-webapp.ts`:
- * those helpers already encode the readiness pattern used by
- * route-render-check and state-assertion-check, including MSW init. Sharing
- * one boot routine avoids drift in how the preview server is detected and
- * torn down.
+ * Re-use of astro's diff primitives: pixelmatch + pngjs are the same
+ * libraries used by engine/qa/parity-check.ts and engine/verify/diff.ts.
+ * The threshold semantics also mirror engine/verify (diffRatio = mismatched
+ * pixels / total pixels).
  */
 
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { PNG } from 'pngjs';
+import pixelmatch from 'pixelmatch';
 
 import type { InferenceResult } from '../../targets/webapp/inference';
 import type { CrawlGraph } from '../../targets/webapp/crawler/types';
@@ -39,14 +43,26 @@ export const PIXEL_PARITY_VIEWPORTS: readonly PixelParityViewport[] = [
   { name: 'wide', width: 1920, height: 1080 },
 ] as const;
 
-export interface CapturedShot {
-  routePath: string;
-  baseStateId: string;
-  viewport: PixelParityViewport;
+export interface PixelParityViewportResult {
+  name: string;
+  width: number;
+  height: number;
+  diffPixels: number;
+  totalPixels: number;
+  diffRatio: number;
+  passed: boolean;
   rebuiltScreenshot: string;
   referenceScreenshot: string | null;
-  referenceViewport: string | null;
+  diffImage: string | null;
   note: string;
+}
+
+export interface PixelParityRouteResult {
+  routePath: string;
+  baseStateId: string;
+  referenceViewport: string | null;
+  viewports: PixelParityViewportResult[];
+  passed: boolean;
 }
 
 export interface RunWebappPixelParityOptions {
@@ -60,6 +76,18 @@ export interface RunWebappPixelParityOptions {
   graph?: CrawlGraph;
   /** Canonical viewports to capture. Defaults to all four. */
   viewports?: readonly PixelParityViewport[];
+  /** Pixel-diff threshold ratio. Default 0.20 (per webapp default). */
+  threshold?: number;
+  /**
+   * Multiplier applied to `threshold` to find the warn/fail boundary.
+   *   diffRatio <= threshold                  -> route + viewport pass
+   *   threshold < diffRatio <= threshold*N    -> overall stage status warn
+   *   diffRatio > threshold*N                 -> overall stage status fail
+   * Default 2.
+   */
+  warnMultiplier?: number;
+  /** Per-pixel pixelmatch threshold (0..1). Default 0.1. */
+  pixelThreshold?: number;
   /** Max ms to wait for vite preview to become ready. Default 30s. */
   previewReadyTimeoutMs?: number;
   /** Skip Playwright work (used by tests). */
@@ -74,11 +102,14 @@ export interface PixelParityCaptureResult {
   metrics: {
     durationMs: number;
     routes?: number;
-    captured?: number;
+    comparedViewports?: number;
+    passedViewports?: number;
+    threshold?: number;
+    warnMultiplier?: number;
     [key: string]: number | string | boolean | null | undefined;
   };
   errors: string[];
-  shots: CapturedShot[];
+  routes: PixelParityRouteResult[];
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +121,9 @@ const PAGE_GOTO_TIMEOUT_MS = 30_000;
 const NETWORK_IDLE_TIMEOUT_MS = 15_000;
 const POST_LOAD_SETTLE_MS = 2_500;
 const MSW_READY_TIMEOUT_MS = 10_000;
+const DEFAULT_THRESHOLD = 0.2;
+const DEFAULT_WARN_MULTIPLIER = 2;
+const DEFAULT_PIXEL_THRESHOLD = 0.1;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -134,6 +168,106 @@ function resolveScreenshotPath(crawlDir: string, screenshotPath: string): string
 function routePathSlug(routePath: string): string {
   if (routePath === '/' || routePath.length === 0) return 'root';
   return routePath.replace(/^\/+/, '').replace(/\/+$/, '').replace(/[^a-z0-9._-]+/gi, '-');
+}
+
+// ---------------------------------------------------------------------------
+// PNG diff (mirrors engine/qa/parity-check.ts and engine/verify/diff.ts).
+// ---------------------------------------------------------------------------
+
+async function readPng(filePath: string): Promise<PNG> {
+  const buffer = await readFile(filePath);
+  return new Promise<PNG>((resolvePng, reject) => {
+    const png = new PNG();
+    png.parse(buffer, (err, data) => {
+      if (err) reject(new Error(`Failed to parse PNG ${filePath}: ${err.message}`));
+      else resolvePng(data);
+    });
+  });
+}
+
+function encodePng(png: PNG): Promise<Buffer> {
+  return new Promise<Buffer>((resolveBuf, reject) => {
+    const chunks: Buffer[] = [];
+    png
+      .pack()
+      .on('data', (chunk: Buffer) => chunks.push(chunk))
+      .on('end', () => resolveBuf(Buffer.concat(chunks)))
+      .on('error', reject);
+  });
+}
+
+function cropToSize(src: PNG, width: number, height: number): PNG {
+  if (src.width === width && src.height === height) return src;
+  const dst = new PNG({ width, height });
+  const copyW = Math.min(width, src.width);
+  const copyH = Math.min(height, src.height);
+  for (let y = 0; y < copyH; y++) {
+    for (let x = 0; x < copyW; x++) {
+      const s = (y * src.width + x) * 4;
+      const d = (y * width + x) * 4;
+      dst.data[d] = src.data[s]!;
+      dst.data[d + 1] = src.data[s + 1]!;
+      dst.data[d + 2] = src.data[s + 2]!;
+      dst.data[d + 3] = src.data[s + 3]!;
+    }
+  }
+  return dst;
+}
+
+interface DiffOutcome {
+  diffPixels: number;
+  totalPixels: number;
+  diffRatio: number;
+}
+
+async function diffPngs(
+  referencePath: string,
+  rebuiltPath: string,
+  diffOut: string,
+  pixelThreshold: number,
+): Promise<DiffOutcome> {
+  const [refPng, rebuiltPng] = await Promise.all([readPng(referencePath), readPng(rebuiltPath)]);
+  const width = Math.min(refPng.width, rebuiltPng.width);
+  const height = Math.min(refPng.height, rebuiltPng.height);
+  if (width === 0 || height === 0) {
+    throw new Error(
+      `Empty PNG dims reference=${refPng.width}x${refPng.height} rebuilt=${rebuiltPng.width}x${rebuiltPng.height}`,
+    );
+  }
+  const refCrop = cropToSize(refPng, width, height);
+  const rebuiltCrop = cropToSize(rebuiltPng, width, height);
+  const diff = new PNG({ width, height });
+  const diffPixels = pixelmatch(refCrop.data, rebuiltCrop.data, diff.data, width, height, {
+    threshold: pixelThreshold,
+  });
+  await mkdir(dirname(diffOut), { recursive: true });
+  await writeFile(diffOut, await encodePng(diff));
+  const totalPixels = width * height;
+  return {
+    diffPixels,
+    totalPixels,
+    diffRatio: totalPixels > 0 ? diffPixels / totalPixels : 0,
+  };
+}
+
+function classifyStatus(
+  results: PixelParityRouteResult[],
+  threshold: number,
+  warnMultiplier: number,
+): PixelParityStatus {
+  const failBoundary = threshold * warnMultiplier;
+  let anyAboveThreshold = false;
+  let anyAboveFailBoundary = false;
+  for (const route of results) {
+    for (const viewport of route.viewports) {
+      if (!viewport.referenceScreenshot) continue;
+      if (viewport.diffRatio > failBoundary) anyAboveFailBoundary = true;
+      else if (viewport.diffRatio > threshold) anyAboveThreshold = true;
+    }
+  }
+  if (anyAboveFailBoundary) return 'fail';
+  if (anyAboveThreshold) return 'warn';
+  return 'ok';
 }
 
 async function loadGraphIfNeeded(
@@ -252,7 +386,133 @@ function buildRouteJobs(
 }
 
 // ---------------------------------------------------------------------------
-// Orchestrator (Phase A: capture only)
+// Per-route runner: capture every viewport, diff the reference viewport.
+// ---------------------------------------------------------------------------
+
+async function runRouteJob(
+  browser: import('playwright').Browser,
+  baseUrl: string,
+  job: RouteJob,
+  artefactDir: string,
+  viewports: readonly PixelParityViewport[],
+  threshold: number,
+  pixelThreshold: number,
+  log: (l: string) => void,
+): Promise<PixelParityRouteResult> {
+  const slug = routePathSlug(job.routePath);
+  const routeDir = join(artefactDir, slug);
+  mkdirSync(routeDir, { recursive: true });
+
+  const results: PixelParityViewportResult[] = [];
+  for (const viewport of viewports) {
+    const viewportDir = join(routeDir, viewport.name);
+    mkdirSync(viewportDir, { recursive: true });
+    const rebuiltPath = join(viewportDir, 'rebuilt.png');
+    try {
+      await captureRouteViewport(browser, baseUrl, job.routePath, viewport, rebuiltPath, log);
+    } catch (err) {
+      results.push({
+        name: viewport.name,
+        width: viewport.width,
+        height: viewport.height,
+        diffPixels: 0,
+        totalPixels: 0,
+        diffRatio: 0,
+        passed: false,
+        rebuiltScreenshot: rebuiltPath,
+        referenceScreenshot: null,
+        diffImage: null,
+        note: `capture failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      continue;
+    }
+
+    const isReferenceViewport =
+      job.referenceViewport !== null && job.referenceViewport.name === viewport.name;
+
+    if (!isReferenceViewport) {
+      // Captured for human inspection only. No reference exists at this
+      // viewport so the result cannot fail the gate.
+      results.push({
+        name: viewport.name,
+        width: viewport.width,
+        height: viewport.height,
+        diffPixels: 0,
+        totalPixels: 0,
+        diffRatio: 0,
+        passed: true,
+        rebuiltScreenshot: rebuiltPath,
+        referenceScreenshot: null,
+        diffImage: null,
+        note: 'no reference for this viewport',
+      });
+      continue;
+    }
+
+    if (!job.referenceAbsPath) {
+      results.push({
+        name: viewport.name,
+        width: viewport.width,
+        height: viewport.height,
+        diffPixels: 0,
+        totalPixels: 0,
+        diffRatio: 0,
+        passed: false,
+        rebuiltScreenshot: rebuiltPath,
+        referenceScreenshot: null,
+        diffImage: null,
+        note: `reference screenshot missing for base state ${job.baseStateId}`,
+      });
+      continue;
+    }
+
+    const diffImage = join(viewportDir, 'diff.png');
+    try {
+      const diff = await diffPngs(job.referenceAbsPath, rebuiltPath, diffImage, pixelThreshold);
+      const passed = diff.diffRatio <= threshold;
+      results.push({
+        name: viewport.name,
+        width: viewport.width,
+        height: viewport.height,
+        diffPixels: diff.diffPixels,
+        totalPixels: diff.totalPixels,
+        diffRatio: diff.diffRatio,
+        passed,
+        rebuiltScreenshot: rebuiltPath,
+        referenceScreenshot: job.referenceAbsPath,
+        diffImage,
+        note: passed
+          ? `diff ${(diff.diffRatio * 100).toFixed(3)}% <= ${(threshold * 100).toFixed(2)}%`
+          : `diff ${(diff.diffRatio * 100).toFixed(3)}% > ${(threshold * 100).toFixed(2)}%`,
+      });
+    } catch (err) {
+      results.push({
+        name: viewport.name,
+        width: viewport.width,
+        height: viewport.height,
+        diffPixels: 0,
+        totalPixels: 0,
+        diffRatio: 0,
+        passed: false,
+        rebuiltScreenshot: rebuiltPath,
+        referenceScreenshot: job.referenceAbsPath,
+        diffImage: null,
+        note: `diff failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  return {
+    routePath: job.routePath,
+    baseStateId: job.baseStateId,
+    referenceViewport: job.referenceViewport ? job.referenceViewport.name : null,
+    viewports: results,
+    passed: results.every((r) => r.passed),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrator (capture + diff)
 // ---------------------------------------------------------------------------
 
 export async function runWebappPixelParity(
@@ -262,6 +522,9 @@ export async function runWebappPixelParity(
   const start = Date.now();
   const projectDir = resolve(options.outDir);
   const viewports = options.viewports ?? PIXEL_PARITY_VIEWPORTS;
+  const threshold = options.threshold ?? DEFAULT_THRESHOLD;
+  const warnMultiplier = options.warnMultiplier ?? DEFAULT_WARN_MULTIPLIER;
+  const pixelThreshold = options.pixelThreshold ?? DEFAULT_PIXEL_THRESHOLD;
   const previewReadyTimeoutMs = options.previewReadyTimeoutMs ?? DEFAULT_PREVIEW_READY_TIMEOUT_MS;
 
   if (options.skipBrowser) {
@@ -270,7 +533,7 @@ export async function runWebappPixelParity(
       status: 'skipped',
       metrics: { durationMs: 0, reason: 'skipBrowser=true' },
       errors: [],
-      shots: [],
+      routes: [],
     };
   }
   if (!options.inference || options.inference.routes.length === 0) {
@@ -279,7 +542,7 @@ export async function runWebappPixelParity(
       status: 'skipped',
       metrics: { durationMs: 0, reason: 'no inference graph' },
       errors: [],
-      shots: [],
+      routes: [],
     };
   }
   if (!options.crawlDir) {
@@ -288,7 +551,7 @@ export async function runWebappPixelParity(
       status: 'skipped',
       metrics: { durationMs: 0, reason: 'no crawlDir' },
       errors: [],
-      shots: [],
+      routes: [],
     };
   }
 
@@ -299,7 +562,7 @@ export async function runWebappPixelParity(
       status: 'skipped',
       metrics: { durationMs: 0, reason: 'crawlDir not found' },
       errors: [`crawlDir does not exist: ${crawlDir}`],
-      shots: [],
+      routes: [],
     };
   }
 
@@ -312,7 +575,7 @@ export async function runWebappPixelParity(
       status: 'fail',
       metrics: { durationMs: Date.now() - start },
       errors: [err instanceof Error ? err.message : String(err)],
-      shots: [],
+      routes: [],
     };
   }
 
@@ -326,7 +589,7 @@ export async function runWebappPixelParity(
       status: 'fail',
       metrics: { durationMs: Date.now() - start },
       errors: [`playwright unavailable: ${err instanceof Error ? err.message : String(err)}`],
-      shots: [],
+      routes: [],
     };
   }
 
@@ -337,7 +600,7 @@ export async function runWebappPixelParity(
       status: 'skipped',
       metrics: { durationMs: 0, reason: 'no routes resolved' },
       errors: [],
-      shots: [],
+      routes: [],
     };
   }
 
@@ -351,7 +614,7 @@ export async function runWebappPixelParity(
       status: 'fail',
       metrics: { durationMs: Date.now() - start, routes: jobs.length },
       errors: [err instanceof Error ? err.message : String(err)],
-      shots: [],
+      routes: [],
     };
   }
 
@@ -360,45 +623,28 @@ export async function runWebappPixelParity(
 
   const browser = await chromium.launch({ headless: true });
   const errors: string[] = [];
-  const shots: CapturedShot[] = [];
+  const routeResults: PixelParityRouteResult[] = [];
   try {
     for (const job of jobs) {
-      const slug = routePathSlug(job.routePath);
       log(
         `  [pixel-parity] route ${job.routePath} (base=${job.baseStateId}, refViewport=${job.referenceViewport?.name ?? 'none'})`,
       );
-      for (const viewport of viewports) {
-        const viewportDir = join(artefactDir, slug, viewport.name);
-        mkdirSync(viewportDir, { recursive: true });
-        const rebuiltPath = join(viewportDir, 'rebuilt.png');
-        try {
-          await captureRouteViewport(
-            browser,
-            server.baseUrl,
-            job.routePath,
-            viewport,
-            rebuiltPath,
-            log,
-          );
-          const isRef =
-            job.referenceViewport !== null && job.referenceViewport.name === viewport.name;
-          shots.push({
-            routePath: job.routePath,
-            baseStateId: job.baseStateId,
-            viewport,
-            rebuiltScreenshot: rebuiltPath,
-            referenceScreenshot: isRef ? job.referenceAbsPath : null,
-            referenceViewport: job.referenceViewport ? job.referenceViewport.name : null,
-            note: isRef
-              ? job.referenceAbsPath
-                ? 'captured at reference viewport'
-                : 'reference screenshot missing for base state'
-              : 'no reference for this viewport',
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`${job.routePath} :: ${viewport.name}: ${msg}`);
-        }
+      try {
+        const result = await runRouteJob(
+          browser,
+          server.baseUrl,
+          job,
+          artefactDir,
+          viewports,
+          threshold,
+          pixelThreshold,
+          log,
+        );
+        routeResults.push(result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`${job.routePath}: ${msg}`);
+        log(`  [pixel-parity] route ${job.routePath} failed: ${msg}`);
       }
     }
   } finally {
@@ -406,15 +652,25 @@ export async function runWebappPixelParity(
     await stopPreview(server);
   }
 
+  const status = classifyStatus(routeResults, threshold, warnMultiplier);
+  const allViewports = routeResults.flatMap((r) => r.viewports);
+  const comparedViewports = allViewports.filter((v) => v.referenceScreenshot !== null).length;
+  const passedViewports = allViewports.filter(
+    (v) => v.referenceScreenshot !== null && v.passed,
+  ).length;
+
   return {
     name: 'pixel-parity',
-    status: errors.length === 0 ? 'ok' : 'warn',
+    status,
     metrics: {
       durationMs: Date.now() - start,
-      routes: jobs.length,
-      captured: shots.length,
+      routes: routeResults.length,
+      comparedViewports,
+      passedViewports,
+      threshold,
+      warnMultiplier,
     },
     errors,
-    shots,
+    routes: routeResults,
   };
 }
