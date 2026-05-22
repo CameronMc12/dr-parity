@@ -16,4 +16,7 @@
 
 ## Checklist
 
-- [ ] `npm run check` passes (lint + typecheck + build)
+- [ ] `npm run typecheck` passes (no new TS errors)
+- [ ] `npx parity test` passes (Astro + React multi-viewport parity)
+- [ ] `npm run check:astro-emit` passes (if touching Astro emitter)
+- [ ] `npm run check:html-rewriter` passes (if touching HTML rewriter)
