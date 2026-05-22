@@ -183,7 +183,26 @@ Absolute URLs (`http(s)://`, `/`, `data:`, `blob:`, hash links,
 
 ## apple.com react re-run
 
-First re-run after the body-path fix only (commit `f5d4b7e`):
+### Second re-run after both fixes (commits `f5d4b7e` + `20df709`)
+
+| Field | Value |
+|---|---|
+| Run ID | `2026-05-22T12-26-33-956Z-a6f0` |
+| Run dir | `/Users/cameronmcallister/Github/dr-parity/.runs/2026-05-22T12-26-33-956Z-a6f0` |
+| Capture dir | `/tmp/w8-verify/www-apple/2026-05-22T12-26-33-978Z/captures` |
+| Sites dir | `/tmp/w8-verify/www-apple/2026-05-22T12-26-33-978Z/sites/react` |
+| Status | OK |
+| diffThreshold | 0.2 (per-target react default now applies) |
+| Pixel score | 99.95 percent |
+| Threshold floor | 80.00 percent |
+| Verdict | pass |
+| Total duration | 9m 42s |
+
+This confirms both fixes are live end-to-end. `parity-check` now reports
+`diffThreshold=0.2` instead of `0.02`, and `npm run build` produces a
+dist/index.html that pixel-matches the captured clone at 99.95 percent.
+
+### First re-run after the body-path fix only (commit `f5d4b7e`)
 
 | Field | Value |
 |---|---|
