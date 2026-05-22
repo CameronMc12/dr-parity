@@ -53,59 +53,16 @@ const noArgs = (text) => text.replace(/\$ARGUMENTS/g, 'the target URL provided b
 console.log('Syncing clone-website skill to all platforms...');
 console.log(`  Source: .claude/skills/clone-website/SKILL.md\n`);
 
-// 1. Codex CLI — same SKILL.md format, same $ARGUMENTS syntax
-write('.codex/skills/clone-website/SKILL.md', raw);
+// Only regenerate skill copies for platforms that still live in this repo.
+// The other AI-tool configs were intentionally pruned in commit 3b4efd2
+// and must not be resurrected by this sync.
 
-// 2. GitHub Copilot — same SKILL.md format
+// GitHub Copilot — same SKILL.md format
 write('.github/skills/clone-website/SKILL.md', raw);
 
-// 3. Cursor — plain markdown, no argument substitution support
-write('.cursor/commands/clone-website.md', HEADER + noArgs(body));
+// Mark unused variables so lint stays clean if anyone re-enables platforms later.
+void shortDesc;
+void HEADER;
+void noArgs;
 
-// 4. Windsurf — markdown workflow
-write('.windsurf/workflows/clone-website.md', HEADER + noArgs(body));
-
-// 5. Gemini CLI — TOML format, {{args}} for arguments
-const geminiBody = body.replace(/\$ARGUMENTS/g, '{{args}}');
-write(
-  '.gemini/commands/clone-website.toml',
-  `# AUTO-GENERATED from .claude/skills/clone-website/SKILL.md\n` +
-    `# Run \`node scripts/sync-skills.mjs\` to regenerate.\n\n` +
-    `description = "${shortDesc}"\n\n` +
-    `[prompt]\ntext = '''\n${geminiBody}\n'''\n`
-);
-
-// 6. OpenCode — markdown + YAML frontmatter, $ARGUMENTS works natively
-write(
-  '.opencode/commands/clone-website.md',
-  `---\ndescription: "${shortDesc}"\n---\n${HEADER}${body}`
-);
-
-// 7. Augment Code — markdown + YAML frontmatter
-write(
-  '.augment/commands/clone-website.md',
-  `---\ndescription: "${shortDesc}"\nargument-hint: "<url>"\n---\n${HEADER}${body}`
-);
-
-// 8. Continue — prompt file with invokable: true
-write(
-  '.continue/commands/clone-website.md',
-  `---\nname: clone-website\ndescription: "${shortDesc}"\ninvokable: true\n---\n${HEADER}${body}`
-);
-
-// 9. Amazon Q — JSON agent definition
-write(
-  '.amazonq/cli-agents/clone-website.json',
-  JSON.stringify(
-    {
-      name: 'clone-website',
-      description: shortDesc,
-      prompt: noArgs(body),
-      fileContext: ['AGENTS.md', 'docs/research/**'],
-    },
-    null,
-    2
-  ) + '\n'
-);
-
-console.log('\nDone! 9 platform command files generated from source skill.');
+console.log('\nDone! 1 platform command file generated from source skill.');

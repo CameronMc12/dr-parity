@@ -1,15 +1,15 @@
 ---
 name: clone-website
-description: Reverse-engineer and clone one or more websites as pixel-perfect, animation-accurate 1:1 replicas using Dr Parity's automated Playwright extraction pipeline + Chrome MCP visual intelligence. Every computed style, every animation, every font, every asset is captured and replicated. Use this whenever the user wants to clone, replicate, rebuild, reverse-engineer, or copy any website. Also triggers on phrases like "make a copy of this site", "rebuild this page", "pixel-perfect clone". Provide one or more target URLs as arguments.
+description: Reverse-engineer and clone one or more websites as pixel-perfect, animation-accurate 1:1 replicas using Dr Parity's automated Playwright CLI extraction pipeline. Every computed style, every animation, every font, every asset is captured and replicated. Use this whenever the user wants to clone, replicate, rebuild, reverse-engineer, or copy any website. Also triggers on phrases like "make a copy of this site", "rebuild this page", "pixel-perfect clone". Provide one or more target URLs as arguments.
 argument-hint: "<url1> [<url2> ...] [optional instructions in quotes]"
 user-invocable: true
 ---
 
-# Dr Parity -- Clone Website
+# Dr Parity. Clone Website
 
 You are about to reverse-engineer and rebuild **$ARGUMENTS** as a pixel-perfect, animation-accurate 1:1 clone.
 
-Dr Parity uses a 5-phase automated pipeline backed by Playwright extraction + Chrome MCP visual intelligence. Every computed style, every animation, every font, every asset is captured and replicated. The automated extraction captures 95% of what exists on the page. Chrome MCP catches the remaining 5%. Together they miss nothing.
+Dr Parity uses a multi-phase automated pipeline backed by Playwright CLI extraction. Every computed style, every animation, every font, every asset is captured and replicated. The automated extraction captures the vast majority of what exists on the page. Dr Parity always runs inside Claude Code, so Claude observes the live Playwright run for anomalies and supplements the capture if the tour misses something subjective such as scroll feel or canvas content. No browser MCP is used.
 
 When multiple URLs are provided, process them independently and in parallel where possible, isolating each site's artifacts in dedicated folders (e.g., `docs/research/<hostname>/`).
 
@@ -23,13 +23,13 @@ Before anything else, establish the working environment.
 
 Extract URL(s) and any user instructions from `$ARGUMENTS`. Normalize and validate each URL. If any are invalid, ask the user to correct them before proceeding. If the user provided additional instructions (fidelity level, customizations, specific pages), note them for use throughout the pipeline.
 
-### 0.2 Verify Browser MCP
+### 0.2 Verify Playwright CLI
 
-Check for available browser MCP tools (Chrome MCP, Playwright MCP, Browserbase MCP, Puppeteer MCP). Use whichever is available -- prefer Chrome MCP if multiple exist. If none are detected, ask the user which browser tool they have. This skill requires browser automation for the visual verification pass in Phase 1.2 and the side-by-side QA in Phase 4.3.
+Dr Parity uses the Playwright CLI exclusively. No browser MCP is used. Confirm Playwright and Chromium are installed (see step 0.5 below). Claude observes the live Playwright run during capture and notes any anomalies as they appear.
 
-### 0.3 Verify Build
+### 0.3 Verify Engine Compilation
 
-Run `npm run build` to confirm the base project compiles. The Next.js + shadcn/ui + Tailwind v4 scaffold must already be in place. If not, tell the user to set it up first.
+Run `npm run typecheck` to confirm the engine compiles. If it fails, fix the TypeScript errors before continuing.
 
 ### 0.4 Create Output Directories
 
@@ -93,35 +93,33 @@ Three responsibilities:
 **Merge (`mergeExtractionData`)**
 Combines all extraction outputs into a unified `PageData` JSON. Sections from the page scan are enriched with animations (matched by element selector), interaction models (classified from the interaction mapper), and responsive breakpoints. Global behaviors (smooth scroll, scroll snap, custom cursor, preloader) are built from detected libraries. The complete result is saved to `docs/research/page-data.json`.
 
-### 1.2 Chrome MCP Visual Verification
+### 1.2 Live Capture Observation
 
-After the automated extraction, use Chrome MCP to visually verify and supplement what the automation captured.
+Dr Parity runs inside Claude Code, so Claude observes the live Playwright capture output as it runs. After the capture completes, review the per viewport screenshot saved to `docs/research/captures/<host>/<timestamp>/<viewport>/screenshot.png` and walk the page mentally section by section, watching for items the static capture may have under recorded.
 
-1. Navigate to the target URL in Chrome MCP.
-2. Take full-page screenshots at desktop (1440px). Save to `docs/design-references/`.
-3. Scroll through the page slowly, section by section, observing:
-   - Are there animations the automated extraction might have missed? (WebGL, canvas, complex GSAP timelines, Lottie, SVG morphing)
-   - Are there hover states on elements that look interactive but weren't caught by the hover probe?
-   - Are there loading states, skeleton screens, or delayed content that only appears after a pause?
-   - Is there a smooth scroll library active? Does the scroll feel buttery (Lenis, Locomotive) or native?
-   - Are there parallax effects where background layers move at different scroll rates?
-   - Do characters or words animate individually (text reveal animations)?
-   - Are there micro-interactions on buttons, inputs, links beyond simple color changes?
-   - Are there page transitions or FLIP animations?
-4. For each section, take a focused screenshot. These become the reference images that builders use.
-5. Document any findings Chrome MCP catches that the automation missed in `docs/research/CHROME_MCP_FINDINGS.md`.
+1. Open the captured screenshots and confirm the page rendered as expected at each viewport.
+2. Section by section, note anything the tour may have missed:
+   - Animations that depend on interactions the tour did not exercise (WebGL, canvas, complex GSAP timelines, Lottie, SVG morphing).
+   - Hover states on elements that look interactive but were not caught by the hover probe.
+   - Loading states, skeleton screens, or delayed content that only appears after a pause.
+   - Smooth scroll library presence (Lenis or Locomotive) versus native scroll.
+   - Parallax effects where background layers move at different scroll rates.
+   - Text reveal animations where characters or words animate individually.
+   - Micro interactions on buttons, inputs, and links beyond simple color changes.
+   - Page transitions or FLIP animations.
+3. Save anomaly notes to `docs/research/CAPTURE_NOTES.md` so the builder phase can compensate.
 
 ### 1.3 Validate Extraction Output
 
 Read `docs/research/page-data.json` and verify:
 
-- **Sections:** All visible sections were captured. Compare against what you see in Chrome MCP. If any section is missing, note it.
-- **Fonts:** Font files exist in `public/fonts/`. Check `pageData.fonts` for families, weights, and downloaded file paths.
-- **Assets:** Images exist in `public/images/`, videos in `public/videos/`. Check `pageData.assets` for completeness.
-- **Animations:** The `animations` array in each section is populated. Cross-reference against what you observed during the Chrome MCP scroll.
-- **Text content:** Spot-check a few sections -- does `textContent` match what the page actually displays?
+- **Sections.** All visible sections were captured. If any section is missing, note it.
+- **Fonts.** Font files exist in `public/fonts/`. Check `pageData.fonts` for families, weights, and downloaded file paths.
+- **Assets.** Images exist in `public/images/`, videos in `public/videos/`. Check `pageData.assets` for completeness.
+- **Animations.** The `animations` array in each section is populated. Cross reference against what you observed during the live capture.
+- **Text content.** Spot check a few sections to confirm `textContent` matches what the page displays.
 
-If anything is missing or incomplete, use Chrome MCP to manually extract the missing data and either re-run the relevant extraction step or manually supplement `page-data.json`.
+If anything is missing or incomplete, re-run the relevant extraction step or manually supplement `page-data.json`.
 
 ---
 
@@ -350,23 +348,23 @@ Read `docs/design-references/qa/qa-report.json`. For each viewport:
 
 The diff images (saved alongside the report) highlight exactly where the differences are in red. Use these to identify which components need fixes.
 
-### 4.3 Visual Side-by-Side with Chrome MCP
+### 4.3 Visual Side by Side with the Playwright CLI
 
-Open BOTH the original site and `http://localhost:3000` in Chrome MCP tabs. Compare section by section:
+Open BOTH the original site and `http://localhost:3000` in two browser tabs (or run a side by side Playwright capture against both URLs). Compare section by section. Claude observes the live runs and notes discrepancies.
 
 1. Scroll through both simultaneously. At each section, compare:
-   - Colors: do backgrounds, text, and accent colors match?
-   - Spacing: are paddings, margins, and gaps identical?
-   - Typography: do font sizes, weights, and line heights match?
-   - Layout: is the grid/flex structure the same?
-   - Animation timing: do animations trigger at the same scroll positions? Same duration and easing?
+   - Colors. Do backgrounds, text, and accent colors match?
+   - Spacing. Are paddings, margins, and gaps identical?
+   - Typography. Do font sizes, weights, and line heights match?
+   - Layout. Is the grid or flex structure the same?
+   - Animation timing. Do animations trigger at the same scroll positions, with the same duration and easing?
 
 2. For each discrepancy found:
-   - Is it a color mismatch? Check the CSS variable value against the extraction data.
-   - Is it a spacing issue? Check the computed padding/margin values.
-   - Is it a font issue? Verify the font files loaded correctly in DevTools.
-   - Is it an animation timing issue? Compare trigger thresholds and durations.
-   - Was the extraction spec wrong? Re-extract from Chrome MCP and fix the component.
+   - Color mismatch? Check the CSS variable value against the extraction data.
+   - Spacing issue? Check the computed padding and margin values.
+   - Font issue? Verify the font files loaded correctly in DevTools.
+   - Animation timing issue? Compare trigger thresholds and durations.
+   - Was the extraction spec wrong? Re-capture against the original and fix the component.
    - Was the spec right but the builder got it wrong? Dispatch a targeted fix agent.
 
 3. Test ALL interactive behaviors:
@@ -435,7 +433,7 @@ Build this from the `AnimationSpec` data in `page-data.json`. Each spec includes
 
 ### 1. CAPTURE EVERYTHING -- Leave Nothing Behind
 
-Every pixel, every animation, every font weight, every hover state, every responsive breakpoint. The automated extraction captures computed styles for every visible element, all animation mechanisms, all font files, all assets. Chrome MCP catches what automation cannot: the subjective feel of scroll, canvas/WebGL content, and edge cases.
+Every pixel, every animation, every font weight, every hover state, every responsive breakpoint. The automated extraction captures computed styles for every visible element, all animation mechanisms, all font files, all assets. Claude observes the live Playwright run to catch what static automation cannot: the subjective feel of scroll, canvas and WebGL content, and edge cases.
 
 ### 2. EXACT Values, Not Approximations
 
@@ -478,7 +476,7 @@ After every merge, after every fix, run `npm run build`. A broken build is never
 
 ## What NOT to Do
 
-- **Don't skip the automated extraction and go straight to Chrome MCP manual inspection.** The automation captures 100x more data (every computed style on every element) than manual inspection. Chrome MCP supplements; it does not replace.
+- **Don't skip the automated extraction and go straight to manual inspection.** The Playwright capture pipeline records far more data (every computed style on every element) than manual inspection. Live observation supplements automation. It does not replace it.
 - **Don't approximate CSS values.** Use exact computed style values from the extraction. Arbitrary Tailwind values (`[18px]`) are correct when no exact utility exists.
 - **Don't use placeholder text or stock images.** Use real extracted content and downloaded assets.
 - **Don't skip animations.** Every `AnimationSpec` in the extraction data must be implemented in the clone.

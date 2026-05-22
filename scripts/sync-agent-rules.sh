@@ -66,23 +66,13 @@ write_file() {
 
 echo "Syncing agent rules from AGENTS.md..."
 
+# Only the GitHub Copilot Chat config still lives in this repo.
+# The Cline, Continue, and Amazon Q rule directories were intentionally
+# pruned in commit 3b4efd2 and must not be resurrected by this sync.
+
 # GitHub Copilot Chat — .github/copilot-instructions.md
 write_file "$REPO_ROOT/.github/copilot-instructions.md" "$RESOLVED_CONTENT"
 
-# Cline / Roo Code — .clinerules
-write_file "$REPO_ROOT/.clinerules" "$RESOLVED_CONTENT"
-
-# Continue — .continue/rules/project.md
-CONTINUE_FRONTMATTER="---
-description: Project conventions for AI Website Clone Template
-alwaysApply: true
----"
-write_file "$REPO_ROOT/.continue/rules/project.md" "$CONTINUE_FRONTMATTER
-$RESOLVED_CONTENT"
-
-# Amazon Q Developer — .amazonq/rules/project.md
-write_file "$REPO_ROOT/.amazonq/rules/project.md" "$RESOLVED_CONTENT"
-
 echo ""
-echo "Done. Generated files are committed to the repo but sourced from AGENTS.md."
-echo "Edit AGENTS.md, then re-run this script to update all agent configs."
+echo "Done. Generated file is sourced from AGENTS.md."
+echo "Edit AGENTS.md, then re-run this script to update the Copilot config."
