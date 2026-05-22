@@ -12,7 +12,12 @@ import { join, resolve } from 'node:path';
 import * as cheerioModule from 'cheerio';
 const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 
-import { extractHead, sliceBody, copyAssetsToPublic } from '../shared';
+import {
+  extractHead,
+  sliceBody,
+  copyAssetsToPublic,
+  hoistNoscriptPictureSources,
+} from '../shared';
 import { normaliseElementPaths } from '../shared/paths';
 import {
   collectAndStripBodyScripts,
@@ -79,6 +84,14 @@ export async function buildReactProject(options: BuildOptions): Promise<BuildSum
   // original `./` prefixes. Calling it twice is idempotent: the
   // second pass sees absolute paths and skips them.
   normaliseElementPaths($, $('body'));
+
+  // Hoist <noscript>-embedded <picture> sources into their visible
+  // sibling. Apple uses `<source data-empty>` placeholders alongside a
+  // `<noscript>` carrying the real responsive variants; without this
+  // pass every lazy-marked tile renders its 1x1 transparent gif because
+  // the runtime JS that would have filled in the sources is not part of
+  // the static clone. Idempotent + capability-detected.
+  hoistNoscriptPictureSources($);
 
   // Collect body-level <script> tags BEFORE slicing, then remove them
   // from the cheerio tree so the JSX emitter doesn't render them

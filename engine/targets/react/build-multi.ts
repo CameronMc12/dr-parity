@@ -29,6 +29,7 @@ import {
   sliceBody,
   copyAssetsToPublic,
   dirSizeBytes,
+  hoistNoscriptPictureSources,
 } from '../shared';
 import { normaliseElementPaths } from '../shared/paths';
 import {
@@ -153,6 +154,14 @@ export async function buildReactMulti(
     // /public. sliceBody() also normalises, but runs after collection;
     // the second pass is a no-op against already-absolute paths.
     normaliseElementPaths($, $('body'));
+
+    // Hoist <noscript>-embedded <picture> sources into their visible
+    // sibling. Apple uses `<source data-empty>` placeholders alongside a
+    // `<noscript>` carrying the real responsive variants; without this
+    // pass every lazy-marked tile renders its 1x1 transparent gif because
+    // the runtime JS that would have filled in the sources is not part
+    // of the static clone. Idempotent + capability-detected.
+    hoistNoscriptPictureSources($);
 
     // Strip body scripts BEFORE slicing so JSX emitter doesn't render
     // them; then splice back into this page's <body>.
