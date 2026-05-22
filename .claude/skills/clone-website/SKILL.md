@@ -75,7 +75,6 @@ For multi page sites with an explicit URL list use `parity clone-urls --urls=<fi
 
 Claude must NOT reach for any of these. They are either replaced by the `parity` CLI or retired entirely.
 
-- `npx tsx scripts/extract.ts` (legacy extractor, deprecated)
 - `npx tsx scripts/capture.ts` (replaced by `parity capture` under the unified run logger)
 - `npx tsx scripts/clone-site.ts` (replaced by `parity clone-site`)
 - `npx tsx scripts/clone-urls.ts` (replaced by `parity clone-urls`)

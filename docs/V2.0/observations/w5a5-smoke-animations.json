@@ -1,0 +1,32 @@
+{
+  "capturedAt": "2026-05-22T09:58:51.834Z",
+  "detectionDuration": 2044,
+  "detection": {
+    "animations": [
+      {
+        "id": "view-transition-1",
+        "type": "css-animation",
+        "trigger": {
+          "type": "load"
+        },
+        "properties": [],
+        "duration": 0,
+        "easing": "ease",
+        "delay": 0,
+        "iterations": 1,
+        "direction": "normal",
+        "fillMode": "none",
+        "elementSelector": "html",
+        "humanDescription": "View Transition API: element \"html\" has view-transition-name: root. This enables cross-document or same-document animated transitions.",
+        "implementationNotes": "Set view-transition-name: root in CSS. Use document.startViewTransition() for SPA transitions or the @view-transition at-rule for MPA navigation."
+      }
+    ],
+    "libraries": [],
+    "globalScrollBehavior": "native",
+    "staggerPatterns": [],
+    "videoScrollSyncs": [],
+    "totalDetected": 1,
+    "detectionDuration": 2042
+  },
+  "viewTransitions": []
+}
