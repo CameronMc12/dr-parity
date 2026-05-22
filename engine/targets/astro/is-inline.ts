@@ -15,6 +15,7 @@
  */
 
 import * as cheerioModule from 'cheerio';
+import type { Element } from 'domhandler';
 const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 
 /**
@@ -27,7 +28,7 @@ export function injectIsInline(html: string): string {
   if (!/<\s*(script|style)\b/i.test(html)) return html;
 
   const $ = cheerio.load(html, null, false);
-  $('script, style').each((_idx, el) => {
+  $('script, style').each((_idx: number, el: Element) => {
     // domhandler reports node.type as 'script' or 'style' for these elements
     // (not 'tag'), so do not filter on type === 'tag'.
     if (el.type !== 'script' && el.type !== 'style' && el.type !== 'tag') return;
