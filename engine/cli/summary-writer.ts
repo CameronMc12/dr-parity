@@ -17,6 +17,7 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import { readManifest, type RunManifest } from "./run-manifest.js";
+import { readEventStream, type PipelineEvent } from "./event-stream-read.js";
 
 function formatDuration(startedAt: string, endedAt?: string): string {
   if (!endedAt) return "in progress";
@@ -93,7 +94,21 @@ function renderArtefactsSection(manifest: RunManifest): string {
   return entries.map(([name, path]) => `- ${name}: \`${path}\``).join("\n");
 }
 
-export function renderSummaryMarkdown(manifest: RunManifest): string {
+type DecisionEvent = Extract<PipelineEvent, { type: "decision" }>;
+
+function renderDecisionsSection(decisions: readonly DecisionEvent[]): string {
+  if (decisions.length === 0) {
+    return "_No decisions recorded for this run._";
+  }
+  return decisions
+    .map((d) => `- [${d.stage}] ${d.decision}. Reason: ${d.reason}`)
+    .join("\n");
+}
+
+export function renderSummaryMarkdown(
+  manifest: RunManifest,
+  decisions: readonly DecisionEvent[] = [],
+): string {
   const duration = formatDuration(manifest.startedAt, manifest.endedAt);
   const target = manifest.target ?? "n/a";
   const url = manifest.url ?? "n/a";
@@ -119,6 +134,10 @@ ${manifest.stages.map(renderStageRow).join("\n")}
 ## Issues Encountered
 
 ${renderIssuesSection(manifest)}
+
+## Decisions
+
+${renderDecisionsSection(decisions)}
 
 ## Dr Parity Bugs / Gaps Spotted
 
@@ -165,7 +184,8 @@ export async function writeSummary(
   options: WriteSummaryOptions = {},
 ): Promise<string> {
   const manifest = await readManifest({ runDir });
-  const rendered = renderSummaryMarkdown(manifest);
+  const decisions = await readDecisionEvents(runDir);
+  const rendered = renderSummaryMarkdown(manifest, decisions);
   const merged = await mergeUserBlocks(
     rendered,
     options.outPath ?? join(runDir, "SUMMARY.md"),
@@ -173,6 +193,19 @@ export async function writeSummary(
   const outPath = options.outPath ?? join(runDir, "SUMMARY.md");
   await fs.writeFile(outPath, merged, "utf8");
   return outPath;
+}
+
+/**
+ * Read `pipeline.jsonl` and filter to `decision` events. Tolerant of a
+ * missing event stream: returns an empty array.
+ */
+async function readDecisionEvents(runDir: string): Promise<DecisionEvent[]> {
+  const events = await readEventStream(join(runDir, "pipeline.jsonl"));
+  const decisions: DecisionEvent[] = [];
+  for (const event of events) {
+    if (event.type === "decision") decisions.push(event);
+  }
+  return decisions;
 }
 
 /**
