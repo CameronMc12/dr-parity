@@ -39,7 +39,12 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+
+import { runCapture } from './capture';
+import { parseHarMain } from './parse-har';
+import { parseTraceMain } from './parse-trace';
+import { completeAssetsMain } from './complete-assets';
+import { cloneMain } from './clone';
 
 import { astroAdapter } from '../engine/targets/astro';
 import { reactAdapter } from '../engine/targets/react';
@@ -182,16 +187,18 @@ function resolveAdapter(target: TargetName): TargetAdapter {
   return webappAdapter;
 }
 
-function runStep(label: string, cmd: string, cmdArgs: string[]): Promise<number> {
-  return new Promise((resolveStep) => {
-    console.log(`\n[${label}] ${cmd} ${cmdArgs.join(' ')}`);
-    const child = spawn(cmd, cmdArgs, { stdio: 'inherit' });
-    child.on('exit', (code) => resolveStep(code ?? 0));
-    child.on('error', (err) => {
-      console.error(`[${label}] spawn error: ${err.message}`);
-      resolveStep(1);
-    });
-  });
+async function runStage(
+  label: string,
+  argsForLog: readonly string[],
+  fn: () => Promise<number> | number,
+): Promise<number> {
+  console.log(`\n[${label}] ${argsForLog.join(' ')}`);
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(`[${label}] error: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
 }
 
 function newestSubdir(parent: string): string {
@@ -228,19 +235,21 @@ async function captureAndCloneOne(
   const host = hostnameOf(url);
   const hostParent = join(capturesRoot, host);
 
-  // Use --legacy-output here because we want per-URL host/iso subdirs
+  // Pass --legacy-output here because we want per-URL host/iso subdirs
   // under the supplied captures root. The captures root itself is canonical
   // (clones/<target>/<iso>/captures) when invoked from a canonical run.
-  const captureArgs = [
-    'scripts/capture.ts',
+  const captureCliArgs = [
     url,
     `--out=${capturesRoot}`,
     '--legacy-output',
     `--viewport=${viewports}`,
   ];
-  if (!tour) captureArgs.push('--no-tour');
+  if (!tour) captureCliArgs.push('--no-tour');
 
-  const captureCode = await runStep('capture', 'npx', ['tsx', ...captureArgs]);
+  const captureCode = await runStage('capture', captureCliArgs, async () => {
+    const result = await runCapture(captureCliArgs);
+    return result.viewports.length > 0 && result.viewports.every((r) => !r.ok) ? 1 : 0;
+  });
   if (captureCode !== 0) return null;
 
   let captureDir: string;
@@ -252,10 +261,10 @@ async function captureAndCloneOne(
   }
   console.log(`  capture dir: ${captureDir}`);
 
-  const harCode = await runStep('parse:har', 'npx', ['tsx', 'scripts/parse-har.ts', captureDir]);
+  const harCode = await runStage('parse:har', [captureDir], () => parseHarMain([captureDir]));
   if (harCode !== 0) return null;
 
-  const traceCode = await runStep('parse:trace', 'npx', ['tsx', 'scripts/parse-trace.ts', captureDir]);
+  const traceCode = await runStage('parse:trace', [captureDir], () => parseTraceMain([captureDir]));
   if (traceCode !== 0) return null;
 
   const availableViewports = readdirSync(captureDir, { withFileTypes: true })
@@ -264,14 +273,12 @@ async function captureAndCloneOne(
     .filter((name) => existsSync(join(captureDir, name, 'parsed', 'document.html')));
 
   for (const vp of availableViewports) {
-    await runStep('complete:assets', 'npx', [
-      'tsx', 'scripts/complete-assets.ts', captureDir, `--viewport=${vp}`,
-    ]);
+    const completeArgs = [captureDir, `--viewport=${vp}`];
+    await runStage('complete:assets', completeArgs, () => completeAssetsMain(completeArgs));
   }
 
-  const cloneCode = await runStep('clone', 'npx', [
-    'tsx', 'scripts/clone.ts', captureDir, `--viewport=${viewports}`,
-  ]);
+  const cloneCliArgs = [captureDir, `--viewport=${viewports}`];
+  const cloneCode = await runStage('clone', cloneCliArgs, () => cloneMain(cloneCliArgs));
   if (cloneCode !== 0) return null;
 
   const desktopClone = join(captureDir, 'desktop', 'clone');
