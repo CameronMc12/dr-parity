@@ -118,11 +118,31 @@ export async function buildReactMulti(
     cloneDirs: pages.map((p) => p.cloneDir),
   });
 
+  // Read every captured index.html up-front so we can compute the union
+  // of source-linked stylesheets across siblings before slicing each page.
+  const perPageRawHtml = pages.map((p) => ({
+    pathname: p.pathname,
+    cloneDir: resolve(p.cloneDir),
+    html: readFileSync(join(resolve(p.cloneDir), 'index.html'), 'utf8'),
+  }));
+
+  // Aggregate every page's source stylesheet hrefs into a single union.
+  // The source cascade can rely on stylesheets a given page never linked
+  // itself (page A's sheet carries @media blocks the source cascade only
+  // loaded on page B). Linking the union into every page matches that
+  // cascade pattern more closely than per-page-only injection.
+  const publicCssFiles = listPublicCssFiles(publicDir);
+  const aggregatedSourceHrefs = unionInOrder(
+    perPageRawHtml.map((p) => extractSourceStylesheetHrefs(p.html)),
+  );
+  const plannedLinks = planCssLinks({
+    sourceStylesheetHrefs: aggregatedSourceHrefs,
+    publicCssFiles,
+  });
+
   // Slice each page.
-  const slices: ReactPageSlice[] = pages.map((p) => {
-    const absClone = resolve(p.cloneDir);
-    const html = readFileSync(join(absClone, 'index.html'), 'utf8');
-    const $ = cheerio.load(html, null, true);
+  const slices: ReactPageSlice[] = perPageRawHtml.map((p) => {
+    const $ = cheerio.load(p.html, null, true);
     const head = extractHead($);
 
     // Strip body scripts BEFORE slicing so JSX emitter doesn't render
@@ -132,12 +152,9 @@ export async function buildReactMulti(
 
     const { components, pageImports } = sliceBody($);
 
-    // Per-page extra stylesheet hrefs: any /public/*.css the source <head>
-    // didn't already link. Source-linked stylesheets are already inside
-    // head.innerHTML verbatim.
-    const publicCssFiles = listPublicCssFiles(publicDir);
-    const sourceStylesheetHrefs = extractSourceStylesheetHrefs(html);
-    const plannedLinks = planCssLinks({ sourceStylesheetHrefs, publicCssFiles });
+    // Aggregated extra stylesheet hrefs: every captured stylesheet across
+    // sibling pages plus any orphan /public/*.css the source did not
+    // link, minus anything already in this page's head verbatim.
     const extraStylesheetHrefs = filterAlreadyLinked(head.innerHTML, plannedLinks);
 
     // Append the dr-parity responsive sheet href so the link is written
@@ -195,4 +212,24 @@ export async function buildReactMulti(
     assetCount: totalAssetCount,
     assetBytes: totalAssetBytes,
   };
+}
+
+/**
+ * Stable, order-preserving union of N string arrays. First occurrence wins
+ * for ordering; duplicates are dropped. Used to aggregate every captured
+ * page's source stylesheet hrefs into a single cascade so every emitted
+ * page links the same superset and the source cascade survives even when
+ * a given URL did not link a sibling's stylesheet.
+ */
+function unionInOrder(lists: readonly (readonly string[])[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const list of lists) {
+    for (const item of list) {
+      if (seen.has(item)) continue;
+      seen.add(item);
+      out.push(item);
+    }
+  }
+  return out;
 }
