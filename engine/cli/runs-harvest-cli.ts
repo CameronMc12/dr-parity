@@ -12,6 +12,7 @@ import {
   withGlobalFlags,
 } from "./global-flags.js";
 import { harvestRuns } from "./runs-harvest.js";
+import { renderTopFindingsTable } from "./harvest-top-table.js";
 
 export const runsHarvestCommand = defineCommand(
   withGlobalFlags({
@@ -55,12 +56,20 @@ export const runsHarvestCommand = defineCommand(
           "Compute findings without writing tickets or INDEX.md. Prints the summary to stdout only.",
         default: false,
       },
+      top: {
+        type: "string",
+        description:
+          "Number of findings to show in the top findings table after harvest. Default 10.",
+        valueHint: "n",
+        default: "10",
+      },
     },
     async run({ args }) {
       const flags = readGlobalFlags(args as Record<string, unknown>);
       applyGlobalFlagEnv(flags);
       const minRecurrence = parseInteger(args["min-recurrence"]);
       const dryRun = args["dry-run"] === true;
+      const topN = parseInteger(args.top) ?? 10;
 
       const result = await harvestRuns({
         repoRoot: process.cwd(),
@@ -89,6 +98,10 @@ export const runsHarvestCommand = defineCommand(
             `  tickets     : ${result.ticketsWritten.length}\n` +
             `  index       : ${result.indexPath}\n`,
         );
+        const table = renderTopFindingsTable(result.findings, topN);
+        if (table) {
+          process.stdout.write(`\n${table}\n`);
+        }
       }
     },
   }),
