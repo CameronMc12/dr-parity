@@ -182,7 +182,7 @@ function collectDeclarations(rule: Rule): CssDeclaration[] {
 }
 
 function findEnclosingMedia(rule: Rule): string | null {
-  let parent = rule.parent;
+  let parent: Rule['parent'] = rule.parent;
   while (parent) {
     if (parent.type === 'atrule') {
       const at = parent as AtRule;
@@ -190,7 +190,7 @@ function findEnclosingMedia(rule: Rule): string | null {
       if (at.name === 'supports') return `@supports ${at.params}`.trim();
       if (at.name === 'container') return `@container ${at.params}`.trim();
     }
-    parent = parent.parent;
+    parent = parent.parent as Rule['parent'];
   }
   return null;
 }
