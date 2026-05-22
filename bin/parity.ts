@@ -19,6 +19,7 @@
 import { defineCommand, runMain } from "citty";
 import { runRegressionTest } from "../engine/cli/regression/run-test.js";
 import { runParityClone } from "../engine/cli/run-clone-stage.js";
+import { runsHarvestCommand } from "../engine/cli/runs-harvest-cli.js";
 
 const PARITY_VERSION = "2.0.0-dev";
 
@@ -295,6 +296,7 @@ const runsCommand = defineCommand({
   },
   subCommands: {
     list: runsListCommand,
+    harvest: runsHarvestCommand,
   },
 });
 
