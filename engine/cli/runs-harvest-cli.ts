@@ -49,11 +49,19 @@ export const runsHarvestCommand = defineCommand(
         description: "Override the .runs/ input directory.",
         valueHint: "path",
       },
+      "dry-run": {
+        type: "boolean",
+        description:
+          "Compute findings without writing tickets or INDEX.md. Prints the summary to stdout only.",
+        default: false,
+      },
     },
     async run({ args }) {
       const flags = readGlobalFlags(args as Record<string, unknown>);
       applyGlobalFlagEnv(flags);
       const minRecurrence = parseInteger(args["min-recurrence"]);
+      const dryRun = args["dry-run"] === true;
+
       const result = await harvestRuns({
         repoRoot: process.cwd(),
         since: typeof args.since === "string" ? args.since : undefined,
@@ -67,11 +75,15 @@ export const runsHarvestCommand = defineCommand(
           typeof args["runs-dir"] === "string"
             ? String(args["runs-dir"])
             : undefined,
+        dryRun,
       });
 
       if (!flags.quiet) {
+        const heading = dryRun
+          ? "parity runs harvest finished (dry run, no files written):"
+          : "parity runs harvest finished:";
         process.stdout.write(
-          `parity runs harvest finished:\n` +
+          `${heading}\n` +
             `  runs scanned: ${result.runsScanned}\n` +
             `  findings    : ${result.findings.length}\n` +
             `  tickets     : ${result.ticketsWritten.length}\n` +

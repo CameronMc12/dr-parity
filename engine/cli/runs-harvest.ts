@@ -67,6 +67,13 @@ export interface HarvestOptions {
   since?: string;
   target?: string;
   minRecurrence?: number;
+  /**
+   * When true, the harvester walks runs and computes findings but does
+   * NOT write ticket markdown files or update INDEX.md. The returned
+   * HarvestResult still lists the would be ticket paths so callers can
+   * preview the plan. Replaces the previous --tickets-dir=<tmp> hack.
+   */
+  dryRun?: boolean;
 }
 
 export interface HarvestResult {
@@ -106,22 +113,29 @@ export async function harvestRuns(
   const runsDir = opts.runsDir ?? join(opts.repoRoot, RUNS_DIRNAME);
   const ticketsDir = opts.ticketsDir ?? join(opts.repoRoot, TICKETS_DIRNAME);
   const minRecurrence = opts.minRecurrence ?? DEFAULT_MIN_RECURRENCE;
+  const dryRun = opts.dryRun === true;
 
   const runs = await loadRuns(runsDir, opts);
 
   const findings = aggregateFindings(runs, { minRecurrence });
 
-  await fs.mkdir(ticketsDir, { recursive: true });
+  if (!dryRun) {
+    await fs.mkdir(ticketsDir, { recursive: true });
+  }
 
   const ticketsWritten: string[] = [];
   for (const finding of findings) {
     const ticketPath = join(ticketsDir, `${finding.slug}.md`);
-    await upsertTicket(ticketPath, finding);
+    if (!dryRun) {
+      await upsertTicket(ticketPath, finding);
+    }
     ticketsWritten.push(ticketPath);
   }
 
   const indexPath = join(ticketsDir, "INDEX.md");
-  await writeIndex(indexPath, findings, opts.repoRoot);
+  if (!dryRun) {
+    await writeIndex(indexPath, findings, opts.repoRoot);
+  }
 
   return {
     runsScanned: runs.length,
