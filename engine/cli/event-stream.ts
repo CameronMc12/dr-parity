@@ -27,7 +27,7 @@ export type PipelineEvent =
       type: "stage_end";
       stage: string;
       at: string;
-      status: "ok" | "warn" | "fail";
+      status: "ok" | "warn" | "partial" | "fail";
       durationMs: number;
       metrics?: Record<string, number | string>;
     }
@@ -79,7 +79,7 @@ export type PipelineEvent =
   | {
       type: "run_end";
       at: string;
-      status: "ok" | "warn" | "fail";
+      status: "ok" | "warn" | "partial" | "fail";
       durationMs: number;
     }
   | {

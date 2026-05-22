@@ -14,9 +14,14 @@ import { dirname, join } from "node:path";
 
 export const RUN_MANIFEST_SCHEMA_VERSION = 1;
 
-export type RunStatus = "running" | "ok" | "warn" | "fail";
+export type RunStatus = "running" | "ok" | "warn" | "partial" | "fail";
 
-export type StageStatus = "ok" | "warn" | "fail";
+/**
+ * `partial` (W5B.1 item 2) is additive: stage finished and produced output
+ * but some sub units failed. Readers that do not know about partial treat
+ * it as warn for display purposes; schemaVersion stays at 1.
+ */
+export type StageStatus = "ok" | "warn" | "partial" | "fail";
 
 export interface RunManifestStage {
   name: string;

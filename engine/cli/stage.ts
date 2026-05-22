@@ -13,7 +13,17 @@
  * Logger is stdout-only.
  */
 
-export type StageStatus = "ok" | "warn" | "fail";
+/**
+ * Status of a single Stage run.
+ *
+ * `partial` is additive (W5B.1 item 2): the stage completed and produced an
+ * output, but some sub units inside it failed (e.g. one viewport built while
+ * another did not). Downstream callers should treat partial as a soft signal
+ * stronger than warn and weaker than fail. The manifest writer accepts it as
+ * an additive value with no schemaVersion bump because readers tolerate
+ * unknown values per docs/V2.0/04-cli-and-logging-design.md (Part D).
+ */
+export type StageStatus = "ok" | "warn" | "partial" | "fail";
 
 export type MetricValue = number | string;
 
@@ -83,4 +93,29 @@ export function fail<O>(
   metrics?: Readonly<Record<string, MetricValue>>,
 ): StageResult<O> {
   return { status: "fail", output, errors, metrics };
+}
+
+/**
+ * Convenience helper for partial results. Some sub units of the stage
+ * completed; some did not. `partial_count` is recorded as a metric so the
+ * SUMMARY.md table can show the slash count without callers having to
+ * remember the key.
+ */
+export function partial<O>(
+  output: O,
+  partialCount: number,
+  totalCount: number,
+  warnings?: readonly string[],
+  metrics?: Readonly<Record<string, MetricValue>>,
+): StageResult<O> {
+  return {
+    status: "partial",
+    output,
+    warnings,
+    metrics: {
+      ...(metrics ?? {}),
+      partial_count: partialCount,
+      total_count: totalCount,
+    },
+  };
 }

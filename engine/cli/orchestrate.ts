@@ -172,8 +172,17 @@ export async function runPipeline(
       if (stopOnFail) {
         break;
       }
-    } else if (result.status === "warn" && pipelineStatus === "ok") {
-      pipelineStatus = "warn";
+    } else if (result.status === "partial") {
+      // partial is stronger than warn, weaker than fail. Promote unless we
+      // are already at fail. Pipeline keeps going so the next stage can run
+      // against the partial output the current stage produced.
+      if (pipelineStatus !== "fail") {
+        pipelineStatus = "partial";
+      }
+    } else if (result.status === "warn") {
+      if (pipelineStatus === "ok") {
+        pipelineStatus = "warn";
+      }
     }
 
     currentInput = result.output;

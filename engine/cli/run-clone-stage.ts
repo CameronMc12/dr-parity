@@ -45,7 +45,7 @@ export interface ParityCloneInput {
 export interface ParityCloneResult {
   runId: string;
   runDir: string;
-  status: "ok" | "warn" | "fail";
+  status: "ok" | "warn" | "partial" | "fail";
   summaryPath: string;
 }
 
@@ -186,11 +186,20 @@ export async function runParityClone(
 
   const durationMs = Date.now() - t0;
   const endedAt = nowIso();
-  const status: "ok" | "warn" | "fail" =
+  // partial trumps warn: any phase reporting partial promotes the rollup
+  // unless something failed outright. Cast to widen so this code keeps
+  // working when scripts/run-clone.ts adopts partial in its own phase
+  // status type (W5B.2 territory).
+  const phaseStatuses = result.phases.map(
+    (p) => p.status as "ok" | "warn" | "partial" | "fail",
+  );
+  const status: "ok" | "warn" | "partial" | "fail" =
     result.exitCode === 0
-      ? result.phases.some((p) => p.status === "warn")
-        ? "warn"
-        : "ok"
+      ? phaseStatuses.some((s) => s === "partial")
+        ? "partial"
+        : phaseStatuses.some((s) => s === "warn")
+          ? "warn"
+          : "ok"
       : "fail";
 
   // Attribute every phase the in-process pipeline ran as its own manifest
