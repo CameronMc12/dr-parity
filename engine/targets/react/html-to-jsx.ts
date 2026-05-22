@@ -27,6 +27,7 @@
  */
 
 import * as cheerioModule from 'cheerio';
+import type { CheerioAPI } from 'cheerio';
 const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 import type { AnyNode, Element } from 'domhandler';
 
@@ -135,7 +136,6 @@ const ATTR_MAP: Record<string, string> = {
   itemprop: 'itemProp',
   itemtype: 'itemType',
   accesskey: 'accessKey',
-  allowfullscreen: 'allowFullScreen',
   // SVG (subset of the common ones)
   'stroke-width': 'strokeWidth',
   'stroke-linecap': 'strokeLinecap',
@@ -209,7 +209,6 @@ export function htmlToJsx(html: string, options: HtmlToJsxOptions = {}): string 
   // but with `decodeEntities: false` so attribute values stay raw.
   const $ = cheerio.load(`<root>${trimmed}</root>`, {
     xml: false,
-    // @ts-expect-error - cheerio's types are flaky here; the option is valid.
     decodeEntities: false,
   });
 
@@ -227,7 +226,7 @@ export function htmlToJsx(html: string, options: HtmlToJsxOptions = {}): string 
 
 function renderNode(
   node: AnyNode,
-  $: cheerio.CheerioAPI,
+  $: CheerioAPI,
   options: HtmlToJsxOptions,
   depth: number,
 ): string {
@@ -272,7 +271,7 @@ function renderText(text: string): string {
 
 function renderElement(
   el: Element,
-  $: cheerio.CheerioAPI,
+  $: CheerioAPI,
   options: HtmlToJsxOptions,
   depth: number,
 ): string {
