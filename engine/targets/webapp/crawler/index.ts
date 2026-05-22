@@ -7,3 +7,6 @@ export * from './signature-scan';
 export * from './state-capture';
 export * from './recorders';
 export * from './crawler';
+export * from './nav-discovery';
+export * from './route-budget';
+export * from './route-recapture';
