@@ -114,11 +114,11 @@ browser never requested. It does not enumerate files on disk in a clone
 directory, which is what `copyAssetsToPublic` does. Different layer,
 different job.
 
-## Issue 3: Per-target threshold (already wired)
+## Issue 3: Per-target threshold defeated by CLI default
 
 The brief said the W6 `parity-check` stage hardcodes `0.02` for react
-and asked to wire it to the per-target default. The code at
-`engine/cli/run-clone-stage.ts:392` already does the right thing:
+and asked to wire it to the per-target default. The threshold lookup at
+`engine/cli/run-clone-stage.ts:392` looked correct on first read:
 
 ```ts
 const diffThreshold =
@@ -128,13 +128,39 @@ const diffThreshold =
 ```
 
 With `DEFAULT_PARITY_THRESHOLDS = { astro: 0.02, react: 0.2, webapp: 0.2 }`
-in `engine/cli/emit-and-verify.ts:35`. This was added in commit `0c2ec19`
-("feat(cli): wire framework emit and parity check into parity clone"),
-before W7 and W7B.
+in `engine/cli/emit-and-verify.ts:35` (added in `0c2ec19`).
 
-The `diffThreshold=0.02` reading the brief reported must have come from
-a prior run on the astro target (where 0.02 is correct) or from a
-pre-0c2ec19 capture. No code change needed.
+### Actual root cause
+
+The first re-run of apple.com react with the body-path fix landed at
+`diffThreshold: 0.02` in the manifest. Tracing showed the bug was one
+level up at `bin/parity.ts:98`:
+
+```ts
+"parity-threshold": {
+  type: "string",
+  description: "Pixel diff threshold for parity verification.",
+  default: "0.02",   // ← CLI default unconditionally applied
+  valueHint: "ratio",
+},
+```
+
+The arg parser fills in `"0.02"` whenever the user omits the flag, the
+bin layer converts it to a number, validates it, and passes it through
+as `input.parityThreshold = 0.02`. The "explicit override wins" branch
+of the run-clone-stage ternary therefore fires for every clone, and the
+per-target default never gets a chance.
+
+### Fix
+
+Remove the CLI default. When `--parity-threshold` is omitted,
+`args["parity-threshold"]` is undefined, `parityThreshold` stays
+undefined down the call chain, and `DEFAULT_PARITY_THRESHOLDS[target]`
+wins. Astro keeps its 0.02 floor by virtue of the per-target table, not
+the CLI default. Explicit overrides via the flag still work as before.
+
+This is the classic "default is too clever" CLI bug. Per-target
+behaviour should never be expressed at the surface layer.
 
 ## Classic-script rewrite policy
 
@@ -157,8 +183,34 @@ Absolute URLs (`http(s)://`, `/`, `data:`, `blob:`, hash links,
 
 ## apple.com react re-run
 
-Background run from `parity clone https://www.apple.com react`
-into `/tmp/w8-run/`. Results filled in once the run completes.
+First re-run after the body-path fix only (commit `f5d4b7e`):
+
+| Field | Value |
+|---|---|
+| Run ID | `2026-05-22T12-08-09-466Z-3c34` |
+| Run dir | `/Users/cameronmcallister/Github/dr-parity/.runs/2026-05-22T12-08-09-466Z-3c34` |
+| Capture dir | `/tmp/w8-run/www-apple/2026-05-22T12-08-09-499Z/captures` |
+| Sites dir | `/tmp/w8-run/www-apple/2026-05-22T12-08-09-499Z/sites/react` |
+| emit-target | OK (127ms, 6 components, 1 page, 328 assets, 32.1 MB) |
+| npm install | OK |
+| npm run build | OK (Vite resolved every script src cleanly) |
+| Pixel score | 99.95 percent |
+| diffThreshold | 0.02 (revealed the CLI-default bug above) |
+| mismatchedPixels | 3874 / 8044800 |
+| Total duration | 8m 42s |
+
+Apple.com is genuinely close to byte-identical between the captured
+clone and the React rebuild because the React emit preserves the
+captured CSS / JS / assets verbatim under `/public`. The 99.95 percent
+score reflects that almost every pixel matches. The brief expected a
+"15 to 25 percent" diff and an exploratory pass against the 0.2
+threshold; the actual measurement is well under the 0.02 floor.
+
+The CLI default fix (`20df709`) ensures react clones now run with the
+correct 0.2 threshold even though apple.com would happily pass at 0.02.
+Sites with more JS-driven post-load DOM (carousels, lazy hero swaps,
+conditional rendering) will produce real react vs clone deltas and need
+the 0.2 headroom.
 
 ### Before vs after
 
@@ -171,8 +223,8 @@ into `/tmp/w8-run/`. Results filled in once the run completes.
 | clone | OK | OK |
 | emit-target | OK | OK |
 | parity-check (npm install) | OK | OK |
-| parity-check (npm run build) | fail (Could not resolve `./v/home/...`) | OK |
-| parity-check (pixel diff) | not reached | runs at threshold 0.2 |
+| parity-check (npm run build) | fail (Could not resolve `./v/home/...`) | OK (99.95 percent pixel match) |
+| parity-check (pixel diff threshold) | n/a (build failed before pixel diff) | 0.2 for react via per-target default (was 0.02 due to CLI default bug) |
 
 ## Verification
 
@@ -185,9 +237,12 @@ into `/tmp/w8-run/`. Results filled in once the run completes.
 
 ## Anomalies and surprises
 
-1. The brief identified three issues. Two were already correct on disk
-   and only one required a code change. Worth checking actual code state
-   before trusting handoff briefs.
+1. The brief identified three issues. The first surface read suggested
+   only one needed a code change, but the first re-run revealed the
+   threshold bug was real and lived one level up at the CLI default,
+   not in the run-clone-stage lookup the brief pointed at. Worth
+   following the data all the way back to the surface, even when an
+   inner layer looks correct.
 2. The fatal Vite failure was a `type="module"` script, not a classic
    script. The brief's wording suggested classic scripts were the
    problem case. The reality is Vite refuses to bundle any relative `./`
@@ -196,5 +251,12 @@ into `/tmp/w8-run/`. Results filled in once the run completes.
 3. `sliceBody` already calls `normaliseElementPaths` on the body. The
    bug was strictly an ordering issue: hoist runs before slice, so the
    slice-time normalisation never reaches the already-hoisted scripts.
-   This is the kind of bug a single integration test on the react emit
-   path would catch; worth queuing as W9 follow-up.
+   A single integration test on the react emit path (parse-clone fixture
+   plus expected hoisted `<script>` srcs) would catch this whole class.
+   Worth queuing as W9 follow-up.
+4. apple.com clones to 99.95 percent pixel parity in react, well inside
+   the astro-tier 0.02 threshold. The W5B.2 measurement that informed
+   the 0.2 react floor (18.62 percent) must have included a regression
+   that no longer applies, or measured a different page state. Worth
+   re-baselining the per-target thresholds against the current emit
+   pipeline before the next session expands the corpus.
