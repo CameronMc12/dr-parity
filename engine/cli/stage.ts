@@ -36,7 +36,15 @@ export interface Logger {
   warn(msg: string, meta?: LogMeta): void;
   error(msg: string, meta?: LogMeta): void;
   metric(name: string, value: MetricValue, meta?: LogMeta): void;
-  event(name: string, fields?: LogMeta): void;
+  /**
+   * Strongly typed pipeline event emit. The PipelineEvent union (locked in
+   * engine/cli/event-stream.ts) enforces every required field at compile
+   * time so JSONL writers cannot silently drop them.
+   *
+   * Replaces the previous free form `event(name, fields)` method (W5B.1
+   * item 3). Call sites construct the discriminated union member directly.
+   */
+  emit(event: import("./event-stream.js").PipelineEvent): void;
 }
 
 /** Optional async finaliser registered by the Stage author for cleanup. */

@@ -8,25 +8,18 @@
  * forwarding each stage's `output` as the next stage's `input`. The first
  * stage receives `initialInput`.
  *
- * The orchestrator emits structured lifecycle events through `ctx.logger`
- * (`stage_start`, `stage_end`, `pipeline_start`, `pipeline_end`). Phase 5
- * wires the Logger to write `.runs/<id>/pipeline.jsonl`; in this scaffold
- * events still flow through `Logger.event` only.
+ * The orchestrator emits structured lifecycle events through the typed
+ * `ctx.logger.emit(event)` API (W5B.1 item 3). Every event is a member of
+ * the locked PipelineEvent union, so the JSONL writer never drops required
+ * fields. pipeline_start and pipeline_end are emitted as typed `log`
+ * entries because the union has no dedicated members for them.
  *
  * Disk side effects deliberately omitted from this file. The Logger is the
  * one and only seam where logging output is materialised.
  */
 
-import type { FullRunContext } from "./context.js";
 import { nowIso } from "./event-stream.js";
 import type { RunContext, Stage, StageResult, StageStatus } from "./stage.js";
-
-function hasEmit(ctx: RunContext): ctx is FullRunContext {
-  return (
-    typeof (ctx as Partial<FullRunContext>).emit === "function" &&
-    typeof (ctx as Partial<FullRunContext>).finalise === "function"
-  );
-}
 
 /** A stage erased to `unknown` for storage inside a list. */
 export type AnyStage = Stage<unknown, unknown>;
@@ -75,10 +68,15 @@ export async function runPipeline(
   const stopOnFail = options.stopOnFail ?? true;
   const records: StageRunRecord[] = [];
 
-  ctx.logger.event("pipeline_start", {
-    pipeline: pipelineName,
-    runId: ctx.runId,
-    stages: stages.map((s) => s.name),
+  // pipeline_start does not have a dedicated PipelineEvent member; record it
+  // as a typed log entry so the JSONL still captures the lifecycle.
+  ctx.logger.emit({
+    type: "log",
+    stage: "run",
+    at: nowIso(),
+    level: "info",
+    message: `pipeline_start ${pipelineName}`,
+    meta: { pipeline: pipelineName, runId: ctx.runId, stages: stages.map((s) => s.name) },
   });
 
   const pipelineStarted = Date.now();
@@ -87,14 +85,11 @@ export async function runPipeline(
 
   for (const stage of stages) {
     const stageStarted = Date.now();
-    ctx.logger.event("stage_start", {
-      pipeline: pipelineName,
+    ctx.logger.emit({
+      type: "stage_start",
       stage: stage.name,
-      runId: ctx.runId,
+      at: nowIso(),
     });
-    if (hasEmit(ctx)) {
-      ctx.emit({ type: "stage_start", stage: stage.name, at: nowIso() });
-    }
 
     let result: StageResult<unknown>;
     try {
@@ -116,21 +111,13 @@ export async function runPipeline(
       };
       records.push(record);
       pipelineStatus = "fail";
-      ctx.logger.event("stage_end", {
-        pipeline: pipelineName,
+      ctx.logger.emit({
+        type: "stage_end",
         stage: stage.name,
+        at: nowIso(),
         status: "fail",
         durationMs: record.durationMs,
       });
-      if (hasEmit(ctx)) {
-        ctx.emit({
-          type: "stage_end",
-          stage: stage.name,
-          at: nowIso(),
-          status: "fail",
-          durationMs: record.durationMs,
-        });
-      }
       if (stopOnFail) {
         break;
       }
@@ -149,23 +136,14 @@ export async function runPipeline(
     };
     records.push(record);
 
-    ctx.logger.event("stage_end", {
-      pipeline: pipelineName,
+    ctx.logger.emit({
+      type: "stage_end",
       stage: stage.name,
+      at: nowIso(),
       status: result.status,
       durationMs,
-      metrics: result.metrics,
+      metrics: result.metrics as Record<string, number | string> | undefined,
     });
-    if (hasEmit(ctx)) {
-      ctx.emit({
-        type: "stage_end",
-        stage: stage.name,
-        at: nowIso(),
-        status: result.status,
-        durationMs,
-        metrics: result.metrics as Record<string, number | string> | undefined,
-      });
-    }
 
     if (result.status === "fail") {
       pipelineStatus = "fail";
@@ -189,11 +167,19 @@ export async function runPipeline(
   }
 
   const durationMs = Date.now() - pipelineStarted;
-  ctx.logger.event("pipeline_end", {
-    pipeline: pipelineName,
-    runId: ctx.runId,
-    status: pipelineStatus,
-    durationMs,
+  // pipeline_end has no dedicated PipelineEvent member; emit as a log entry.
+  ctx.logger.emit({
+    type: "log",
+    stage: "run",
+    at: nowIso(),
+    level: "info",
+    message: `pipeline_end ${pipelineName}`,
+    meta: {
+      pipeline: pipelineName,
+      runId: ctx.runId,
+      status: pipelineStatus,
+      durationMs,
+    },
   });
 
   return {

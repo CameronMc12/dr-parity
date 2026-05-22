@@ -208,12 +208,17 @@ export async function createRunContext(
         meta: meta ? (meta as Record<string, unknown>) : undefined,
       });
     },
-    event(name, fields) {
-      if (quiet) return;
-      const line = json
-        ? fmtJson({ runId, kind: "event", stage: "run", name, fields })
-        : `[${runId}] event ${name}${fmtMeta(fields)}\n`;
-      writeStdout(line, "info");
+    emit(event) {
+      // The strongly typed entry point. Writes both stdout (when not quiet)
+      // and the JSONL stream, so callers cannot accidentally bypass the
+      // durable record by hand crafting partial fields.
+      if (!quiet) {
+        const line = json
+          ? fmtJson({ runId, ...event })
+          : `[${runId}] event ${event.type} ${JSON.stringify(event)}\n`;
+        writeStdout(line, "info");
+      }
+      emit(event);
     },
   };
 
@@ -282,15 +287,18 @@ export async function createRunContext(
         meta: meta ? (meta as Record<string, unknown>) : undefined,
       });
     },
-    event(name, fields) {
-      const line = `event ${name}${fmtMeta(fields)}`;
+    emit(event) {
+      // Strongly typed pipeline event. Writes stdout (when not quiet),
+      // per stage log file, and the JSONL stream.
+      const line = `event ${event.type} ${JSON.stringify(event)}`;
       if (!quiet) {
         const stdoutLine = json
-          ? fmtJson({ runId, kind: "event", stage, name, fields })
+          ? fmtJson({ runId, ...event })
           : `[${runId}] ${stage} ${line}\n`;
         writeStdout(stdoutLine, "info");
       }
       writeStageLog(stage, line);
+      emit(event);
     },
   });
 
