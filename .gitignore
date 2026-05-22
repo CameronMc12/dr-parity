@@ -25,6 +25,10 @@ docs/research/enerblock/
 docs/research/example-test/
 analysis/
 
+# Dr Parity unified run records. SUMMARY.md and manifest.json are the
+# durable artefacts; bulky pipeline.jsonl + stage-logs are not committed.
+.runs/
+
 # Local Claude tooling (regenerable via playwright-cli install --skills)
 .claude/skills/playwright-cli/
 .claude/commands/
