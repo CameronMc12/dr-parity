@@ -53,77 +53,115 @@ There is no skill that bypasses the CLI. There is no doc that lies about the sta
 
 Audit 03 documented that the React target had "one successful clone" that nobody could replicate because the success was a sampling artefact: five latent failure modes happened not to fire. The astro path is now stable, but every engine change risks breaking it the same way. The corpus prevents that. Each engine change either fixes a global bug (old behaviour was wrong everywhere) or is additive behind a capability check. Working clones must keep working.
 
-### The regression corpus
+### The regression corpus (V0, shipped in Phase 3d / W2C)
 
-Location: `tests/fixtures/sites/<site-slug>/`.
+Location: `tests/fixtures/sites/<slug>/` for gating fixtures and `tests/fixtures/known-bad/<slug>/` for triage targets that the harvest loop reads.
 
-Per-fixture layout:
+Per-fixture layout (V0, shipped):
 
 ```
-tests/fixtures/sites/<site-slug>/
-  fixture.json              # source URL, target, viewports, locked parity score, promoted-at git sha
-  captures/                 # frozen captures (HAR, trace, screenshots) so the test never hits the network
-    <viewport>/
-      screenshot.png
-      network.har
-      trace.zip
-  parsed/                   # frozen parsed/styles, parsed/scripts, parsed/assets
-  baseline/
-    sites/<target>/         # the golden emitted project at promotion time
-    SUMMARY.md              # promotion record (date, parity score, git sha)
-    expected-summary.json   # machine-readable per-viewport scores and issue counts
+tests/fixtures/sites/<slug>/
+  fixture.json          # metadata, locked threshold, comparison mode
+  expected/             # the locked output we compare against
+    clone-manifest.json # locked structural signature
+    index.html          # (optional) HTML reference, first 200 lines for large clones
+  capture-ref/
+    source.txt          # path on disk to the live capture, relative to repo root
+  README.md             # what this fixture proves, what a regression looks like
 ```
 
-`fixture.json` schema:
+V1 (post-Phase 5) will extend `expected/` with frozen captures, parsed assets, and per-viewport baselines as the rebuild path lands. V0 ships the structural signature because that gives a stable gate without a full rebuild on every PR.
+
+`fixture.json` schema (V0):
 
 ```json
 {
-  "name": "enerblock",
-  "url": "https://enerblock.com",
+  "slug": "example-com",
   "target": "astro",
-  "viewports": ["mobile", "tablet", "desktop", "wide"],
-  "lockedScore": { "mobile": 0.997, "tablet": 0.998, "desktop": 0.999, "wide": 0.998 },
-  "tolerance": 0.005,
-  "promotedAt": "2026-05-30T12:00:00Z",
-  "promotedFromRunId": "2026-05-30T...-enerblock-com-...",
-  "gitSha": "<sha>",
-  "notes": "First locked astro fixture."
+  "url": "https://example.com/",
+  "captured_at": "2026-05-14T12:54:35.266Z",
+  "parity_threshold": 0.99,
+  "comparison_mode": "manifest-shape",
+  "notes": "Smallest deterministic astro baseline."
 }
 ```
 
-### `parity test` command
+Fields:
 
-- Walks `tests/fixtures/sites/*/`.
-- For each fixture: feeds the frozen captures into the current engine, runs build + verify against the baseline, compares per-viewport parity to `lockedScore` with `tolerance`.
-- Pass if every score is within tolerance. Fail if any drop. Warn if any go up materially (potential improvement, surface it).
-- Reports via `.runs/<run-id>/SUMMARY.md` like any other run, with a `Fixture results` section.
-- Exit code 0 pass, 1 regression, 2 missing fixture.
+- `slug`: filesystem safe identifier, matches the directory name.
+- `target`: astro, react, or webapp.
+- `url`: origin URL captured.
+- `captured_at`: ISO timestamp of the source capture.
+- `parity_threshold`: minimum acceptable score in [0, 1]. Locked at the score the fixture achieved when promoted.
+- `comparison_mode`: V0 ships `manifest-shape` only. `bytes`, `pixel-diff`, and `both` land in V1.
+- `notes`: free-form context.
+
+### `parity test` command (shipped in Phase 3d / W2C)
+
+- Walks `tests/fixtures/sites/*/` and reads every `fixture.json`.
+- For each fixture, runs the configured comparison against the locked baseline. V0 supports `manifest-shape`: compares the clone manifest at `capture-ref/source.txt` against `expected/clone-manifest.json`. Pass when styles, scripts, assets, unresolvedExternal counts match exactly and htmlBytes is within 5 percent of the locked value.
+- Output: one line per fixture (PASS, FAIL, or SKIP) plus a summary line.
+- Exit code 0 pass, 1 regression. (Exit code 2 for missing fixture lands when V1 wires the rebuild path; today an unreadable capture-ref counts as a FAIL.)
+- Implementation: `engine/cli/regression/{fixture-schema,manifest-shape,run-test}.ts`. The runner exposes a `Stage<RegressionTestInput, RegressionReport>` so it can plug into the orchestrator in Phase 5.
+
+Invocation:
+
+```
+npx parity test
+```
+
+Sample output on `prototype-mode` HEAD after W2C:
+
+```
+PASS enerblock-net  target=astro score=100.0% threshold=99.0% manifest-shape match (5/5)
+PASS example-com    target=astro score=100.0% threshold=99.0% manifest-shape match (5/5)
+
+parity test summary: 2 passed, 0 failed, 0 skipped, 2 total
+```
 
 Wired into:
 
-- Pre-merge: every PR runs `parity test` in CI.
-- Local: developers run `parity test` before pushing.
-- Engine changes: agents run `parity test` after the change, paste results into the PR.
+- Pre-merge: every PR runs `parity test` in CI (intent documented below; CI integration lands in Phase 5 / 6).
+- Local: developers run `npx parity test` before pushing.
+- Engine changes: agents run `npx parity test` after the change, paste results into the PR.
+
+### Known-bad catalogue (shipped in Phase 3d / W2C)
+
+`tests/fixtures/known-bad/<slug>/` holds fixtures that document representative bug shapes. They are NOT run by `parity test`. The harvest loop (Phase 6) reads them to seed tickets, and contributors looking for failure baselines read them to pick triage targets.
+
+V0 ships one known-bad fixture: `apple-com-react` (current desktop pixel diff 30.56 percent, source `docs/research/captures/www.apple.com/react-site-urls/parity-report.json`).
+
+A fixture moves from `known-bad/` to `sites/` once a fix lands and the clone reproduces above the parity threshold.
 
 ### Promotion rule
 
-A clone is eligible for promotion when its `qa-verify` outcome shows every targeted viewport at >=99% parity. Promotion command (deferred, V2.1 polish): `parity runs promote <run-id> --as=<slug>`. Until that exists, promotion is manual:
+A clone is eligible for promotion when its `qa-verify` outcome shows every targeted viewport at >=99 percent parity. Promotion command (deferred, V2.1 polish): `parity runs promote <run-id> --as=<slug>`. Until that exists, promotion is manual:
 
-1. Copy the `captures/`, `parsed/`, and `sites/<target>/` directories from the run output into `tests/fixtures/sites/<slug>/`.
-2. Write `fixture.json` with the achieved scores as `lockedScore`.
-3. Commit. Future `parity test` runs gate against those scores.
+1. Pick a slug. Lowercase, hyphenated, no dots. Example: `enerblock-net`.
+2. Create `tests/fixtures/sites/<slug>/expected/` and copy the load-bearing files from the run output. V0 picks `clone-manifest.json` plus the first 200 lines of `index.html`. V1 will widen this to frozen captures, parsed assets, and per-viewport baselines.
+3. Write `capture-ref/source.txt` pointing at the live capture directory (relative to repo root).
+4. Write `fixture.json` with the achieved score as `parity_threshold`.
+5. Write `README.md` describing what the fixture proves and what a regression in this fixture would look like.
+6. Commit. Future `parity test` runs gate against the new fixture.
+
+V0 fixtures (locked at promotion):
+
+| Slug | Target | Threshold | Notes |
+|---|---|---|---|
+| example-com | astro | 0.99 | Deterministic floor. Single page, zero external assets. |
+| enerblock-net | astro | 0.99 | Real-world astro success. 161 assets, 14 scripts, 1 style. |
 
 ### Triaging harvested fixes against the corpus
 
 Every harvested ticket (Phase 7 loop) includes `affectedRuns` in its front matter. When an engine change lands to fix a ticket, the developer:
 
-1. Runs `parity test` to confirm no fixture regressed.
+1. Runs `npx parity test` to confirm no fixture regressed.
 2. Re-runs `parity clone` against one of the affected runs' URLs and verifies the ticket's failure no longer reproduces.
 3. Closes the ticket with `resolvedIn: <git-sha>` in its front matter.
 
-### CI hook
+### CI hook (planned, not yet wired)
 
-`.github/workflows/ci.yml` runs (after Phase 1 cleanup):
+`.github/workflows/ci.yml` will run (Phase 5 / 6):
 
 ```yaml
 - run: npm install
@@ -133,7 +171,7 @@ Every harvested ticket (Phase 7 loop) includes `affectedRuns` in its front matte
 - run: npx parity test
 ```
 
-No more `npm run lint` or `npm run build` (neither exists). Audit 02 §3 catalogued this as broken today.
+No more `npm run lint` or `npm run build` (neither exists). Audit 02 §3 catalogued this as broken today. CI wiring is deferred until the in-process pipeline lands so the same command surface runs in CI as on the laptop.
 
 ---
 
