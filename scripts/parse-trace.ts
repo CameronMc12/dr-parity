@@ -180,21 +180,21 @@ async function processViewport(viewportDir: string): Promise<{ name: string; sna
   return { name, snapshots: snapshotCount, errors };
 }
 
-async function main(): Promise<void> {
-  const arg = process.argv[2];
+export async function parseTraceMain(argv: string[]): Promise<number> {
+  const arg = argv[0];
   if (!arg) {
     console.error('Usage: tsx scripts/parse-trace.ts <captures-dir>');
-    process.exit(1);
+    return 1;
   }
   if (!existsSync(arg) || !statSync(arg).isDirectory()) {
     console.error(`Not a directory: ${arg}`);
-    process.exit(1);
+    return 1;
   }
 
   const dirs = findViewportDirs(arg);
   if (dirs.length === 0) {
     console.error(`No <viewport>/trace.zip found under ${arg}`);
-    process.exit(1);
+    return 1;
   }
 
   console.log(`Parsing ${dirs.length} trace archive(s)...`);
@@ -202,9 +202,15 @@ async function main(): Promise<void> {
     const res = await processViewport(d);
     console.log(`  [${res.errors ? 'WARN' : 'OK '}] ${res.name.padEnd(8)} snapshots=${res.snapshots} errors=${res.errors}`);
   }
+  return 0;
 }
 
-main().catch((err) => {
-  console.error('[parse-trace] fatal:', err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+const isDirect = process.argv[1] && process.argv[1].endsWith('parse-trace.ts');
+if (isDirect) {
+  parseTraceMain(process.argv.slice(2))
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error('[parse-trace] fatal:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    });
+}

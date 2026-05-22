@@ -10,7 +10,6 @@
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
 import {
   CANONICAL_ROOT,
   canonicalTimestamp,
@@ -18,6 +17,11 @@ import {
   cloneSubdir,
   defaultTargetFromHost,
 } from '../engine/cli/canonical-paths';
+import { runCapture } from './capture';
+import { parseHarMain } from './parse-har';
+import { parseTraceMain } from './parse-trace';
+import { completeAssetsMain } from './complete-assets';
+import { cloneMain } from './clone';
 
 const LEGACY_CAPTURE_ROOT = 'docs/research/captures';
 
@@ -131,16 +135,23 @@ function resolveRunLayout(args: CliArgs, host: string): RunLayout {
   };
 }
 
-function runStep(label: string, cmd: string, cmdArgs: string[]): Promise<number> {
-  return new Promise((resolveStep) => {
-    console.log(`\n[${label}] ${cmd} ${cmdArgs.join(' ')}`);
-    const child = spawn(cmd, cmdArgs, { stdio: 'inherit' });
-    child.on('exit', (code) => resolveStep(code ?? 0));
-    child.on('error', (err) => {
-      console.error(`[${label}] spawn error: ${err.message}`);
-      resolveStep(1);
-    });
-  });
+/**
+ * Run an in-process pipeline stage. Logs the label and the args so the
+ * unified .runs/ stream sees one continuous event stream (no subprocess
+ * stdout/stderr to wrangle).
+ */
+async function runStage(
+  label: string,
+  argsForLog: readonly string[],
+  fn: () => Promise<number> | number,
+): Promise<number> {
+  console.log(`\n[${label}] ${argsForLog.join(' ')}`);
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(`[${label}] error: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
 }
 
 function hostnameOf(url: string): string {
@@ -205,21 +216,24 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
 
   // Capture writes its viewports directly into `captureDir`. The capture
   // script's `--out` is the exact directory under canonical layout.
-  const captureArgs: string[] = ['scripts/capture.ts', args.url, `--out=${captureDir}`];
+  const captureCliArgs: string[] = [args.url, `--out=${captureDir}`];
   if (args.legacyOutput) {
     // Under legacy layout, capture's --out is the parent root; restore that
     // behaviour by passing the legacy parent and letting capture derive
     // host/stamp itself.
-    captureArgs[2] = `--out=${resolve(args.out ?? LEGACY_CAPTURE_ROOT)}`;
-    captureArgs.push('--legacy-output');
+    captureCliArgs[1] = `--out=${resolve(args.out ?? LEGACY_CAPTURE_ROOT)}`;
+    captureCliArgs.push('--legacy-output');
   }
-  if (args.viewports) captureArgs.push(`--viewport=${args.viewports}`);
-  if (!args.tour) captureArgs.push('--no-tour');
+  if (args.viewports) captureCliArgs.push(`--viewport=${args.viewports}`);
+  if (!args.tour) captureCliArgs.push('--no-tour');
 
   const phases: { label: string; ms: number }[] = [];
 
   const t0 = Date.now();
-  const captureCode = await runStep('capture', 'npx', ['tsx', ...captureArgs]);
+  const captureCode = await runStage('capture', captureCliArgs, async () => {
+    const result = await runCapture(captureCliArgs);
+    return result.viewports.length > 0 && result.viewports.every((r) => !r.ok) ? 1 : 0;
+  });
   phases.push({ label: 'capture', ms: Date.now() - t0 });
   if (captureCode !== 0) {
     console.error(`capture failed (exit ${captureCode})`);
@@ -242,16 +256,20 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   console.log(`Run root  : ${layout.runRoot}`);
 
   const t1 = Date.now();
-  const harCode = await runStep('parse:har', 'npx', ['tsx', 'scripts/parse-har.ts', resolvedCaptureDir]);
+  const harCode = await runStage(
+    'parse:har',
+    [resolvedCaptureDir],
+    () => parseHarMain([resolvedCaptureDir]),
+  );
   phases.push({ label: 'parse:har', ms: Date.now() - t1 });
   if (harCode !== 0) return harCode;
 
   const t2 = Date.now();
-  const traceCode = await runStep('parse:trace', 'npx', [
-    'tsx',
-    'scripts/parse-trace.ts',
-    resolvedCaptureDir,
-  ]);
+  const traceCode = await runStage(
+    'parse:trace',
+    [resolvedCaptureDir],
+    () => parseTraceMain([resolvedCaptureDir]),
+  );
   phases.push({ label: 'parse:trace', ms: Date.now() - t2 });
   if (traceCode !== 0) return traceCode;
 
@@ -264,22 +282,22 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
 
   const t2b = Date.now();
   for (const vp of viewportList) {
-    const completeCode = await runStep('complete:assets', 'npx', [
-      'tsx',
-      'scripts/complete-assets.ts',
-      resolvedCaptureDir,
-      `--viewport=${vp}`,
-    ]);
+    const completeCliArgs = [resolvedCaptureDir, `--viewport=${vp}`];
+    const completeCode = await runStage(
+      'complete:assets',
+      completeCliArgs,
+      () => completeAssetsMain(completeCliArgs),
+    );
     if (completeCode !== 0) {
       console.warn(`complete:assets exited non-zero for ${vp} (continuing)`);
     }
   }
   phases.push({ label: 'complete:assets', ms: Date.now() - t2b });
 
-  const cloneArgs = ['tsx', 'scripts/clone.ts', resolvedCaptureDir];
-  if (args.viewports) cloneArgs.push(`--viewport=${args.viewports}`);
+  const cloneCliArgs = [resolvedCaptureDir];
+  if (args.viewports) cloneCliArgs.push(`--viewport=${args.viewports}`);
   const t3 = Date.now();
-  const cloneCode = await runStep('clone', 'npx', cloneArgs);
+  const cloneCode = await runStage('clone', cloneCliArgs, () => cloneMain(cloneCliArgs));
   phases.push({ label: 'clone', ms: Date.now() - t3 });
   if (cloneCode !== 0) return cloneCode;
 

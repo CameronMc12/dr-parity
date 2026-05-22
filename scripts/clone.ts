@@ -221,10 +221,10 @@ function summary(rows: ViewportCloneResult[]): void {
   }
 }
 
-function main(): number {
+export function cloneMain(argv: string[]): number {
   let args: CliArgs;
   try {
-    args = parseArgs(process.argv.slice(2));
+    args = parseArgs(argv);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     console.error(HELP_TEXT);
@@ -280,4 +280,7 @@ function main(): number {
   return allFailed ? 1 : 0;
 }
 
-process.exit(main());
+const isDirect = process.argv[1] && process.argv[1].endsWith('clone.ts');
+if (isDirect) {
+  process.exit(cloneMain(process.argv.slice(2)));
+}

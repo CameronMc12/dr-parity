@@ -242,21 +242,21 @@ function parseNetworkFile(source: NetworkSource, parsedDir: string, viewportName
   return manifest;
 }
 
-function main(): void {
-  const arg = process.argv[2];
+export function parseHarMain(argv: string[]): number {
+  const arg = argv[0];
   if (!arg) {
     console.error('Usage: tsx scripts/parse-har.ts <captures-dir>');
-    process.exit(1);
+    return 1;
   }
   if (!existsSync(arg) || !statSync(arg).isDirectory()) {
     console.error(`Not a directory: ${arg}`);
-    process.exit(1);
+    return 1;
   }
 
   const found = findNetworkDirs(arg);
   if (found.length === 0) {
     console.error(`No <viewport>/network.har or network.json found under ${arg}`);
-    process.exit(1);
+    return 1;
   }
 
   console.log(`Parsing ${found.length} network file(s)...`);
@@ -273,6 +273,10 @@ function main(): void {
       console.error(`  [ERR] ${viewportName}: ${err instanceof Error ? err.message : err}`);
     }
   }
+  return 0;
 }
 
-main();
+const isDirect = process.argv[1] && process.argv[1].endsWith('parse-har.ts');
+if (isDirect) {
+  process.exit(parseHarMain(process.argv.slice(2)));
+}

@@ -334,10 +334,10 @@ async function completeForViewport(viewportDir: string): Promise<{
   return { fetched, failed: failures.length };
 }
 
-async function main(): Promise<number> {
+export async function completeAssetsMain(argv: string[]): Promise<number> {
   let args: CliArgs;
   try {
-    args = parseArgs(process.argv.slice(2));
+    args = parseArgs(argv);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     console.error(HELP_TEXT);
@@ -375,10 +375,13 @@ async function main(): Promise<number> {
   return 0;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (err) => {
-    console.error(err instanceof Error ? err.stack ?? err.message : String(err));
-    process.exit(1);
-  }
-);
+const isDirect = process.argv[1] && process.argv[1].endsWith('complete-assets.ts');
+if (isDirect) {
+  completeAssetsMain(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (err) => {
+      console.error(err instanceof Error ? err.stack ?? err.message : String(err));
+      process.exit(1);
+    }
+  );
+}
