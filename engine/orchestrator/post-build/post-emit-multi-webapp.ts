@@ -8,8 +8,8 @@
  *
  * Per Dr Parity V2.0 scope (locked decision 9 in 05-action-plan.md), the
  * webapp parity baseline is route-smoke + state assertions. Pixel parity
- * (~99% matching astro) is a stretch goal tracked separately. This module
- * therefore runs:
+ * (~99% matching astro) is a stretch goal layered on top in V2.1. This
+ * module therefore runs:
  *
  *   1. install               - npm install in the emitted project
  *   2. build                 - tsc -b && vite build
@@ -20,13 +20,13 @@
  *   5. state-assertion-check - for each inferred toggle in the state
  *                              graph, click the trigger and assert the
  *                              expected DOM transition
+ *   6. pixel-parity (stretch)- vite preview + per-viewport screenshot
+ *                              diff vs each route's crawl-graph reference
+ *                              screenshot. Gated on earlier phases and on
+ *                              the caller passing `crawlDir` + `inference`.
  *
  * Each phase emits a structured `PhaseResult` so the unified `.runs/`
  * logger (V2.0 Phase 5) can pick it up.
- *
- * TODO Phase 7: pixel parity stretch - route-by-route screenshot diff
- * against captured state DOM. Belongs here once `engine/verify/diff.ts`
- * supports SPA routes (it currently expects an Astro project layout).
  */
 
 import {
@@ -38,6 +38,11 @@ import { join, resolve } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 
 import type { InferenceResult, RouteGroup, StateToggle } from '../../targets/webapp/inference';
+import {
+  runWebappPixelParity,
+  type PixelParityReport,
+  type PixelParityViewport,
+} from './webapp-pixel-parity';
 
 export type PhaseStatus = 'ok' | 'warn' | 'fail' | 'skipped';
 
@@ -70,6 +75,20 @@ export interface PostEmitMultiWebappOptions {
   skipBrowser?: boolean;
   /** Max ms to wait for vite preview to become ready. Default 30s. */
   previewReadyTimeoutMs?: number;
+  /**
+   * Crawl directory containing graph.json and per-state screenshots.
+   * Required for the pixel-parity stretch phase. When absent that phase
+   * is skipped with reason "no crawlDir".
+   */
+  crawlDir?: string;
+  /** Pixel-diff threshold ratio for the pixel-parity stage. Default 0.20. */
+  pixelParityThreshold?: number;
+  /** Pixel-parity warn multiplier (fail boundary = threshold * multiplier). Default 2. */
+  pixelParityWarnMultiplier?: number;
+  /** Override canonical viewports for the pixel-parity stage. */
+  pixelParityViewports?: readonly PixelParityViewport[];
+  /** Skip pixel-parity stage explicitly even when crawlDir is present. */
+  skipPixelParity?: boolean;
   /** Log sink. Defaults to stdout. */
   log?: (line: string) => void;
 }
@@ -82,6 +101,8 @@ export interface PostEmitMultiWebappResult {
   phases: PhaseResult[];
   /** Convenience: true when every phase reported `ok` or `skipped`. */
   passed: boolean;
+  /** Pixel-parity report when the stretch phase ran. Null otherwise. */
+  pixelParityReport?: PixelParityReport | null;
 }
 
 const DEFAULT_PREVIEW_READY_TIMEOUT_MS = 30_000;
@@ -664,11 +685,11 @@ export async function runPostEmitMultiWebapp(
     };
   }
 
-  log('\n=== Webapp post-emit Phase 1/5: install ===');
+  log('\n=== Webapp post-emit Phase 1/6: install ===');
   const installResult = await runInstall(outDir, options.skipInstall ?? false, log);
   phases.push(installResult);
 
-  log('\n=== Webapp post-emit Phase 2/5: build ===');
+  log('\n=== Webapp post-emit Phase 2/6: build ===');
   const buildResult =
     installResult.status === 'fail'
       ? {
@@ -680,11 +701,11 @@ export async function runPostEmitMultiWebapp(
       : await runBuild(outDir, options.skipBuild ?? false, log);
   phases.push(buildResult);
 
-  log('\n=== Webapp post-emit Phase 3/5: msw-boot-check ===');
+  log('\n=== Webapp post-emit Phase 3/6: msw-boot-check ===');
   const mswResult = await runMswBootCheck(outDir, log);
   phases.push(mswResult);
 
-  log('\n=== Webapp post-emit Phase 4/5: route-render-check ===');
+  log('\n=== Webapp post-emit Phase 4/6: route-render-check ===');
   const routeResult =
     buildResult.status === 'fail'
       ? {
@@ -702,7 +723,7 @@ export async function runPostEmitMultiWebapp(
         );
   phases.push(routeResult);
 
-  log('\n=== Webapp post-emit Phase 5/5: state-assertion-check ===');
+  log('\n=== Webapp post-emit Phase 5/6: state-assertion-check ===');
   const stateResult =
     buildResult.status === 'fail'
       ? {
@@ -720,10 +741,60 @@ export async function runPostEmitMultiWebapp(
         );
   phases.push(stateResult);
 
-  // TODO Phase 7: pixel parity stretch. Boot preview, screenshot every
-  // route + every captured toggled state, diff against the original
-  // capture. Belongs after state-assertion-check so we know the project
-  // is interactive before paying the cost of per-route screenshots.
+  // Phase 6: pixel-parity stretch. Boot preview, screenshot every captured
+  // route at the canonical viewports, diff against the crawl graph's
+  // reference screenshot for that route. Gated on state-assertion success
+  // and on crawlDir + inference being present.
+  log('\n=== Webapp post-emit Phase 6/6: pixel-parity (stretch) ===');
+  let pixelParityReport: PixelParityReport | null = null;
+  const pixelGateBlocked =
+    buildResult.status === 'fail' ||
+    routeResult.status === 'fail' ||
+    stateResult.status === 'fail';
+  if (options.skipPixelParity) {
+    phases.push({
+      name: 'pixel-parity',
+      status: 'skipped',
+      metrics: { durationMs: 0, reason: 'skipPixelParity=true' },
+      errors: [],
+    });
+  } else if (pixelGateBlocked) {
+    phases.push({
+      name: 'pixel-parity',
+      status: 'skipped',
+      metrics: { durationMs: 0, reason: 'earlier phase failed' },
+      errors: [],
+    });
+  } else if (!options.inference || !options.crawlDir) {
+    phases.push({
+      name: 'pixel-parity',
+      status: 'skipped',
+      metrics: {
+        durationMs: 0,
+        reason: !options.inference ? 'no inference graph' : 'no crawlDir',
+      },
+      errors: [],
+    });
+  } else {
+    const stretch = await runWebappPixelParity({
+      outDir,
+      inference: options.inference,
+      crawlDir: options.crawlDir,
+      threshold: options.pixelParityThreshold,
+      warnMultiplier: options.pixelParityWarnMultiplier,
+      viewports: options.pixelParityViewports,
+      previewReadyTimeoutMs,
+      skipBrowser: options.skipBrowser ?? false,
+      log,
+    });
+    pixelParityReport = stretch.report ?? null;
+    phases.push({
+      name: stretch.name,
+      status: stretch.status,
+      metrics: stretch.metrics,
+      errors: stretch.errors,
+    });
+  }
 
   const finishedAt = nowIso();
   const durationMs = Date.now() - startMs;
@@ -736,6 +807,7 @@ export async function runPostEmitMultiWebapp(
     durationMs,
     phases,
     passed,
+    pixelParityReport,
   };
 
   try {

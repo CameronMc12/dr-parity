@@ -14,7 +14,7 @@
  * pixels / total pixels).
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { PNG } from 'pngjs';
@@ -92,8 +92,35 @@ export interface RunWebappPixelParityOptions {
   previewReadyTimeoutMs?: number;
   /** Skip Playwright work (used by tests). */
   skipBrowser?: boolean;
+  /**
+   * Override where parity-report.json is written. Defaults to
+   * `<outDir>/parity-report.json`.
+   */
+  out?: string;
   /** Log sink. Defaults to stdout. */
   log?: (line: string) => void;
+}
+
+/**
+ * Canonical pixel-parity report shape. Compatible with the
+ * ParityCheckResult shape from engine/qa/parity-check.ts so the regression
+ * harvester and any astro-trained downstream tooling can consume webapp
+ * reports without a schema branch. The `routes[]` array is a webapp
+ * extension; the top-level `viewports[]` and other fields keep the original
+ * astro shape.
+ */
+export interface PixelParityReport {
+  target: 'webapp';
+  projectDir: string;
+  crawlDir: string;
+  threshold: number;
+  warnMultiplier: number;
+  timestamp: string;
+  routes: PixelParityRouteResult[];
+  viewports: PixelParityViewportResult[];
+  allPassed: boolean;
+  reportPath: string;
+  status: PixelParityStatus;
 }
 
 export interface PixelParityCaptureResult {
@@ -110,6 +137,10 @@ export interface PixelParityCaptureResult {
   };
   errors: string[];
   routes: PixelParityRouteResult[];
+  /** Path to the emitted parity-report.json. Null when no report was written. */
+  reportPath?: string | null;
+  /** Full report object. Null when the stage was skipped. */
+  report?: PixelParityReport | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -659,6 +690,31 @@ export async function runWebappPixelParity(
     (v) => v.referenceScreenshot !== null && v.passed,
   ).length;
 
+  const reportPath = resolve(options.out ?? join(projectDir, 'parity-report.json'));
+  const report: PixelParityReport = {
+    target: 'webapp',
+    projectDir,
+    crawlDir,
+    threshold,
+    warnMultiplier,
+    timestamp: new Date().toISOString(),
+    routes: routeResults,
+    viewports: allViewports,
+    allPassed: routeResults.every((r) => r.passed),
+    reportPath,
+    status,
+  };
+
+  try {
+    mkdirSync(dirname(reportPath), { recursive: true });
+    writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n', 'utf8');
+    log(`  [pixel-parity] report: ${reportPath}`);
+  } catch (err) {
+    errors.push(
+      `failed to write parity-report.json: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   return {
     name: 'pixel-parity',
     status,
@@ -672,5 +728,7 @@ export async function runWebappPixelParity(
     },
     errors,
     routes: routeResults,
+    reportPath,
+    report,
   };
 }
