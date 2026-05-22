@@ -1,16 +1,20 @@
 /**
- * Animation Detector — Dr Parity's core differentiator.
+ * Animation monitor for the Playwright capture pipeline.
  *
- * Detects and captures ALL animations on a page using a three-layer strategy:
- *   1. Static Analysis   — parse stylesheets & DOM for declared animations
- *   2. Runtime Monitoring — inject shims before page scripts to intercept observers,
- *                           Web Animations API calls, and scroll listeners
- *   3. Active Probing     — scroll & hover to trigger latent animations, then diff
+ * Detects and captures animations on a page using a three layer strategy:
+ *   1. Static Analysis    parse stylesheets and DOM for declared animations
+ *   2. Runtime Monitoring inject shims before page scripts to intercept observers,
+ *                         Web Animations API calls, and scroll listeners
+ *   3. Active Probing     scroll and hover to trigger latent animations, then diff
  *
- * Usage:
+ * Usage (per viewport, inside scripts/capture.ts):
  *   await injectAnimationMonitors(page);   // call BEFORE page.goto()
  *   await page.goto(url);
  *   const result = await detectAnimations(page, options);
+ *   const viewTransitions = await collectViewTransitions(page);
+ *
+ * Ported from the legacy engine/extract/playwright/animation-detector.ts
+ * during V2.1 cleanup. No behavioural changes; only the import home moved.
  */
 
 import type { Page } from "playwright";

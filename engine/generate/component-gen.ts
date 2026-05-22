@@ -18,7 +18,7 @@ import type {
   StateSpec,
   StaggerPattern,
 } from '../types/extraction';
-import type { LenisConfig } from '../extract/playwright/animation-detector';
+import type { LenisConfig } from '../extract/capture/animation-monitor';
 import { matchTemplate, type TemplateContext } from './templates';
 
 // ---------------------------------------------------------------------------

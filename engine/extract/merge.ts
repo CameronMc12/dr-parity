@@ -24,7 +24,7 @@ import type {
   ViewTransitionRecord,
 } from '../types/extraction';
 import type { PageScanResult } from './playwright/page-scanner';
-import type { AnimationDetectionResult } from './playwright/animation-detector';
+import type { AnimationDetectionResult } from './capture/animation-monitor';
 import type { FontExtractionResult } from './playwright/font-extractor';
 import type { AssetCollectionResult } from './playwright/asset-collector';
 import type { InteractionMapResult } from './playwright/interaction-mapper';

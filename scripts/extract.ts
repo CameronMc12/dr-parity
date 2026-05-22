@@ -14,7 +14,7 @@ import {
   injectAnimationMonitors,
   detectAnimations,
   collectViewTransitions,
-} from '../engine/extract/playwright/animation-detector';
+} from '../engine/extract/capture/animation-monitor';
 import { scanPage, scanPageBatched } from '../engine/extract/playwright/page-scanner';
 import { extractFonts } from '../engine/extract/playwright/font-extractor';
 import { collectAssets } from '../engine/extract/playwright/asset-collector';
