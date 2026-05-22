@@ -10,6 +10,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import * as cheerioModule from 'cheerio';
+import type { Element } from 'domhandler';
 const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 import type { ComponentInfo } from './types';
 
@@ -80,7 +81,7 @@ export function extractClassesFromAstro(source: string): Set<string> {
   const withoutStyles = stripStyleBlocks(markup);
   const $ = cheerio.load(withoutStyles, { xml: false });
   const out = new Set<string>();
-  $('*').each((_, el) => {
+  $('*').each((_: number, el: Element) => {
     const attribs = (el as { attribs?: Record<string, string> }).attribs;
     if (!attribs) return;
     const cls = attribs.class;
