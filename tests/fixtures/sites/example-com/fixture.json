@@ -3,6 +3,7 @@
   "target": "astro",
   "url": "https://example.com/",
   "captured_at": "2026-05-14T12:54:35.266Z",
+  "captured_at_sha": "8c5ba3ab6a732077abef6df0f269f7c635810d37",
   "parity_threshold": 0.99,
   "comparison_mode": "manifest-shape",
   "notes": "Smallest deterministic baseline. Single page, no external assets, one inline stylesheet. Locked as the floor of the regression corpus."

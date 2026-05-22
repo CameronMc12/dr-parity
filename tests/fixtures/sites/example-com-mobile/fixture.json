@@ -3,6 +3,7 @@
   "target": "astro",
   "url": "https://example.com/",
   "captured_at": "2026-05-22T10:09:04.071Z",
+  "captured_at_sha": "c0d70a4f490947068769196a2a5171d4a29b2a13",
   "parity_threshold": 0.99,
   "comparison_mode": "manifest-shape",
   "viewport": "mobile",

@@ -32,6 +32,12 @@ export interface Fixture {
   readonly notes: string;
   readonly dir: string;
   readonly captureRef: string;
+  /**
+   * Git commit hash that produced the reference capture. Optional and
+   * additive. Lets future regenerations pin to the exact emit path the
+   * fixture was promoted against. Empty string when not specified.
+   */
+  readonly capturedAtSha: string;
 }
 
 const VALID_TARGETS: ReadonlySet<FixtureTarget> = new Set([
@@ -148,6 +154,8 @@ async function readFixture(dir: string, slug: string): Promise<Fixture> {
     notes: typeof parsed.notes === "string" ? parsed.notes : "",
     dir,
     captureRef,
+    capturedAtSha:
+      typeof parsed.captured_at_sha === "string" ? parsed.captured_at_sha : "",
   };
 }
 
