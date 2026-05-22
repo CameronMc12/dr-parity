@@ -11,8 +11,8 @@ AI agents reading `builder-prompts/` and **handwriting** JSX.
 This bypasses the existing deterministic React emitter:
 
 ```
-npm run build:react              # tsx scripts/build.ts --target=react
-npm run build:react:multi        # tsx scripts/clone-urls.ts --target=react
+npm run build:react                                      # tsx scripts/build.ts --target=react
+npx tsx scripts/clone-urls.ts --target=react ...         # multi page (was build:react:multi)
 ```
 
 backed by `engine/targets/react/{build,emit,emit-multi,html-to-jsx,scaffold,scaffold-multi}.ts`
@@ -37,7 +37,7 @@ the same way `build:astro` works.
 2. npm run parse:har -- <capture-dir>
 3. npm run parse:trace -- <capture-dir>
 4. npm run clone -- <capture-dir>
-5. npm run build:react:multi -- --target=react \
+5. npx tsx scripts/clone-urls.ts --target=react \
      --clone-dir=<clone-dir-1>:/  \
      --clone-dir=<clone-dir-2>:/route-2 \
      --out-dir=<out>
