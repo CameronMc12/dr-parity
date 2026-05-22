@@ -1,74 +1,76 @@
-<!-- BEGIN:nextjs-agent-rules -->
-# This is NOT the Next.js you know
-
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
-<!-- END:nextjs-agent-rules -->
-
-# Dr Parity — 1:1 Website Cloning Engine
+# Dr Parity. 1:1 Website Cloning Engine
 
 ## What This Is
-A dedicated engine for reverse-engineering any website or web app into a pixel-perfect Next.js codebase. Dr Parity uses automated Playwright extraction + Chrome MCP visual intelligence to capture every detail including animations, then generates clean components with an iterative QA loop.
+A dedicated engine for reverse-engineering any website or web app into a pixel-perfect cloned codebase. Dr Parity uses an automated Playwright CLI extraction pipeline. Dr Parity always runs inside Claude Code, so Claude observes the live Playwright run for anomalies during capture. No browser MCP is used anywhere.
 
 ## Engine Pipeline
-The `/clone-website` skill orchestrates a 5-phase pipeline:
-1. **Extract** — Playwright scripts + Chrome MCP visual capture
-2. **Analyze** — Structure into typed specs (topology, components, tokens, behaviors)
-3. **Generate** — Build Next.js components from specs
-4. **Compare** — Screenshot clone vs original, pixel-diff
-5. **Iterate** — Fix discrepancies until threshold met
+The `/clone-website` skill orchestrates a multi-phase pipeline:
+1. **Capture**. Playwright CLI launches Chromium, navigates the target, records HAR plus trace plus video, and runs a programmatic scroll and hover tour to wake lazy content and animations.
+2. **Parse**. The captured HAR or manual network log is parsed into per-document HTML, deduplicated styles, scripts, and assets.
+3. **Clone**. A static 1:1 snapshot is produced by rewriting every captured URL to a local clone-relative path.
+4. **Build**. Target adapters (`astro`, `react`, `webapp`) slice the captured DOM into framework code via deterministic emitters under `engine/targets/`.
+5. **Verify**. The verify subsystem (`engine/verify/`) drives a parity gate by screenshotting clone vs original and reporting diffs.
 
 ## Tech Stack
-- **Framework:** Next.js 16 (App Router, React 19, TypeScript strict)
-- **UI:** shadcn/ui (Radix primitives, Tailwind CSS v4, `cn()` utility)
-- **Icons:** Lucide React (default — will be replaced/supplemented by extracted SVGs)
-- **Styling:** Tailwind CSS v4 with oklch design tokens
-- **Deployment:** Vercel
+- **Language:** TypeScript strict mode, executed via `tsx`.
+- **Extraction:** Playwright CLI (`@playwright/test`), Chromium only.
+- **Target emitters:** custom emitters under `engine/targets/astro`, `engine/targets/react`, `engine/targets/webapp`, plus the shared slicer under `engine/targets/shared/`.
+- **Verify:** `engine/verify/` (screenshots, diff, report).
+- **No app framework in this repo.** Dr Parity emits cloned codebases as output. The repo itself is a CLI engine, not a Next.js or Astro app.
 
 ## Commands
-- `npm run dev` — Start dev server
-- `npm run build` — Production build
-- `npm run lint` — ESLint check
-- `npm run typecheck` — TypeScript check
-- `npm run check` — Run lint + typecheck + build
+
+The real entry points are npm scripts wired in `package.json`. The pipeline scripts below are the ones that actually run today.
+
+- `npm run capture -- <url>`. Capture a target with Playwright. Modes: `launch` (default), `cdp`, `persistent`.
+- `npm run parse:har -- <capture-dir>`. Parse the captured HAR or manual network log.
+- `npm run parse:trace -- <capture-dir>`. Unzip the Playwright trace and emit DOM snapshots.
+- `npm run clone -- <capture-dir>`. Rewrite the captured HTML and CSS into a self-contained static clone.
+- `npm run clone-site -- <url>`. End-to-end orchestrator. Runs capture, parse:har, parse:trace, and clone in one pass.
+- `npm run clone-urls -- --target=react --clone-dir=<dir>:/route`. Multi-route emit into a target framework.
+- `npm run build:astro -- --clone-dir=<dir>`. Astro target build.
+- `npm run build:react -- --clone-dir=<dir>`. React target build.
+- `npm run build:webapp -- --crawl-dir=<dir>`. Webapp target build (uses crawl output).
+- `npm run verify:parity`. Run the parity verifier.
+- `npm run typecheck`. `tsc --noEmit` across the repo.
 
 ## Code Style
-- TypeScript strict mode, no `any`
-- Named exports, PascalCase components, camelCase utils
-- Tailwind utility classes, no inline styles
-- 2-space indentation
-- Responsive: mobile-first
+- TypeScript strict mode, no `any`.
+- Named exports. PascalCase for components, camelCase for utilities.
+- 2-space indentation.
+- Many small files over few large files.
 
 ## Design Principles
-- **Pixel-perfect emulation** — match the target's spacing, colors, typography exactly
-- **No personal aesthetic changes during emulation phase** — match 1:1 first, customize later
-- **Real content** — use actual text and assets from the target site, not placeholders
-- **Beauty-first** — every pixel matters
+- **Pixel-perfect emulation.** Match the target's spacing, colors, typography, and animations exactly.
+- **No personal aesthetic changes during emulation.** Match 1:1 first.
+- **Real content.** Use actual text and assets from the target, not placeholders.
+- **Beauty-first.** Every pixel matters.
 
 ## Project Structure
+
 ```
-src/
-  app/              # Next.js routes
-  components/       # React components
-    ui/             # shadcn/ui primitives
-    icons.tsx       # Extracted SVG icons as React components
-  lib/
-    utils.ts        # cn() utility (shadcn)
-  types/            # TypeScript interfaces
-  hooks/            # Custom React hooks
 engine/
-  extract/          # Playwright + Chrome MCP extraction
-  analyze/          # Topology, components, tokens, behaviors
-  generate/         # Code generation from specs
-  qa/               # Screenshot comparison & fix loop
-  types/            # TypeScript interfaces for engine
-public/
-  images/           # Downloaded images from target site
-  videos/           # Downloaded videos from target site
-  seo/              # Favicons, OG images, webmanifest
+  extract/          # Playwright CLI browser strategies (launch / cdp / persistent),
+                    # viewports, recording options, network recorder, tour pass.
+  analyze/          # Topology, design tokens, component tree.
+  targets/          # Target adapters and emitters.
+    shared/         # Slicer and shared types used by every target.
+    astro/          # Astro emitter.
+    react/          # React emitter.
+    webapp/         # Webapp emitter, crawler, inference.
+    html-mirror/    # Static HTML mirror target.
+  orchestrator/     # Phase runner and post-build hooks.
+  clone/            # Static HTML / CSS / asset rewriters used by the clone step.
+  verify/           # Screenshots, diff, report, parity gate.
+  scope-styles/     # Style scoping and media-preserve.
+  generate/         # Component generation utilities.
+  qa/               # Legacy QA helpers. Slated for cleanup in V2.0.
+scripts/            # CLI entry points wired into package.json.
 docs/
-  research/         # Inspection output (design tokens, components, layout)
-  design-references/ # Screenshots and visual references
-scripts/            # Asset download scripts
+  research/         # Inspection output (per-host captures, design tokens, layout).
+  V2.0/             # V2.0 audit, action plan, observations.
+  blocklists/       # Per-app crawler blocklists.
+clones/             # Gitignored scratch space for clone output.
 ```
 
 ## MOST IMPORTANT NOTES
