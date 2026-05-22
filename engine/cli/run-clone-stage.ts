@@ -29,6 +29,13 @@ import { createRunContext } from "./context.js";
 import { writeSummary } from "./summary-writer.js";
 import { nowIso } from "./event-stream.js";
 import { runCloneEntry, type RunCloneResult } from "../../scripts/run-clone.js";
+import {
+  DEFAULT_PARITY_THRESHOLDS,
+  projectNameFromUrl,
+  runEmitTargetStage,
+  runParityCheckStage,
+  type EmitTarget,
+} from "./emit-and-verify.js";
 
 export interface ParityCloneInput {
   url: string;
@@ -40,6 +47,10 @@ export interface ParityCloneInput {
   quiet?: boolean;
   verbose?: boolean;
   json?: boolean;
+  /** Run the parity verification stage after framework emit. Default: true. */
+  parity?: boolean;
+  /** Pixel diff threshold (0..1). When omitted the per-target default applies. */
+  parityThreshold?: number;
 }
 
 export interface ParityCloneResult {
@@ -289,10 +300,207 @@ export async function runParityClone(
     }
   }
 
-  const finalStatus: RunManifest["status"] = status;
+  // Stages 7 + 8: framework emit and parity verification. Only kick in when
+  // the user supplied a real target and the static-clone pipeline produced
+  // a usable capture root. Skipped silently when target is undefined or
+  // `html-mirror` (no adapter wired). Failure of these stages does not
+  // wipe the clone artefacts; it just downgrades the rollup status.
+  let rolledStatus: RunManifest["status"] = status;
+  let parityForManifest: RunManifest["parity"] | undefined;
+
+  const canEmit =
+    result.exitCode === 0 &&
+    result.captureRoot &&
+    result.runRoot &&
+    (input.target === "astro" ||
+      input.target === "react" ||
+      input.target === "webapp");
+
+  if (canEmit) {
+    const target = input.target as EmitTarget;
+    const captureRoot = resolve(result.captureRoot as string);
+    const runRoot = resolve(result.runRoot as string);
+    const projectName = projectNameFromUrl(input.url);
+
+    const emitStart = nowIso();
+    await patchStage(
+      { runDir: ctx.outDir },
+      { name: "emit-target", startedAt: emitStart, status: undefined },
+    );
+    ctx.emit({ type: "stage_start", stage: "emit-target", at: emitStart });
+
+    const emit = await runEmitTargetStage({
+      target,
+      captureRoot,
+      runRoot,
+      projectName,
+    });
+    const emitEnd = nowIso();
+    const emitMetrics: Record<string, number | string> = {
+      durationMs: emit.durationMs,
+    };
+    if (emit.summary) {
+      emitMetrics.componentsEmitted = emit.summary.componentsEmitted;
+      emitMetrics.pagesEmitted = emit.summary.pagesEmitted;
+      emitMetrics.assetCount = emit.summary.assetCount;
+      emitMetrics.assetBytes = emit.summary.assetBytes;
+    }
+    if (emit.skipReason) emitMetrics.skipReason = emit.skipReason;
+
+    const emitStatus: RunManifest["status"] =
+      emit.status === "ok"
+        ? "ok"
+        : emit.status === "skipped"
+          ? "warn"
+          : "fail";
+    await patchStage(
+      { runDir: ctx.outDir },
+      {
+        name: "emit-target",
+        startedAt: emitStart,
+        endedAt: emitEnd,
+        status: emitStatus,
+        metrics: emitMetrics,
+        ...(emit.error ? { errors: [emit.error] } : {}),
+        ...(emit.skipReason ? { warnings: [emit.skipReason] } : {}),
+      },
+    );
+    ctx.emit({
+      type: "stage_end",
+      stage: "emit-target",
+      at: emitEnd,
+      status: emitStatus,
+      durationMs: emit.durationMs,
+      metrics: emitMetrics,
+    });
+
+    if (emit.status === "ok" && emit.outDir) {
+      await registerArtefact(
+        { runDir: ctx.outDir },
+        "sitesDir",
+        emit.outDir,
+      );
+      ctx.emit({
+        type: "artefact",
+        stage: "emit-target",
+        at: nowIso(),
+        name: "sitesDir",
+        path: emit.outDir,
+      });
+
+      if (input.parity !== false) {
+        const diffThreshold =
+          typeof input.parityThreshold === "number"
+            ? input.parityThreshold
+            : DEFAULT_PARITY_THRESHOLDS[target];
+
+        const parityStart = nowIso();
+        await patchStage(
+          { runDir: ctx.outDir },
+          {
+            name: "parity-check",
+            startedAt: parityStart,
+            status: undefined,
+          },
+        );
+        ctx.emit({
+          type: "stage_start",
+          stage: "parity-check",
+          at: parityStart,
+        });
+
+        const parityLogPath = join(
+          ctx.outDir,
+          "stage-logs",
+          "parity-check.log",
+        );
+        await fs.mkdir(resolve(parityLogPath, ".."), { recursive: true });
+        const parityLog = createWriteStream(parityLogPath, { flags: "a" });
+        const parity = await runParityCheckStage({
+          target,
+          projectDir: emit.outDir,
+          captureRoot,
+          runRoot,
+          diffThreshold,
+          log: (line) => parityLog.write(`${line}\n`),
+        });
+        await new Promise<void>((r) => parityLog.end(() => r()));
+
+        const parityEnd = nowIso();
+        const parityMetrics: Record<string, number | string> = {
+          durationMs: parity.durationMs,
+          diffThreshold,
+        };
+        if (typeof parity.score === "number") parityMetrics.score = parity.score;
+        if (parity.skipReason) parityMetrics.skipReason = parity.skipReason;
+
+        const parityStatus: RunManifest["status"] =
+          parity.status === "ok"
+            ? "ok"
+            : parity.status === "skipped"
+              ? "warn"
+              : parity.status === "partial"
+                ? "partial"
+                : "fail";
+        await patchStage(
+          { runDir: ctx.outDir },
+          {
+            name: "parity-check",
+            startedAt: parityStart,
+            endedAt: parityEnd,
+            status: parityStatus,
+            metrics: parityMetrics,
+            ...(parity.diagnostics.length > 0
+              ? { warnings: [...parity.diagnostics] }
+              : {}),
+            ...(parity.skipReason ? { warnings: [parity.skipReason] } : {}),
+          },
+        );
+        ctx.emit({
+          type: "stage_end",
+          stage: "parity-check",
+          at: parityEnd,
+          status: parityStatus,
+          durationMs: parity.durationMs,
+          metrics: parityMetrics,
+        });
+
+        if (parity.reportPath) {
+          await registerArtefact(
+            { runDir: ctx.outDir },
+            "parityReport",
+            parity.reportPath,
+          );
+        }
+
+        if (typeof parity.score === "number") {
+          parityForManifest = {
+            score: parity.score,
+            threshold: 1 - diffThreshold,
+            mode: "pixel-diff",
+          };
+        }
+
+        // Roll up: emit failure -> fail; parity partial -> partial; parity
+        // fail -> fail; parity skipped -> keep prior status.
+        if (parityStatus === "fail") rolledStatus = "fail";
+        else if (parityStatus === "partial" && rolledStatus !== "fail") {
+          rolledStatus = "partial";
+        }
+      }
+    } else if (emit.status === "fail") {
+      rolledStatus = "fail";
+    }
+  }
+
+  const finalStatus: RunManifest["status"] = rolledStatus;
   await finaliseManifest(
     { runDir: ctx.outDir },
-    { status: finalStatus, endedAt },
+    {
+      status: finalStatus,
+      endedAt,
+      ...(parityForManifest ? { parity: parityForManifest } : {}),
+    },
   );
   ctx.emit({
     type: "run_end",

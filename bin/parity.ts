@@ -118,6 +118,18 @@ const cloneCommand = defineCommand(
           : undefined;
       const outDir = typeof args.out === "string" ? args.out : undefined;
       const tour = args.tour !== false;
+      const parity = args.parity !== false;
+      const parityThresholdRaw =
+        typeof args["parity-threshold"] === "string"
+          ? Number(args["parity-threshold"])
+          : undefined;
+      const parityThreshold =
+        typeof parityThresholdRaw === "number" &&
+        Number.isFinite(parityThresholdRaw) &&
+        parityThresholdRaw >= 0 &&
+        parityThresholdRaw <= 1
+          ? parityThresholdRaw
+          : undefined;
 
       const result = await runParityClone({
         url,
@@ -129,6 +141,8 @@ const cloneCommand = defineCommand(
         quiet: flags.quiet,
         verbose: flags.verbose,
         json: flags.json,
+        parity,
+        parityThreshold,
       });
       if (!flags.quiet) {
         process.stdout.write(
