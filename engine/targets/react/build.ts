@@ -28,6 +28,7 @@ import {
   filterAlreadyLinked,
 } from './collect-hoistable';
 import { writeApp, writeComponent, writeIndexHtml, writeMain } from './emit';
+import { reactEscapeHatchPredicate } from './escape-hatch-predicates';
 import { writePostHydrationSyncLib } from './post-hydration-sync';
 import { writeScaffold } from './scaffold';
 import type { BuildOptions, BuildSummary } from './types';
@@ -122,8 +123,18 @@ export async function buildReactProject(options: BuildOptions): Promise<BuildSum
     assetBytes: assetStats.bytes,
   };
 
+  // Seal off subtrees that third-party runtime scripts mutate after
+  // hydration (e.g. Apple's ac-gallery carousel). Without this, React's
+  // StrictMode dev double-render wipes the runtime-applied classNames
+  // and inline styles, freezing the carousel on slide 1. Capability-
+  // detected via the `data-media-gallery` attribute; sites that do not
+  // carry that marker fall through unchanged.
   for (const comp of components) {
-    summary.components.push(writeComponent(componentsDir, comp));
+    summary.components.push(
+      writeComponent(componentsDir, comp, {
+        shouldEscapeHatch: reactEscapeHatchPredicate,
+      }),
+    );
   }
 
   summary.components.push(writeApp({ srcDir, pageImports, title: head.title }));

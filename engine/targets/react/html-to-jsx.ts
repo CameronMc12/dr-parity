@@ -282,7 +282,20 @@ function renderElement(
 
   if (escapeHatch) {
     const inner = $(el).html() ?? '';
-    return `<div dangerouslySetInnerHTML={{ __html: ${quoteForJs(inner)} }} />`;
+    // Preserve the matched element's outer tag and attributes; only the
+    // INNER subtree is hidden from React via dangerouslySetInnerHTML. The
+    // outer attrs are still rendered through JSX so className / data-* /
+    // aria-* / id selectors still target the element. Void tags fall back
+    // to the original empty-wrapper behaviour because they cannot have
+    // inner HTML.
+    const attrs = renderAttributes(el.attribs ?? {}, tag);
+    if (VOID_ELEMENTS.has(tag)) {
+      return `<${tag}${attrs} />`;
+    }
+    if (inner.length === 0) {
+      return `<${tag}${attrs}></${tag}>`;
+    }
+    return `<${tag}${attrs} dangerouslySetInnerHTML={{ __html: ${quoteForJs(inner)} }} />`;
   }
 
   // <script> / <style> require dangerouslySetInnerHTML.

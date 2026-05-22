@@ -11,6 +11,7 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import type { Element } from 'domhandler';
 
 import type { ComponentDef, ExtractedHead } from '../shared/types';
 import { htmlToJsx } from './html-to-jsx';
@@ -32,6 +33,19 @@ export interface EmitOptions {
    * cleanly (e.g. unusual web components).
    */
   escapeHatchTags?: ReadonlySet<string>;
+  /**
+   * Predicate for per-element escape-hatching. When it returns true for
+   * an element, that element's INNER subtree is emitted as
+   * dangerouslySetInnerHTML and React stops reconciling it after mount.
+   *
+   * Used to seal off subtrees that third-party runtime scripts mutate
+   * (e.g. Apple's ac-gallery carousel: the runtime applies
+   * `current current-item` classes and inline transforms on slides,
+   * which React's StrictMode dev double-render would otherwise wipe).
+   * Capability-detected: a predicate that returns false for every node
+   * leaves all output unchanged.
+   */
+  shouldEscapeHatch?: (el: Element) => boolean;
 }
 
 function isCompositionComponent(comp: ComponentDef): boolean {
@@ -61,7 +75,10 @@ function renderCompositionReact(
 
   const normalisedShell = htmlToJsx(
     `${wrapper.openTag}${CHILDREN_PLACEHOLDER}${wrapper.closeTag}`,
-    { escapeHatchTags: options.escapeHatchTags },
+    {
+      escapeHatchTags: options.escapeHatchTags,
+      shouldEscapeHatch: options.shouldEscapeHatch,
+    },
   );
   const replacement =
     composed.length > 0 ? `\n${composed}\n` : '';
@@ -86,6 +103,7 @@ export function writeComponent(
     imports = [];
     body = htmlToJsx(comp.html, {
       escapeHatchTags: options.escapeHatchTags,
+      shouldEscapeHatch: options.shouldEscapeHatch,
     });
   }
 

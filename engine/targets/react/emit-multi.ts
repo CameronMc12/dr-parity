@@ -27,8 +27,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
+import type { Element } from 'domhandler';
 
 import type { ComponentDef, ExtractedHead } from '../shared/types';
+import { reactEscapeHatchPredicate } from './escape-hatch-predicates';
 import { htmlToJsx } from './html-to-jsx';
 
 export interface ReactPageSlice {
@@ -113,14 +115,26 @@ export function emitMultiPageReact(opts: MultiEmitOptions): MultiEmitSummary {
     }
   }
 
+  // Seal off subtrees that third-party runtime scripts mutate after
+  // hydration (e.g. Apple's ac-gallery carousel). Without this, React's
+  // StrictMode dev double-render wipes the runtime-applied classNames
+  // and inline styles, freezing the carousel on slide 1. Capability-
+  // detected via the `data-media-gallery` attribute; sites that do not
+  // carry that marker fall through unchanged.
+  const escapeHatch = reactEscapeHatchPredicate;
+
   // Write shared components. SHAREABLE_ROLES excludes 'main', so shared
   // entries are always leaf components (no wrapper / childComponentNames).
   const sharedNames: string[] = [];
   for (const entry of sharedFingerprints.values()) {
-    writeReactComponentFile(sharedDir, {
-      ...entry.component,
-      name: entry.canonicalName,
-    });
+    writeReactComponentFile(
+      sharedDir,
+      {
+        ...entry.component,
+        name: entry.canonicalName,
+      },
+      escapeHatch,
+    );
     sharedNames.push(entry.canonicalName);
   }
 
@@ -142,7 +156,7 @@ export function emitMultiPageReact(opts: MultiEmitOptions): MultiEmitSummary {
     }
 
     for (const comp of ownComponents) {
-      writeReactComponentFile(pageComponentsDir, comp);
+      writeReactComponentFile(pageComponentsDir, comp, escapeHatch);
       perPageCount += 1;
     }
 
@@ -223,13 +237,17 @@ const CHILDREN_PLACEHOLDER = 'W1C_WRAPPER_CHILDREN_PLACEHOLDER';
  * placeholder with the composed PascalCase child references — those are
  * valid JSX components and never need normalisation.
  */
-function renderCompositionReact(comp: ComponentDef): { imports: string[]; body: string } {
+function renderCompositionReact(
+  comp: ComponentDef,
+  shouldEscapeHatch?: (el: Element) => boolean,
+): { imports: string[]; body: string } {
   const wrapper = comp.wrapper as { openTag: string; closeTag: string };
   const children = comp.childComponentNames ?? [];
   const composed = children.map((n) => `  <${n} />`).join('\n');
 
   const normalisedShell = htmlToJsx(
     `${wrapper.openTag}${CHILDREN_PLACEHOLDER}${wrapper.closeTag}`,
+    { shouldEscapeHatch },
   );
   const replacement = composed.length > 0 ? `\n${composed}\n` : '';
   const body = normalisedShell.replace(CHILDREN_PLACEHOLDER, replacement);
@@ -242,18 +260,22 @@ function renderCompositionReact(comp: ComponentDef): { imports: string[]; body: 
  * wrapper tags around composed JSX. Leaf components run their captured HTML
  * through htmlToJsx.
  */
-function writeReactComponentFile(componentsDir: string, comp: ComponentDef): void {
+function writeReactComponentFile(
+  componentsDir: string,
+  comp: ComponentDef,
+  shouldEscapeHatch?: (el: Element) => boolean,
+): void {
   const filePath = join(componentsDir, `${comp.name}.tsx`);
 
   let imports: string[];
   let body: string;
   if (isCompositionComponent(comp)) {
-    const composed = renderCompositionReact(comp);
+    const composed = renderCompositionReact(comp, shouldEscapeHatch);
     imports = composed.imports;
     body = composed.body;
   } else {
     imports = [];
-    body = htmlToJsx(comp.html);
+    body = htmlToJsx(comp.html, { shouldEscapeHatch });
   }
 
   const importLines = imports
