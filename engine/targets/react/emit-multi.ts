@@ -113,10 +113,14 @@ export function emitMultiPageReact(opts: MultiEmitOptions): MultiEmitSummary {
     }
   }
 
-  // Write shared components.
+  // Write shared components. SHAREABLE_ROLES excludes 'main', so shared
+  // entries are always leaf components (no wrapper / childComponentNames).
   const sharedNames: string[] = [];
   for (const entry of sharedFingerprints.values()) {
-    writeReactComponentFile(sharedDir, entry.component);
+    writeReactComponentFile(sharedDir, {
+      ...entry.component,
+      name: entry.canonicalName,
+    });
     sharedNames.push(entry.canonicalName);
   }
 
@@ -202,70 +206,61 @@ function wrapInFragment(body: string): string {
   return `<>\n${trimmed}\n</>`;
 }
 
-interface ParsedBody {
-  imports: string[];
-  html: string;
+function isCompositionComponent(comp: ComponentDef): boolean {
+  return comp.wrapper !== undefined && comp.childComponentNames !== undefined;
 }
 
-function parseAstroFrontmatter(html: string): ParsedBody {
-  if (!html.startsWith('---')) return { imports: [], html };
-  const closing = html.indexOf('\n---', 3);
-  if (closing === -1) return { imports: [], html };
-  const frontmatter = html.slice(3, closing);
-  const rest = html.slice(closing + '\n---'.length).replace(/^\n/, '');
+// Placeholder for child composition during the JSX attribute-normalisation
+// pass. Mirrors the same constant in emit.ts; kept local to avoid creating
+// a cross-file dependency for an internal implementation detail.
+const CHILDREN_PLACEHOLDER = 'W1C_WRAPPER_CHILDREN_PLACEHOLDER';
 
-  const importNames: string[] = [];
-  const re = /import\s+([A-Za-z_$][\w$]*)\s+from\s+['"][^'"]+['"]\s*;?/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(frontmatter)) !== null) {
-    importNames.push(match[1]);
-  }
-  return { imports: importNames, html: rest };
-}
+/**
+ * Build the wrapper body. We splice a placeholder inside the captured
+ * open/close tags and run the whole thing through `htmlToJsx` so wrapper
+ * attributes pick up the same normalisation leaf components get (e.g.
+ * `class` → `className`, `for` → `htmlFor`). Then we replace the
+ * placeholder with the composed PascalCase child references — those are
+ * valid JSX components and never need normalisation.
+ */
+function renderCompositionReact(comp: ComponentDef): { imports: string[]; body: string } {
+  const wrapper = comp.wrapper as { openTag: string; closeTag: string };
+  const children = comp.childComponentNames ?? [];
+  const composed = children.map((n) => `  <${n} />`).join('\n');
 
-function preservePascalTags(html: string, names: string[]): { html: string; tokens: Map<string, string> } {
-  const tokens = new Map<string, string>();
-  let out = html;
-  for (const name of names) {
-    const placeholder = `__DR_PARITY_COMP_${name}__`;
-    tokens.set(placeholder, name);
-    out = out
-      .replace(new RegExp(`<${name}\\s*/>`, 'g'), `<${placeholder.toLowerCase()} />`)
-      .replace(new RegExp(`<${name}([\\s>])`, 'g'), `<${placeholder.toLowerCase()}$1`)
-      .replace(new RegExp(`</${name}>`, 'g'), `</${placeholder.toLowerCase()}>`);
-  }
-  return { html: out, tokens };
-}
-
-function restorePascalTags(jsx: string, tokens: Map<string, string>): string {
-  let out = jsx;
-  for (const [placeholder, name] of tokens) {
-    const lower = placeholder.toLowerCase();
-    out = out
-      .replace(new RegExp(`<${lower}\\s*/>`, 'g'), `<${name} />`)
-      .replace(new RegExp(`<${lower}([\\s>])`, 'g'), `<${name}$1`)
-      .replace(new RegExp(`</${lower}>`, 'g'), `</${name}>`);
-  }
-  return out;
+  const normalisedShell = htmlToJsx(
+    `${wrapper.openTag}${CHILDREN_PLACEHOLDER}${wrapper.closeTag}`,
+  );
+  const replacement = composed.length > 0 ? `\n${composed}\n` : '';
+  const body = normalisedShell.replace(CHILDREN_PLACEHOLDER, replacement);
+  return { imports: children, body };
 }
 
 /**
- * Mirrors the behaviour of single-page emit.writeComponent: lift Astro-
- * frontmatter imports, protect PascalCase refs through the HTML parser,
- * convert to JSX, restore refs, wrap in fragment, write TSX.
+ * Renders a single React component file. Composition components (e.g. Main
+ * with sibling Section child refs) get an ES import per child and the
+ * wrapper tags around composed JSX. Leaf components run their captured HTML
+ * through htmlToJsx.
  */
 function writeReactComponentFile(componentsDir: string, comp: ComponentDef): void {
   const filePath = join(componentsDir, `${comp.name}.tsx`);
-  const { imports, html: bodyHtml } = parseAstroFrontmatter(comp.html);
-  const { html: protectedHtml, tokens } = preservePascalTags(bodyHtml, imports);
-  const jsx = htmlToJsx(protectedHtml);
-  const restored = restorePascalTags(jsx, tokens);
+
+  let imports: string[];
+  let body: string;
+  if (isCompositionComponent(comp)) {
+    const composed = renderCompositionReact(comp);
+    imports = composed.imports;
+    body = composed.body;
+  } else {
+    imports = [];
+    body = htmlToJsx(comp.html);
+  }
 
   const importLines = imports
     .map((n) => `import { ${n} } from './${n}';`)
     .join('\n');
 
-  const wrappedBody = wrapInFragment(restored);
+  const wrappedBody = wrapInFragment(body);
 
   const content = [
     importLines.length > 0 ? importLines : null,

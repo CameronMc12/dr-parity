@@ -1,10 +1,12 @@
 /**
  * Write .tsx component files and the App/page composition.
  *
- * The shared body-slicer emits Astro-flavoured frontmatter on the Main
- * wrapper (a `---` block listing section imports). For React we strip
- * that fence, parse the import names back out, and re-emit them as ES
- * imports at the top of the React component file.
+ * The shared body-slicer returns Main as a structured composition
+ * (`wrapper.openTag` + `wrapper.closeTag` + `childComponentNames`, with
+ * `html: ''`). We render that directly as a React component file with
+ * ES imports for each child and the wrapper tags around composed JSX
+ * child references. Leaf components keep their captured `html` and go
+ * through `htmlToJsx`.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -23,84 +25,6 @@ function writeText(filePath: string, content: string): number {
   return Buffer.byteLength(content, 'utf8');
 }
 
-interface ParsedBody {
-  imports: string[];
-  html: string;
-}
-
-/**
- * The shared slicer wraps `<main>` content like this:
- *
- *   ---
- *   import Section01_Foo from './Section01_Foo.astro';
- *   import Section02_Bar from './Section02_Bar.astro';
- *   ---
- *   <main>
- *     <Section01_Foo />
- *     <Section02_Bar />
- *   </main>
- *
- * For React we need to (a) lift the imports out, (b) drop the fence, and
- * (c) the inner `<SectionNN_Foo />` references become real JSX elements
- * that html-to-jsx will pass through unchanged (they look like custom
- * tags to the parser, which is fine — they're PascalCase so JSX treats
- * them as React components).
- */
-function parseAstroFrontmatter(html: string): ParsedBody {
-  if (!html.startsWith('---')) {
-    return { imports: [], html };
-  }
-  const closing = html.indexOf('\n---', 3);
-  if (closing === -1) {
-    return { imports: [], html };
-  }
-  const frontmatter = html.slice(3, closing);
-  const rest = html.slice(closing + '\n---'.length).replace(/^\n/, '');
-
-  const importNames: string[] = [];
-  // Match `import Name from './Name.astro';`
-  const re = /import\s+([A-Za-z_$][\w$]*)\s+from\s+['"][^'"]+['"]\s*;?/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(frontmatter)) !== null) {
-    importNames.push(match[1]);
-  }
-  return { imports: importNames, html: rest };
-}
-
-/**
- * The shared slicer's Main body contains JSX-like self-closing references
- * like `<Section01_Foo />`. cheerio will lowercase the tag name during
- * parse, which would break the React component reference. Pre-rewrite
- * such tags to a placeholder that survives the round trip, then restore
- * them after JSX conversion.
- */
-function preservePascalTags(html: string, names: string[]): { html: string; tokens: Map<string, string> } {
-  const tokens = new Map<string, string>();
-  let out = html;
-  for (const name of names) {
-    const placeholder = `__DR_PARITY_COMP_${name}__`;
-    tokens.set(placeholder, name);
-    // Self-closing and paired forms.
-    out = out
-      .replace(new RegExp(`<${name}\\s*/>`, 'g'), `<${placeholder.toLowerCase()} />`)
-      .replace(new RegExp(`<${name}([\\s>])`, 'g'), `<${placeholder.toLowerCase()}$1`)
-      .replace(new RegExp(`</${name}>`, 'g'), `</${placeholder.toLowerCase()}>`);
-  }
-  return { html: out, tokens };
-}
-
-function restorePascalTags(jsx: string, tokens: Map<string, string>): string {
-  let out = jsx;
-  for (const [placeholder, name] of tokens) {
-    const lower = placeholder.toLowerCase();
-    out = out
-      .replace(new RegExp(`<${lower}\\s*/>`, 'g'), `<${name} />`)
-      .replace(new RegExp(`<${lower}([\\s>])`, 'g'), `<${name}$1`)
-      .replace(new RegExp(`</${lower}>`, 'g'), `</${name}>`);
-  }
-  return out;
-}
-
 export interface EmitOptions {
   /**
    * Tag names that should be wrapped in dangerouslySetInnerHTML by the
@@ -110,6 +34,41 @@ export interface EmitOptions {
   escapeHatchTags?: ReadonlySet<string>;
 }
 
+function isCompositionComponent(comp: ComponentDef): boolean {
+  return comp.wrapper !== undefined && comp.childComponentNames !== undefined;
+}
+
+// Placeholder for child composition during the JSX attribute-normalisation
+// pass. Chosen to be cheerio-safe (no special chars) and unlikely to clash
+// with any real captured HTML.
+const CHILDREN_PLACEHOLDER = 'W1C_WRAPPER_CHILDREN_PLACEHOLDER';
+
+/**
+ * Build the wrapper body. We splice a placeholder inside the captured
+ * open/close tags and run the whole thing through `htmlToJsx` so wrapper
+ * attributes pick up the same normalisation leaf components get (e.g.
+ * `class` → `className`, `for` → `htmlFor`). Then we replace the
+ * placeholder with the composed PascalCase child references — those are
+ * valid JSX components and never need normalisation.
+ */
+function renderCompositionReact(
+  comp: ComponentDef,
+  options: EmitOptions,
+): { imports: string[]; body: string } {
+  const wrapper = comp.wrapper as { openTag: string; closeTag: string };
+  const children = comp.childComponentNames ?? [];
+  const composed = children.map((n) => `  <${n} />`).join('\n');
+
+  const normalisedShell = htmlToJsx(
+    `${wrapper.openTag}${CHILDREN_PLACEHOLDER}${wrapper.closeTag}`,
+    { escapeHatchTags: options.escapeHatchTags },
+  );
+  const replacement =
+    composed.length > 0 ? `\n${composed}\n` : '';
+  const body = normalisedShell.replace(CHILDREN_PLACEHOLDER, replacement);
+  return { imports: children, body };
+}
+
 export function writeComponent(
   componentsDir: string,
   comp: ComponentDef,
@@ -117,22 +76,24 @@ export function writeComponent(
 ): { name: string; bytes: number } {
   const filePath = join(componentsDir, `${comp.name}.tsx`);
 
-  const { imports, html: bodyHtml } = parseAstroFrontmatter(comp.html);
+  let imports: string[];
+  let body: string;
+  if (isCompositionComponent(comp)) {
+    const composed = renderCompositionReact(comp, options);
+    imports = composed.imports;
+    body = composed.body;
+  } else {
+    imports = [];
+    body = htmlToJsx(comp.html, {
+      escapeHatchTags: options.escapeHatchTags,
+    });
+  }
 
-  // Protect PascalCase component references through the HTML parser.
-  const { html: protectedHtml, tokens } = preservePascalTags(bodyHtml, imports);
-
-  const jsx = htmlToJsx(protectedHtml, {
-    escapeHatchTags: options.escapeHatchTags,
-  });
-  const restored = restorePascalTags(jsx, tokens);
+  const wrappedBody = wrapInFragment(body);
 
   const importLines = imports
     .map((n) => `import { ${n} } from './${n}';`)
     .join('\n');
-
-  const body = restored.length > 0 ? restored : '';
-  const wrappedBody = wrapInFragment(body);
 
   const fileContent = [
     importLines.length > 0 ? importLines : null,
