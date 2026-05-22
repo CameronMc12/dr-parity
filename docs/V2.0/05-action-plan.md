@@ -506,63 +506,154 @@ Claude does not run Chrome MCP. Claude does not click around the live page in a 
 
 ---
 
-## 6. The replacement `/clone-website` skill
+## 6. The replacement `/clone-website` skill (SHIPPED Phase 6, agent W4A)
 
-### The skill's new role
+### Status
 
-Thin wrapper over `parity clone-site`. The skill does not compose its own pipeline, does not call `scripts/*.ts` directly, does not mention Chrome MCP. It validates URLs, runs `parity doctor`, dispatches one `parity clone-site` per URL (in parallel when independent), then reads `SUMMARY.md` and presents the outcome to Cameron.
+Shipped on `prototype-mode`. Source of truth: `.claude/skills/clone-website/SKILL.md`. Sister copy regenerated to `.github/skills/clone-website/SKILL.md` via `node scripts/sync-skills.mjs`.
 
-### Replacement SKILL.md body
+### The skill's role
 
-The body matches audit 04 F verbatim, with two amendments enforced by Cameron's overrides:
+Thin wrapper over `npx parity clone`. The skill does not compose its own pipeline, does not call `scripts/*.ts` directly, does not invoke any browser MCP. It validates URLs, dispatches one `parity clone` per URL (in parallel when independent), then reads `.runs/<runId>/SUMMARY.md` and presents the outcome to Cameron.
 
-1. Strip every Chrome MCP mention. The replacement skill does not reference Chrome MCP at any phase.
-2. Replace the audit's "Chrome MCP visual pass" guidance with: "Claude observes the live Playwright run through Claude Code. Findings are annotated in `.runs/<id>/SUMMARY.md` under the USER block."
+### Canonical command sequence
 
-The full body from audit 04 F (markdown fenced block titled `# /clone-website — Wrapper over \`parity clone-site\``) is reproduced into `.claude/skills/clone-website/SKILL.md` during Phase 6, with the Chrome MCP edits applied during the same commit.
+The skill prescribes exactly one sequence:
 
-### What NOT to do (blockade list)
+```bash
+npx playwright --version
+npx parity version
+npx parity clone "<url>" --target=<target>
+cat .runs/<runId>/SUMMARY.md
+npx parity qa verify "<project-dir>" --viewport=<failed-viewport>   # only if parity failed
+npx serve "<project-dir>"
+```
 
-The skill must never reach for any of these. They are either deleted by Phase 6 or aliased to deprecation warnings.
+### Edge case flag table (shipped)
 
-- `npx tsx scripts/extract.ts` (deleted Phase 2)
-- `npx tsx scripts/qa.ts` (deleted Phase 2)
-- `npx tsx scripts/qa-sections.ts` (deleted Phase 2)
-- `npx tsx scripts/capture.ts` (use `parity capture`)
-- `npx tsx scripts/clone-site.ts` (deleted Phase 6, use `parity clone-site`)
-- `npx tsx scripts/clone-urls.ts` (deleted Phase 6, use `parity clone-urls`)
-- `npx tsx scripts/run-clone.ts` (deleted Phase 6, use `parity clone`)
-- `npx tsx scripts/clone-page.ts` (deleted Phase 6, use `parity clone`)
-- `npx tsx scripts/parse-har.ts` (use `parity parse <dir> --har`)
-- `npx tsx scripts/parse-trace.ts` (use `parity parse <dir> --trace`)
-- `npx tsx scripts/complete-assets.ts` (use `parity complete-assets`)
-- `npx tsx scripts/build.ts` (use `parity build`)
-- `npx tsx scripts/rebuild-pro.ts` (use `parity rebuild`)
-- `npx tsx scripts/verify-parity.ts` (use `parity qa verify`)
-- `npm run build` (does not exist, never did)
-- `npm run dev` (does not exist, never did)
-- `npm run lint` (does not exist, never did)
+| Situation | Flag |
+|---|---|
+| Login required SPA | `--mode=persistent` |
+| Single viewport | `--viewport=desktop` (comma separated subset also accepted) |
+| Skip lazy load tour | `--no-tour` |
+| Skip parity gate (development only) | `--no-parity` |
+| Headed browser | `--headed` |
+| Custom parity threshold | `--parity-threshold=0.03` |
+| Resume an existing run record | `--run-id=<existing-id>` |
+
+### What NOT to do (shipped blockade list)
+
+The skill's blockade list, in the order it appears in SKILL.md:
+
+- `npx tsx scripts/extract.ts` (legacy, deprecated)
+- `npx tsx scripts/capture.ts` (replaced by `parity capture`)
+- `npx tsx scripts/clone-site.ts` (replaced by `parity clone-site`)
+- `npx tsx scripts/clone-urls.ts` (replaced by `parity clone-urls`)
+- `npx tsx scripts/run-clone.ts` (replaced by `parity clone`)
+- `npx tsx scripts/clone-page.ts` (replaced by `parity clone`)
+- `npx tsx scripts/parse-har.ts` (replaced by `parity parse <dir> --har`)
+- `npx tsx scripts/parse-trace.ts` (replaced by `parity parse <dir> --trace`)
+- `npx tsx scripts/complete-assets.ts` (replaced by `parity complete-assets`)
+- `npx tsx scripts/build.ts` (replaced by `parity build`)
+- `npx tsx scripts/rebuild-pro.ts` (replaced by `parity rebuild-pro`)
+- `npx tsx scripts/verify-parity.ts` (replaced by `parity qa verify`)
+- `npx tsx scripts/qa.ts` (replaced by `parity qa run`)
+- `npm run capture -- ...` and other npm aliases (work via shim, always prefer `parity`)
 - Chrome MCP for any visual pass (retired)
-- Hand-composing pipelines step by step (use `parity clone` or `parity clone-site`)
+- Any browser MCP (Playwright CLI is the only extraction surface)
+- Hand writing JSX or Astro from screenshots (let the engine emit components)
+- Hand composing pipelines step by step (use `parity clone`)
 
-If Claude reaches for any of these, the skill is broken. File a bug.
+### Verification
+
+- `cat .claude/skills/clone-website/SKILL.md | grep -i "chrome mcp"` returns only blockade mentions
+- `cat .claude/skills/clone-website/SKILL.md | grep "scripts/extract.ts"` returns only the blockade line
+- `grep -c "—" .claude/skills/clone-website/SKILL.md` returns 0
+- `parity test` continues to pass 2/2
 
 ---
 
-## 7. The harvest plus bug-fix loop
+## 7. The harvest plus bug-fix loop (SHIPPED Phase 6, agent W4A)
+
+### Status
+
+Shipped on `prototype-mode`. Command surface: `npx parity runs harvest`. Smoke test: `npx tsx scripts/smoke-parity-harvest.ts` (asserts the harvest picks up recurring-warning, repeat-error, parity-regression, and stuck-warning from a synthetic .runs fixture).
+
+### Shipped files
+
+- `engine/cli/runs-harvest.ts` (scanner + aggregator + ticket writer + INDEX writer)
+- `engine/cli/runs-harvest-cli.ts` (citty handler wrapping `harvestRuns`)
+- `engine/cli/run-manifest-read.ts` (path based manifest reader, surfaces `ManifestSchemaError`)
+- `engine/cli/event-stream-read.ts` (jsonl reader that tolerates aborted runs)
+- `scripts/smoke-parity-harvest.ts` (synthetic fixture + assertions)
+- `docs/parity-issues/INDEX.md` (seeded empty triage queue)
+- `bin/parity.ts` (`runs harvest` subcommand wired under the `runs` group)
+
+### Finding kinds emitted
+
+| Kind | Surface trigger |
+|---|---|
+| `recurring-warning` | Same stage + warning message in N+ runs (default N = 2) |
+| `repeat-error` | Same stage + error message in N+ runs |
+| `parity-regression` | Parity score dropped across consecutive runs for the same target |
+| `duration-drift` | Stage duration > 1.5x rolling median across 2+ runs |
+| `stuck-warning` | Warning with a `hint` field present in latest run AND repeated in earlier runs |
+
+### Severity classification
+
+| Type | Threshold | Severity |
+|---|---|---|
+| parity-regression | surface >= 3 | P1, else P2 |
+| repeat-error | surface >= 3 | P1, else P2 |
+| stuck-warning | surface >= 4 | P1, else P2 |
+| recurring-warning | surface >= 5 | P2, else P3 |
+| duration-drift | surface >= 4 | P2, else P3 |
+
+### Ticket schema (locked)
+
+Every ticket under `docs/parity-issues/<slug>.md` carries:
+
+```markdown
+# <finding-slug>
+
+**Severity:** P1 | P2 | P3
+**Type:** recurring-warning | repeat-error | parity-regression | duration-drift | stuck-warning
+**First seen:** <iso>
+**Last seen:** <iso>
+**Surface count:** N
+**Affected targets:** astro | react | webapp | all
+
+## Symptom
+<auto-generated paragraph from manifest + jsonl>
+
+## Affected Runs
+- `<runId>` (parity NN.N%, excerpt)
+- ...
+
+## Suggested Triage
+<heuristic suggestion keyed by finding type>
+
+## Status
+- [ ] Triaged by Cameron
+- [ ] Linked to fix PR
+- [ ] Resolved (which run confirmed)
+```
+
+### Idempotency
+
+The harvest writer is keyed by finding slug. A second harvest run updates the existing ticket in place rather than creating duplicates. The slug formula is `<finding-type>-<slugified-stage>-<slugified-message>` truncated to 96 chars.
 
 ### After every real-site clone
 
-1. Cameron runs `parity clone-site <url> --target=<t>` (or `parity clone <url>` for single-page).
-2. The run prints the run id and the path to `.runs/<id>/SUMMARY.md`.
-3. Cameron (with Claude in the loop) opens SUMMARY.md and reviews:
-   - Parity outcome table (per-viewport diff vs threshold)
-   - Pipeline timing (any stage way over budget)
-   - Issues encountered (auto-populated from stages' `issues[]`)
-   - Dr Parity bugs spotted (auto-suggestions)
-4. Cameron annotates the USER block with any human observations. Claude proposes annotations based on the live-run observations from section 5.
-5. When Cameron has accumulated a handful of clones (typically weekly), he runs `parity runs harvest`. Tickets land in `docs/parity-issues/`.
-6. `docs/parity-issues/INDEX.md` lists open tickets sorted by frequency and severity. The next Claude session picks the top ticket and implements the fix.
+1. Cameron runs `npx parity clone <url> --target=<t>` (multi page crawl arrives later).
+2. The run prints the run id and the path to `.runs/<runId>/SUMMARY.md`.
+3. Cameron and Claude open SUMMARY.md and review:
+   - Parity outcome table (per viewport diff vs threshold)
+   - Pipeline timing (any stage well over budget)
+   - Issues encountered (auto populated from stages' issues arrays)
+4. Cameron annotates the USER block with human observations.
+5. When Cameron has accumulated a handful of clones, he runs `npx parity runs harvest`. Tickets land in `docs/parity-issues/`.
+6. `docs/parity-issues/INDEX.md` lists open tickets sorted by severity then surface count. The next Claude session picks the top ticket and implements the fix.
 7. Every fix runs `parity test` before merge.
 
 ### Where promoted fixtures live
