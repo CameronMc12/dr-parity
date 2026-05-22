@@ -11,13 +11,24 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import {
+  CANONICAL_ROOT,
+  canonicalTimestamp,
+  cloneOutDir,
+  cloneSubdir,
+  defaultTargetFromHost,
+} from '../engine/cli/canonical-paths';
+
+const LEGACY_CAPTURE_ROOT = 'docs/research/captures';
 
 type CliArgs = {
   url?: string;
   viewports?: string;
-  out: string;
+  out?: string;
+  target?: string;
   tour: boolean;
   preview: boolean;
+  legacyOutput: boolean;
   help: boolean;
 };
 
@@ -33,7 +44,10 @@ Options:
                        desktop|mobile|
                        tablet|wide            (single viewport, ~4x faster)
                        <name>,<name>,...      (comma-separated subset)
-  --out=<dir>        Output root for captures. Default: docs/research/captures
+  --target=<slug>    Override the canonical target slug (defaults to host without TLD).
+  --out=<dir>        Output root override. Default (canonical): clones/<target>/<iso>/.
+                     With --legacy-output: docs/research/captures.
+  --legacy-output    Use the legacy docs/research/captures layout.
   --no-tour          Skip the scroll/hover tour during capture.
   --no-preview       Suppress the printed preview command at the end.
   -h, --help         Show this help.
@@ -43,9 +57,11 @@ function parseArgs(argv: string[]): CliArgs {
   const out: CliArgs = {
     url: undefined,
     viewports: undefined,
-    out: 'docs/research/captures',
+    out: undefined,
+    target: undefined,
     tour: true,
     preview: true,
+    legacyOutput: false,
     help: false,
   };
   const positional: string[] = [];
@@ -62,12 +78,20 @@ function parseArgs(argv: string[]): CliArgs {
       out.preview = false;
       continue;
     }
+    if (raw === '--legacy-output') {
+      out.legacyOutput = true;
+      continue;
+    }
     if (raw.startsWith('--viewport=')) {
       out.viewports = raw.slice('--viewport='.length);
       continue;
     }
     if (raw.startsWith('--out=')) {
       out.out = raw.slice('--out='.length);
+      continue;
+    }
+    if (raw.startsWith('--target=')) {
+      out.target = raw.slice('--target='.length).trim() || undefined;
       continue;
     }
     if (raw.startsWith('--')) {
@@ -77,6 +101,34 @@ function parseArgs(argv: string[]): CliArgs {
   }
   out.url = positional[0];
   return out;
+}
+
+interface RunLayout {
+  /** Capture output directory (where viewports land). */
+  captureDir: string;
+  /** Canonical run root (parent of `captures/`). Same as captureDir under legacy. */
+  runRoot: string;
+}
+
+/**
+ * Resolve the on-disk layout for this run.
+ *
+ * Canonical: `clones/<target>/<iso>/captures/`.
+ * Legacy: `docs/research/captures/<host>/<iso>/`.
+ */
+function resolveRunLayout(args: CliArgs, host: string): RunLayout {
+  const stamp = canonicalTimestamp();
+  if (args.legacyOutput) {
+    const outRoot = resolve(args.out ?? LEGACY_CAPTURE_ROOT);
+    const captureDir = join(outRoot, host, stamp);
+    return { captureDir, runRoot: captureDir };
+  }
+  const baseDir = args.out ? resolve(args.out) : resolve(CANONICAL_ROOT);
+  const target = args.target ?? defaultTargetFromHost(host);
+  return {
+    captureDir: resolve(cloneSubdir(target, stamp, 'captures', baseDir)),
+    runRoot: resolve(cloneOutDir(target, stamp, baseDir)),
+  };
 }
 
 function runStep(label: string, cmd: string, cmdArgs: string[]): Promise<number> {
@@ -121,10 +173,10 @@ function fmtMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-async function main(): Promise<number> {
+async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   let args: CliArgs;
   try {
-    args = parseArgs(process.argv.slice(2));
+    args = parseArgs(argv);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     console.error(HELP_TEXT);
@@ -148,10 +200,19 @@ async function main(): Promise<number> {
     return 2;
   }
 
-  const outRoot = resolve(args.out);
-  const hostParent = join(outRoot, host);
+  const layout = resolveRunLayout(args, host);
+  const captureDir = layout.captureDir;
 
-  const captureArgs = ['scripts/capture.ts', args.url, `--out=${outRoot}`];
+  // Capture writes its viewports directly into `captureDir`. The capture
+  // script's `--out` is the exact directory under canonical layout.
+  const captureArgs: string[] = ['scripts/capture.ts', args.url, `--out=${captureDir}`];
+  if (args.legacyOutput) {
+    // Under legacy layout, capture's --out is the parent root; restore that
+    // behaviour by passing the legacy parent and letting capture derive
+    // host/stamp itself.
+    captureArgs[2] = `--out=${resolve(args.out ?? LEGACY_CAPTURE_ROOT)}`;
+    captureArgs.push('--legacy-output');
+  }
   if (args.viewports) captureArgs.push(`--viewport=${args.viewports}`);
   if (!args.tour) captureArgs.push('--no-tour');
 
@@ -165,17 +226,23 @@ async function main(): Promise<number> {
     return captureCode;
   }
 
-  let captureDir: string;
-  try {
-    captureDir = newestSubdir(hostParent);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    return 1;
+  // Under legacy layout the capture script appends host/stamp, so recover
+  // the actual capture dir by scanning for the newest subdir.
+  let resolvedCaptureDir = captureDir;
+  if (args.legacyOutput) {
+    const legacyParent = join(resolve(args.out ?? LEGACY_CAPTURE_ROOT), host);
+    try {
+      resolvedCaptureDir = newestSubdir(legacyParent);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 1;
+    }
   }
-  console.log(`\nCapture dir: ${captureDir}`);
+  console.log(`\nCapture dir: ${resolvedCaptureDir}`);
+  console.log(`Run root  : ${layout.runRoot}`);
 
   const t1 = Date.now();
-  const harCode = await runStep('parse:har', 'npx', ['tsx', 'scripts/parse-har.ts', captureDir]);
+  const harCode = await runStep('parse:har', 'npx', ['tsx', 'scripts/parse-har.ts', resolvedCaptureDir]);
   phases.push({ label: 'parse:har', ms: Date.now() - t1 });
   if (harCode !== 0) return harCode;
 
@@ -183,24 +250,24 @@ async function main(): Promise<number> {
   const traceCode = await runStep('parse:trace', 'npx', [
     'tsx',
     'scripts/parse-trace.ts',
-    captureDir,
+    resolvedCaptureDir,
   ]);
   phases.push({ label: 'parse:trace', ms: Date.now() - t2 });
   if (traceCode !== 0) return traceCode;
 
   const viewportList = args.viewports
     ? args.viewports.split(',').map((s) => s.trim()).filter(Boolean)
-    : readdirSync(captureDir, { withFileTypes: true })
+    : readdirSync(resolvedCaptureDir, { withFileTypes: true })
         .filter((e) => e.isDirectory())
         .map((e) => e.name)
-        .filter((name) => existsSync(join(captureDir, name, 'parsed', 'document.html')));
+        .filter((name) => existsSync(join(resolvedCaptureDir, name, 'parsed', 'document.html')));
 
   const t2b = Date.now();
   for (const vp of viewportList) {
     const completeCode = await runStep('complete:assets', 'npx', [
       'tsx',
       'scripts/complete-assets.ts',
-      captureDir,
+      resolvedCaptureDir,
       `--viewport=${vp}`,
     ]);
     if (completeCode !== 0) {
@@ -209,7 +276,7 @@ async function main(): Promise<number> {
   }
   phases.push({ label: 'complete:assets', ms: Date.now() - t2b });
 
-  const cloneArgs = ['tsx', 'scripts/clone.ts', captureDir];
+  const cloneArgs = ['tsx', 'scripts/clone.ts', resolvedCaptureDir];
   if (args.viewports) cloneArgs.push(`--viewport=${args.viewports}`);
   const t3 = Date.now();
   const cloneCode = await runStep('clone', 'npx', cloneArgs);
@@ -220,14 +287,14 @@ async function main(): Promise<number> {
   for (const p of phases) console.log(`  ${p.label.padEnd(12)} ${fmtMs(p.ms)}`);
 
   if (args.preview) {
-    const viewports = readdirSync(captureDir, { withFileTypes: true })
+    const viewports = readdirSync(resolvedCaptureDir, { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => e.name)
-      .filter((name) => existsSync(join(captureDir, name, 'clone', 'index.html')));
+      .filter((name) => existsSync(join(resolvedCaptureDir, name, 'clone', 'index.html')));
     if (viewports.length > 0) {
       console.log('\nClone ready. Preview with:');
       for (const vp of viewports) {
-        console.log(`  npx serve "${join(captureDir, vp, 'clone')}"`);
+        console.log(`  npx serve "${join(resolvedCaptureDir, vp, 'clone')}"`);
       }
     }
   }
@@ -235,10 +302,15 @@ async function main(): Promise<number> {
   return 0;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (err) => {
-    console.error(err instanceof Error ? err.stack ?? err.message : String(err));
-    process.exit(1);
-  }
-);
+const isDirect = process.argv[1] && process.argv[1].endsWith('run-clone.ts');
+if (isDirect) {
+  main().then(
+    (code) => process.exit(code),
+    (err) => {
+      console.error(err instanceof Error ? err.stack ?? err.message : String(err));
+      process.exit(1);
+    }
+  );
+}
+
+export { main as runCloneEntry };
