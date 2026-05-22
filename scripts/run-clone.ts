@@ -184,23 +184,43 @@ function fmtMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+export interface RunCloneStagePhase {
+  label: string;
+  ms: number;
+  status: 'ok' | 'warn' | 'fail';
+  exitCode: number;
+}
+
+export interface RunCloneResult {
+  exitCode: number;
+  /** Actual dated capture directory containing per-viewport subdirs. */
+  captureRoot?: string;
+  /** Canonical run root (parent of `captures/`). Same as captureRoot under legacy. */
+  runRoot?: string;
+  /** Per-phase timing and status records, in execution order. */
+  phases: RunCloneStagePhase[];
+  /** Viewports that produced a clone (after the clone stage runs). */
+  viewports: string[];
+}
+
+async function main(argv: string[] = process.argv.slice(2)): Promise<RunCloneResult> {
+  const phases: RunCloneStagePhase[] = [];
   let args: CliArgs;
   try {
     args = parseArgs(argv);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     console.error(HELP_TEXT);
-    return 2;
+    return { exitCode: 2, phases, viewports: [] };
   }
   if (args.help) {
     console.log(HELP_TEXT);
-    return 0;
+    return { exitCode: 0, phases, viewports: [] };
   }
   if (!args.url) {
     console.error('Missing <url> positional argument.');
     console.error(HELP_TEXT);
-    return 2;
+    return { exitCode: 2, phases, viewports: [] };
   }
 
   let host: string;
@@ -208,7 +228,7 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
     host = hostnameOf(args.url);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    return 2;
+    return { exitCode: 2, phases, viewports: [] };
   }
 
   const layout = resolveRunLayout(args, host);
@@ -227,17 +247,20 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   if (args.viewports) captureCliArgs.push(`--viewport=${args.viewports}`);
   if (!args.tour) captureCliArgs.push('--no-tour');
 
-  const phases: { label: string; ms: number }[] = [];
-
   const t0 = Date.now();
   const captureCode = await runStage('capture', captureCliArgs, async () => {
     const result = await runCapture(captureCliArgs);
     return result.viewports.length > 0 && result.viewports.every((r) => !r.ok) ? 1 : 0;
   });
-  phases.push({ label: 'capture', ms: Date.now() - t0 });
+  phases.push({
+    label: 'capture',
+    ms: Date.now() - t0,
+    status: captureCode === 0 ? 'ok' : 'fail',
+    exitCode: captureCode,
+  });
   if (captureCode !== 0) {
     console.error(`capture failed (exit ${captureCode})`);
-    return captureCode;
+    return { exitCode: captureCode, runRoot: layout.runRoot, phases, viewports: [] };
   }
 
   // Under legacy layout the capture script appends host/stamp, so recover
@@ -249,7 +272,7 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
       resolvedCaptureDir = newestSubdir(legacyParent);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
-      return 1;
+      return { exitCode: 1, runRoot: layout.runRoot, phases, viewports: [] };
     }
   }
   console.log(`\nCapture dir: ${resolvedCaptureDir}`);
@@ -261,8 +284,21 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
     [resolvedCaptureDir],
     () => parseHarMain([resolvedCaptureDir]),
   );
-  phases.push({ label: 'parse:har', ms: Date.now() - t1 });
-  if (harCode !== 0) return harCode;
+  phases.push({
+    label: 'parse:har',
+    ms: Date.now() - t1,
+    status: harCode === 0 ? 'ok' : 'fail',
+    exitCode: harCode,
+  });
+  if (harCode !== 0) {
+    return {
+      exitCode: harCode,
+      captureRoot: resolvedCaptureDir,
+      runRoot: layout.runRoot,
+      phases,
+      viewports: [],
+    };
+  }
 
   const t2 = Date.now();
   const traceCode = await runStage(
@@ -270,8 +306,21 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
     [resolvedCaptureDir],
     () => parseTraceMain([resolvedCaptureDir]),
   );
-  phases.push({ label: 'parse:trace', ms: Date.now() - t2 });
-  if (traceCode !== 0) return traceCode;
+  phases.push({
+    label: 'parse:trace',
+    ms: Date.now() - t2,
+    status: traceCode === 0 ? 'ok' : 'fail',
+    exitCode: traceCode,
+  });
+  if (traceCode !== 0) {
+    return {
+      exitCode: traceCode,
+      captureRoot: resolvedCaptureDir,
+      runRoot: layout.runRoot,
+      phases,
+      viewports: [],
+    };
+  }
 
   const viewportList = args.viewports
     ? args.viewports.split(',').map((s) => s.trim()).filter(Boolean)
@@ -281,6 +330,8 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
         .filter((name) => existsSync(join(resolvedCaptureDir, name, 'parsed', 'document.html')));
 
   const t2b = Date.now();
+  let completeStatus: 'ok' | 'warn' = 'ok';
+  let lastCompleteCode = 0;
   for (const vp of viewportList) {
     const completeCliArgs = [resolvedCaptureDir, `--viewport=${vp}`];
     const completeCode = await runStage(
@@ -290,40 +341,65 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
     );
     if (completeCode !== 0) {
       console.warn(`complete:assets exited non-zero for ${vp} (continuing)`);
+      completeStatus = 'warn';
+      lastCompleteCode = completeCode;
     }
   }
-  phases.push({ label: 'complete:assets', ms: Date.now() - t2b });
+  phases.push({
+    label: 'complete:assets',
+    ms: Date.now() - t2b,
+    status: completeStatus,
+    exitCode: lastCompleteCode,
+  });
 
   const cloneCliArgs = [resolvedCaptureDir];
   if (args.viewports) cloneCliArgs.push(`--viewport=${args.viewports}`);
   const t3 = Date.now();
   const cloneCode = await runStage('clone', cloneCliArgs, () => cloneMain(cloneCliArgs));
-  phases.push({ label: 'clone', ms: Date.now() - t3 });
-  if (cloneCode !== 0) return cloneCode;
+  phases.push({
+    label: 'clone',
+    ms: Date.now() - t3,
+    status: cloneCode === 0 ? 'ok' : 'fail',
+    exitCode: cloneCode,
+  });
+  if (cloneCode !== 0) {
+    return {
+      exitCode: cloneCode,
+      captureRoot: resolvedCaptureDir,
+      runRoot: layout.runRoot,
+      phases,
+      viewports: [],
+    };
+  }
 
   console.log('\nPhase timings:');
   for (const p of phases) console.log(`  ${p.label.padEnd(12)} ${fmtMs(p.ms)}`);
 
-  if (args.preview) {
-    const viewports = readdirSync(resolvedCaptureDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .filter((name) => existsSync(join(resolvedCaptureDir, name, 'clone', 'index.html')));
-    if (viewports.length > 0) {
-      console.log('\nClone ready. Preview with:');
-      for (const vp of viewports) {
-        console.log(`  npx serve "${join(resolvedCaptureDir, vp, 'clone')}"`);
-      }
+  const producedViewports = readdirSync(resolvedCaptureDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .filter((name) => existsSync(join(resolvedCaptureDir, name, 'clone', 'index.html')));
+
+  if (args.preview && producedViewports.length > 0) {
+    console.log('\nClone ready. Preview with:');
+    for (const vp of producedViewports) {
+      console.log(`  npx serve "${join(resolvedCaptureDir, vp, 'clone')}"`);
     }
   }
 
-  return 0;
+  return {
+    exitCode: 0,
+    captureRoot: resolvedCaptureDir,
+    runRoot: layout.runRoot,
+    phases,
+    viewports: producedViewports,
+  };
 }
 
 const isDirect = process.argv[1] && process.argv[1].endsWith('run-clone.ts');
 if (isDirect) {
   main().then(
-    (code) => process.exit(code),
+    (result) => process.exit(result.exitCode),
     (err) => {
       console.error(err instanceof Error ? err.stack ?? err.message : String(err));
       process.exit(1);
