@@ -17,12 +17,33 @@
  */
 
 import { defineCommand, runMain } from "citty";
+import { runRegressionTest } from "../engine/cli/regression/run-test.js";
 
 const PARITY_VERSION = "2.0.0-dev";
 
 function stub(name: string): void {
   process.stdout.write(`stage: ${name} (not yet wired)\n`);
 }
+
+const testCommand = defineCommand({
+  meta: {
+    name: "test",
+    description:
+      "Run the regression corpus against every fixture under tests/fixtures/sites/. Exits non-zero on any regression.",
+  },
+  args: {
+    root: {
+      type: "string",
+      description: "Override the repo root used to resolve fixtures.",
+      valueHint: "path",
+    },
+  },
+  async run({ args }) {
+    const root = typeof args.root === "string" ? args.root : undefined;
+    const exitCode = await runRegressionTest(root);
+    process.exit(exitCode);
+  },
+});
 
 const cloneCommand = defineCommand({
   meta: {
@@ -278,6 +299,7 @@ const main = defineCommand({
     "clone-static": cloneStaticCommand,
     targets: targetsCommand,
     runs: runsCommand,
+    test: testCommand,
     version: versionCommand,
   },
 });
