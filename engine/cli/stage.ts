@@ -1,0 +1,77 @@
+/**
+ * In-process stage interface for the Dr Parity pipeline.
+ *
+ * Phase 4 scaffold per docs/V2.0/04-cli-and-logging-design.md (Part C, C.1)
+ * and docs/V2.0/05-action-plan.md (locked decision 4 in §2).
+ *
+ * Every Dr Parity pipeline step (capture, parse, complete-assets, clone,
+ * build, qa-verify, ...) implements `Stage<I, O>`. The orchestrator in
+ * `engine/cli/orchestrate.ts` composes them sequentially.
+ *
+ * Phase 5 will wire concrete stage implementations behind this contract
+ * and grow the Logger to write `.runs/<id>/pipeline.jsonl`. For now the
+ * Logger is stdout-only.
+ */
+
+export type StageStatus = "ok" | "warn" | "fail";
+
+export type MetricValue = number | string;
+
+export interface LogMeta {
+  readonly [key: string]: unknown;
+}
+
+export interface Logger {
+  info(msg: string, meta?: LogMeta): void;
+  warn(msg: string, meta?: LogMeta): void;
+  error(msg: string, meta?: LogMeta): void;
+  metric(name: string, value: MetricValue, meta?: LogMeta): void;
+  event(name: string, fields?: LogMeta): void;
+}
+
+export interface RunContext {
+  readonly runId: string;
+  readonly outDir: string;
+  readonly logger: Logger;
+  readonly startedAt: number;
+}
+
+export interface StageResult<O> {
+  readonly status: StageStatus;
+  readonly output: O;
+  readonly metrics?: Readonly<Record<string, MetricValue>>;
+  readonly warnings?: readonly string[];
+  readonly errors?: readonly string[];
+}
+
+export interface Stage<I, O> {
+  readonly name: string;
+  validateInput?(input: I): void | Promise<void>;
+  run(input: I, ctx: RunContext): Promise<StageResult<O>>;
+}
+
+/** Convenience helper for building well-typed ok results. */
+export function ok<O>(
+  output: O,
+  metrics?: Readonly<Record<string, MetricValue>>,
+): StageResult<O> {
+  return { status: "ok", output, metrics };
+}
+
+/** Convenience helper for warn results that still produce an output. */
+export function warn<O>(
+  output: O,
+  warnings: readonly string[],
+  metrics?: Readonly<Record<string, MetricValue>>,
+): StageResult<O> {
+  return { status: "warn", output, warnings, metrics };
+}
+
+/** Convenience helper for fail results. */
+export function fail<O>(
+  output: O,
+  errors: readonly string[],
+  metrics?: Readonly<Record<string, MetricValue>>,
+): StageResult<O> {
+  return { status: "fail", output, errors, metrics };
+}
