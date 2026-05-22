@@ -32,6 +32,7 @@
 
 import {
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   statSync,
@@ -47,12 +48,22 @@ import type { TargetAdapter, TargetMultiBuildSummary } from '../engine/targets/t
 import { runPostEmitMulti } from '../engine/orchestrator/post-build/post-emit-multi';
 import { runPostEmitMultiReact } from '../engine/orchestrator/post-build/post-emit-multi-react';
 import { runPostEmitMultiWebapp } from '../engine/orchestrator/post-build/post-emit-multi-webapp';
+import {
+  CANONICAL_ROOT,
+  canonicalTimestamp,
+  cloneOutDir,
+  cloneSubdir,
+  defaultTargetFromHost,
+  siteDir,
+} from '../engine/cli/canonical-paths';
+
+const LEGACY_CAPTURE_ROOT = 'docs/research/captures';
 
 type TargetName = 'astro' | 'react' | 'webapp';
 
 interface CliArgs {
   urls: string[];
-  out: string;
+  out?: string;
   astroOut?: string;
   viewports: string;
   rateLimitMs: number;
@@ -62,6 +73,8 @@ interface CliArgs {
   force: boolean;
   skipFailed: boolean;
   target: TargetName;
+  targetSlug?: string;
+  legacyOutput: boolean;
   help: boolean;
 }
 
@@ -76,9 +89,14 @@ Options:
   --urls=<file>        Newline-separated URL list. Lines starting with # ignored.
   --url=<url>          Repeatable. Mixed with --urls= entries.
   --target=<name>      Framework target: astro | react | webapp. Default: astro.
-  --out=<dir>          Capture root. Default: docs/research/captures.
+  --target-slug=<slug> Override the canonical target slug (defaults to host).
+  --out=<dir>          Output root override. Default (canonical):
+                       clones/<target-slug>/<iso-timestamp>/. With
+                       --legacy-output: docs/research/captures.
+  --legacy-output      Use the legacy docs/research/captures layout.
   --astro-out=<dir>    Project output directory. Despite the legacy name this
-                       applies to whatever --target is set to. Default:
+                       applies to whatever --target is set to. Default
+                       (canonical): <run-root>/sites/<target>. Legacy:
                        <out>/<host>/<target>-site-urls.
   --viewport=<list>    desktop|mobile|tablet|wide|all (default: desktop).
   --rate-limit-ms=N    Delay between page captures (default 2000).
@@ -93,7 +111,7 @@ Options:
 function parseArgs(argv: string[]): CliArgs {
   const out: CliArgs = {
     urls: [],
-    out: 'docs/research/captures',
+    out: undefined,
     astroOut: undefined,
     viewports: 'desktop',
     rateLimitMs: 2000,
@@ -103,6 +121,8 @@ function parseArgs(argv: string[]): CliArgs {
     force: false,
     skipFailed: false,
     target: 'astro',
+    targetSlug: undefined,
+    legacyOutput: false,
     help: false,
   };
   for (const raw of argv) {
@@ -112,6 +132,11 @@ function parseArgs(argv: string[]): CliArgs {
     if (raw === '--no-post-emit') { out.postEmit = false; continue; }
     if (raw === '--force') { out.force = true; continue; }
     if (raw === '--skip-failed') { out.skipFailed = true; continue; }
+    if (raw === '--legacy-output') { out.legacyOutput = true; continue; }
+    if (raw.startsWith('--target-slug=')) {
+      out.targetSlug = raw.slice('--target-slug='.length).trim() || undefined;
+      continue;
+    }
     if (raw.startsWith('--urls=')) {
       const file = raw.slice('--urls='.length);
       const lines = readFileSync(file, 'utf8').split(/\r?\n/);
@@ -196,14 +221,23 @@ async function delay(ms: number): Promise<void> {
 
 async function captureAndCloneOne(
   url: string,
-  outRoot: string,
+  capturesRoot: string,
   tour: boolean,
   viewports: string,
 ): Promise<string | null> {
   const host = hostnameOf(url);
-  const hostParent = join(outRoot, host);
+  const hostParent = join(capturesRoot, host);
 
-  const captureArgs = ['scripts/capture.ts', url, `--out=${outRoot}`, `--viewport=${viewports}`];
+  // Use --legacy-output here because we want per-URL host/iso subdirs
+  // under the supplied captures root. The captures root itself is canonical
+  // (clones/<target>/<iso>/captures) when invoked from a canonical run.
+  const captureArgs = [
+    'scripts/capture.ts',
+    url,
+    `--out=${capturesRoot}`,
+    '--legacy-output',
+    `--viewport=${viewports}`,
+  ];
   if (!tour) captureArgs.push('--no-tour');
 
   const captureCode = await runStep('capture', 'npx', ['tsx', ...captureArgs]);
@@ -277,9 +311,39 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-async function main(): Promise<number> {
+interface RunLayout {
+  /** Canonical run root. Same as capturesRoot under legacy mode. */
+  runRoot: string;
+  /** Parent dir under which per-URL captures live (with host/iso subdirs). */
+  capturesRoot: string;
+  /** Default project emit directory (sites/<target>). */
+  defaultSiteDir: string;
+}
+
+function resolveRunLayout(args: CliArgs, host: string): RunLayout {
+  const targetFramework = args.target;
+  if (args.legacyOutput) {
+    const captures = resolve(args.out ?? LEGACY_CAPTURE_ROOT);
+    return {
+      runRoot: captures,
+      capturesRoot: captures,
+      defaultSiteDir: join(captures, host, `${targetFramework}-site-urls`),
+    };
+  }
+  const baseDir = args.out ? resolve(args.out) : resolve(CANONICAL_ROOT);
+  const slug = args.targetSlug ?? defaultTargetFromHost(host);
+  const stamp = canonicalTimestamp();
+  const runRoot = resolve(cloneOutDir(slug, stamp, baseDir));
+  return {
+    runRoot,
+    capturesRoot: resolve(cloneSubdir(slug, stamp, 'captures', baseDir)),
+    defaultSiteDir: resolve(siteDir(slug, stamp, targetFramework, baseDir)),
+  };
+}
+
+async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   let args: CliArgs;
-  try { args = parseArgs(process.argv.slice(2)); }
+  try { args = parseArgs(argv); }
   catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     console.error(HELP_TEXT);
@@ -297,9 +361,13 @@ async function main(): Promise<number> {
     console.log(`(deduped ${args.urls.length - dedup.length} duplicate URLs)`);
   }
 
-  const outRoot = resolve(args.out);
   const host = hostnameOf(dedup[0]);
-  const sPath = statePath(outRoot, host);
+  const layout = resolveRunLayout(args, host);
+  // capturesRoot is the parent under which each URL gets host/iso subdirs
+  // (captures script invoked with --legacy-output).
+  const capturesRoot = layout.capturesRoot;
+  mkdirSync(capturesRoot, { recursive: true });
+  const sPath = statePath(capturesRoot, host);
   const prior = loadState(sPath);
 
   const state: ClonesState = prior ?? {
@@ -313,7 +381,8 @@ async function main(): Promise<number> {
   const failedUrls = new Set(state.failed);
 
   console.log(`\n=== Phase 1/2: Capture + Clone (${dedup.length} URLs) ===`);
-  console.log(`  capture root : ${outRoot}`);
+  console.log(`  run root     : ${layout.runRoot}`);
+  console.log(`  captures dir : ${capturesRoot}`);
   console.log(`  viewport     : ${args.viewports}`);
   console.log(`  rate limit   : ${args.rateLimitMs}ms`);
   if (prior) {
@@ -334,7 +403,7 @@ async function main(): Promise<number> {
 
     let cloneDir: string | null = null;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
-      cloneDir = await captureAndCloneOne(url, outRoot, args.tour, args.viewports);
+      cloneDir = await captureAndCloneOne(url, capturesRoot, args.tour, args.viewports);
       if (cloneDir) break;
       if (attempt === 1) console.warn(`  attempt 1 failed, retrying once...`);
     }
@@ -363,8 +432,12 @@ async function main(): Promise<number> {
     for (const u of state.failed) console.log(`  - ${u}`);
   }
 
-  // Site manifest
-  const siteManifestPath = join(outRoot, host, 'urls-clone-manifest.json');
+  // Site manifest lives at the run root (canonical) or alongside the host
+  // captures dir (legacy).
+  const siteManifestPath = args.legacyOutput
+    ? join(capturesRoot, host, 'urls-clone-manifest.json')
+    : join(layout.runRoot, 'urls-clone-manifest.json');
+  mkdirSync(resolve(siteManifestPath, '..'), { recursive: true });
   writeFileSync(
     siteManifestPath,
     JSON.stringify({
@@ -385,8 +458,7 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  const defaultProjectDir = `${args.target}-site-urls`;
-  const projectOut = args.astroOut ? resolve(args.astroOut) : join(outRoot, host, defaultProjectDir);
+  const projectOut = args.astroOut ? resolve(args.astroOut) : layout.defaultSiteDir;
   console.log(`\n=== Phase 2/2: ${args.target} emit (${state.completed.length} pages) ===`);
   console.log(`  target  : ${args.target}`);
   console.log(`  out dir : ${projectOut}`);
@@ -496,10 +568,15 @@ async function main(): Promise<number> {
   return 0;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (err) => {
-    console.error(err instanceof Error ? err.stack ?? err.message : String(err));
-    process.exit(1);
-  },
-);
+const isDirect = process.argv[1] && process.argv[1].endsWith('clone-urls.ts');
+if (isDirect) {
+  main().then(
+    (code) => process.exit(code),
+    (err) => {
+      console.error(err instanceof Error ? err.stack ?? err.message : String(err));
+      process.exit(1);
+    },
+  );
+}
+
+export { main as cloneUrlsEntry };
