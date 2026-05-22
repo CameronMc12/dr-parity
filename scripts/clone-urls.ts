@@ -42,10 +42,13 @@ import { spawn } from 'node:child_process';
 
 import { astroAdapter } from '../engine/targets/astro';
 import { reactAdapter } from '../engine/targets/react';
+import { webappAdapter } from '../engine/targets/webapp';
 import type { TargetAdapter, TargetMultiBuildSummary } from '../engine/targets/types';
 import { runPostEmitMulti } from '../engine/orchestrator/post-build/post-emit-multi';
+import { runPostEmitMultiReact } from '../engine/orchestrator/post-build/post-emit-multi-react';
+import { runPostEmitMultiWebapp } from '../engine/orchestrator/post-build/post-emit-multi-webapp';
 
-type TargetName = 'astro' | 'react';
+type TargetName = 'astro' | 'react' | 'webapp';
 
 interface CliArgs {
   urls: string[];
@@ -72,7 +75,7 @@ Usage:
 Options:
   --urls=<file>        Newline-separated URL list. Lines starting with # ignored.
   --url=<url>          Repeatable. Mixed with --urls= entries.
-  --target=<name>      Framework target: astro | react. Default: astro.
+  --target=<name>      Framework target: astro | react | webapp. Default: astro.
   --out=<dir>          Capture root. Default: docs/research/captures.
   --astro-out=<dir>    Project output directory. Despite the legacy name this
                        applies to whatever --target is set to. Default:
@@ -133,8 +136,8 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (raw.startsWith('--target=')) {
       const v = raw.slice('--target='.length).trim();
-      if (v !== 'astro' && v !== 'react') {
-        throw new Error(`Invalid --target: ${v} (must be astro or react)`);
+      if (v !== 'astro' && v !== 'react' && v !== 'webapp') {
+        throw new Error(`Invalid --target: ${v} (must be astro, react, or webapp)`);
       }
       out.target = v;
       continue;
@@ -145,11 +148,13 @@ function parseArgs(argv: string[]): CliArgs {
 }
 
 function resolveAdapter(target: TargetName): TargetAdapter {
-  const adapter = target === 'astro' ? astroAdapter : reactAdapter;
-  if (typeof adapter.buildMulti !== 'function') {
-    throw new Error(`Adapter "${target}" does not implement buildMulti`);
-  }
-  return adapter;
+  if (target === 'astro') return astroAdapter;
+  if (target === 'react') return reactAdapter;
+  // Webapp is single-page-only by design (SPA with React Router emits
+  // routes from its captured crawl graph); buildMulti is intentionally
+  // absent. The webapp branch in main() drives the single-page adapter
+  // contract and runs runPostEmitMultiWebapp afterwards.
+  return webappAdapter;
 }
 
 function runStep(label: string, cmd: string, cmdArgs: string[]): Promise<number> {
@@ -387,6 +392,47 @@ async function main(): Promise<number> {
   console.log(`  out dir : ${projectOut}`);
 
   const adapter = resolveAdapter(args.target);
+
+  // Webapp does not implement buildMulti; the emitted SPA produces its own
+  // per-route components from the captured crawl graph. Drive the single
+  // page adapter contract using the first captured clone as the seed, then
+  // run the dedicated webapp post-emit pipeline.
+  if (args.target === 'webapp') {
+    const seedPage = state.completed[0];
+    const buildSummary = await adapter.build({
+      cloneDir: seedPage.cloneDir,
+      outDir: projectOut,
+      name: host.replace(/[^a-z0-9.-]/gi, '-'),
+      force: args.force,
+    });
+    console.log(`\n${args.target} project: ${projectOut}`);
+    console.log(`  components emitted: ${buildSummary.componentsEmitted}`);
+    console.log(`  pages emitted     : ${buildSummary.pagesEmitted}`);
+    console.log(`  assets: ${buildSummary.assetCount} files (${formatBytes(buildSummary.assetBytes)})`);
+    if (state.completed.length > 1) {
+      console.log(
+        `  note: webapp seeded from ${seedPage.url}; the SPA emits routes from its captured crawl graph, so the other ${state.completed.length - 1} URLs are not consumed by the emit step.`,
+      );
+    }
+
+    if (!args.postEmit) {
+      console.log('\n--no-post-emit set; skipping webapp post-emit pipeline.');
+      return 0;
+    }
+
+    console.log(`\n=== Post-emit pipeline (webapp) ===`);
+    const webappPostEmit = await runPostEmitMultiWebapp({ outDir: projectOut });
+    console.log(`\nPost-emit summary:`);
+    for (const phase of webappPostEmit.phases) {
+      const dur = phase.metrics.durationMs;
+      console.log(
+        `  ${phase.name.padEnd(24)} ${phase.status}${typeof dur === 'number' ? ` (${dur}ms)` : ''}`,
+      );
+      for (const err of phase.errors) console.log(`    - ${err}`);
+    }
+    return webappPostEmit.passed ? 0 : 1;
+  }
+
   const summary = (await adapter.buildMulti!({
     pages: state.completed.map((p) => ({ cloneDir: p.cloneDir, pathname: p.pathname, url: p.url })),
     outDir: projectOut,
@@ -407,10 +453,25 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  // The post-emit pipeline (centralise-content, edit-playbook, verify-render)
-  // is Astro-specific. The React multi-page output ships a runnable Vite
-  // project as-is; downstream verification for React will land in a
-  // separate orchestrator pass.
+  // Centralise-content, edit-playbook, and verify-render only fit astro's
+  // single-import layout. The react path runs its own narrower post-emit
+  // that extracts CSS and injects the preserved @media rules.
+  if (args.target === 'react') {
+    console.log(`\n=== Post-emit pipeline (react) ===`);
+    const reactPostEmit = await runPostEmitMultiReact({
+      outDir: projectOut,
+      cloneDirs: state.completed.map((p) => p.cloneDir),
+    });
+    console.log(`\nPost-emit summary:`);
+    console.log(`  css rules        : ${reactPostEmit.cssRulesCount}`);
+    console.log(`  @media rules     : ${reactPostEmit.mediaRuleCount}`);
+    console.log(`  pages patched    : ${reactPostEmit.pagesPatched}`);
+    if (reactPostEmit.publicCssPath) {
+      console.log(`  public sheet     : ${reactPostEmit.publicCssPath}`);
+    }
+    return 0;
+  }
+
   if (args.target !== 'astro') {
     console.log(`\nSkipping post-emit pipeline: not implemented for target "${args.target}".`);
     return 0;
