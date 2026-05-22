@@ -92,9 +92,11 @@ export const webappAdapter: TargetAdapter = {
     const absOut = resolve(options.outDir);
     const name = options.name ?? deriveDefaultName(absClone);
     const force = options.force ?? false;
-    // `crawlDir` is webapp-specific; allow scripts to pass it through the
-    // shared TargetBuildOptions surface via a structural cast.
-    const crawlDir = (options as { crawlDir?: string }).crawlDir;
+    // `crawlDir` now lives on the shared `TargetBuildOptions` contract so
+    // scripts can pass it through without a structural cast. Astro and
+    // React adapters ignore this field; only the webapp target consumes
+    // it (stateful build mode).
+    const crawlDir = options.crawlDir;
 
     const summary = await buildWebappProject({
       cloneDir: absClone,

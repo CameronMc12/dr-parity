@@ -20,6 +20,14 @@ export interface TargetBuildOptions {
   force?: boolean;
   /** Primitives config, target-agnostic. */
   primitives?: unknown;
+  /**
+   * Optional path to a crawler output directory (graph.json + per-state DOM
+   * snapshots). Consumed exclusively by the webapp target's stateful build
+   * mode. Other adapters MUST ignore this field. It lives on the shared
+   * contract so that script drivers can pass crawl input without resorting
+   * to structural casts.
+   */
+  crawlDir?: string;
 }
 
 export interface TargetBuildSummary {
