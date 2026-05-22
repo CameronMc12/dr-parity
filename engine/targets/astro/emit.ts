@@ -23,17 +23,49 @@ function escapeForTsString(value: string): string {
 
 export function writeComponent(componentsDir: string, comp: ComponentDef): { name: string; bytes: number } {
   const filePath = join(componentsDir, `${comp.name}.astro`);
-  const safeHtml = applyIsInlineToComponentHtml(comp.html);
-  const normalised = stripTrailingFrontmatter(safeHtml);
-  const content = normalised.endsWith('\n') ? normalised : normalised + '\n';
+  const source = isCompositionComponent(comp)
+    ? renderCompositionAstro(comp)
+    : comp.html;
+  const safeHtml = applyIsInlineToComponentHtml(source);
+  const content = safeHtml.endsWith('\n') ? safeHtml : safeHtml + '\n';
   const bytes = writeText(filePath, content);
   return { name: comp.name, bytes };
 }
 
 /**
- * Components may have an Astro frontmatter fence (`---` ... `---`) at the top,
- * for example Main carries its child imports. We must only post-process the
- * HTML body that follows the closing fence; the frontmatter is TypeScript.
+ * A component is a composition wrapper when the shared slicer set its
+ * `wrapper` + `childComponentNames`. Such a component renders as:
+ *   ---
+ *   import Child from './Child.astro';
+ *   ---
+ *   <wrapper>
+ *     <Child />
+ *   </wrapper>
+ */
+function isCompositionComponent(comp: ComponentDef): boolean {
+  return comp.wrapper !== undefined && comp.childComponentNames !== undefined;
+}
+
+function renderCompositionAstro(comp: ComponentDef): string {
+  // wrapper is guaranteed non-null here by isCompositionComponent.
+  const wrapper = comp.wrapper as { openTag: string; closeTag: string };
+  const children = comp.childComponentNames ?? [];
+  const importLines = children
+    .map((n) => `import ${n} from './${n}.astro';`)
+    .join('\n');
+  const composed = children.map((token) => `  <${token} />`).join('\n');
+  const body =
+    composed.length > 0
+      ? `${wrapper.openTag}\n${composed}\n${wrapper.closeTag}`
+      : `${wrapper.openTag}${wrapper.closeTag}`;
+  return ['---', importLines, '---', body].join('\n');
+}
+
+/**
+ * Composition components carry an Astro frontmatter fence (`---` ... `---`)
+ * at the top — we must only post-process the HTML body that follows the
+ * closing fence; the frontmatter is TypeScript. Leaf components have no
+ * frontmatter and pass straight through.
  */
 function applyIsInlineToComponentHtml(html: string): string {
   if (!html.startsWith('---')) return injectIsInline(html);
@@ -43,15 +75,6 @@ function applyIsInlineToComponentHtml(html: string): string {
   const frontmatter = html.slice(0, fenceEnd);
   const rest = html.slice(fenceEnd);
   return frontmatter + injectIsInline(rest);
-}
-
-/**
- * Guard against a stray `---` at the end of the component body. Astro treats a
- * second fence after the JSX as a syntax error, so we strip any trailing fence
- * (with optional surrounding whitespace) before writing.
- */
-function stripTrailingFrontmatter(html: string): string {
-  return html.replace(/\s*\n---\s*$/, '\n');
 }
 
 export function writeLayout(layoutsDir: string, head: ExtractedHead): { name: string; bytes: number } {

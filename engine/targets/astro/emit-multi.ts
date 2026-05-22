@@ -104,10 +104,17 @@ export function emitMultiPage(opts: MultiEmitOptions): MultiEmitSummary {
     }
   }
 
-  // Write shared components.
+  // Write shared components. SHAREABLE_ROLES excludes 'main', so shared
+  // entries are always leaf components (no wrapper / childComponentNames).
+  // Build a minimal ComponentDef from the SharedEntry and pass through the
+  // unified writer.
   const sharedNames: string[] = [];
   for (const entry of sharedFingerprints.values()) {
-    writeComponentFile(sharedDir, entry.canonicalName, entry.html);
+    writeComponentFile(sharedDir, {
+      name: entry.canonicalName,
+      role: entry.role,
+      html: entry.html,
+    });
     sharedNames.push(entry.canonicalName);
   }
 
@@ -132,7 +139,7 @@ export function emitMultiPage(opts: MultiEmitOptions): MultiEmitSummary {
 
     // Write non-shared components to per-page folder.
     for (const comp of ownComponents) {
-      writeComponentFile(pageComponentsDir, comp.name, comp.html);
+      writeComponentFile(pageComponentsDir, comp);
       perPageCount += 1;
     }
 
@@ -174,13 +181,33 @@ function ensureDir(filePath: string): void {
   mkdirSync(dirname(filePath), { recursive: true });
 }
 
-function writeComponentFile(componentsDir: string, name: string, html: string): void {
-  const filePath = join(componentsDir, `${name}.astro`);
-  const safeHtml = applyIsInlineToComponentHtml(html);
-  const normalised = stripTrailingFrontmatter(safeHtml);
-  const content = normalised.endsWith('\n') ? normalised : normalised + '\n';
+function writeComponentFile(componentsDir: string, comp: ComponentDef): void {
+  const filePath = join(componentsDir, `${comp.name}.astro`);
+  const source = isCompositionComponent(comp)
+    ? renderCompositionAstro(comp)
+    : comp.html;
+  const safeHtml = applyIsInlineToComponentHtml(source);
+  const content = safeHtml.endsWith('\n') ? safeHtml : safeHtml + '\n';
   ensureDir(filePath);
   writeFileSync(filePath, content, 'utf8');
+}
+
+function isCompositionComponent(comp: ComponentDef): boolean {
+  return comp.wrapper !== undefined && comp.childComponentNames !== undefined;
+}
+
+function renderCompositionAstro(comp: ComponentDef): string {
+  const wrapper = comp.wrapper as { openTag: string; closeTag: string };
+  const children = comp.childComponentNames ?? [];
+  const importLines = children
+    .map((n) => `import ${n} from './${n}.astro';`)
+    .join('\n');
+  const composed = children.map((token) => `  <${token} />`).join('\n');
+  const body =
+    composed.length > 0
+      ? `${wrapper.openTag}\n${composed}\n${wrapper.closeTag}`
+      : `${wrapper.openTag}${wrapper.closeTag}`;
+  return ['---', importLines, '---', body].join('\n');
 }
 
 function applyIsInlineToComponentHtml(html: string): string {
@@ -191,10 +218,6 @@ function applyIsInlineToComponentHtml(html: string): string {
   const frontmatter = html.slice(0, fenceEnd);
   const rest = html.slice(fenceEnd);
   return frontmatter + injectIsInline(rest);
-}
-
-function stripTrailingFrontmatter(html: string): string {
-  return html.replace(/\s*\n---\s*$/, '\n');
 }
 
 function writeLayout(layoutsDir: string, head: ExtractedHead): void {
