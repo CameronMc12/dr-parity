@@ -1,0 +1,49 @@
+# Omnisocials-specific extras for the crawler blocklist.
+# Used via: tsx scripts/crawl-webapp.ts <url> --blocklist=docs/blocklists/omnisocials.txt
+# Defaults already cover delete/logout/payment-funnel/publish/send-message — see engine/targets/webapp/crawler/blocklist.ts
+
+# Mutation actions in omnisocials
+save
+save changes
+submit
+create
+create post
+new post
+schedule
+schedule post
+post now
+confirm
+apply
+approve
+update
+send
+
+# Social-media-specific destructive
+boost post
+promote
+duplicate
+copy link
+
+# Scheduling / publishing — hard block (user request: never schedule a post)
+schedule for later
+schedule now
+schedule and publish
+schedule and post
+add to queue
+add to schedule
+queue
+queue post
+queue and publish
+post immediately
+publish now
+publish later
+publish post
+share
+share now
+share post
+go live
+broadcast
+send post
+send for approval
+submit for approval
+post to

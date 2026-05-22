@@ -1,0 +1,51 @@
+# Phase 1: crawl Home and all left-nav routes ONLY.
+# Drafts area is excluded here and crawled separately in Phase 2.
+# Used via: tsx scripts/crawl-webapp.ts <url> --blocklist=docs/blocklists/omnisocials-phase1.txt
+
+# === Same as omnisocials.txt extras ===
+save
+save changes
+submit
+create
+create post
+new post
+schedule
+schedule post
+post now
+confirm
+apply
+approve
+update
+send
+
+boost post
+promote
+duplicate
+copy link
+
+schedule for later
+schedule now
+schedule and publish
+schedule and post
+add to queue
+add to schedule
+queue
+queue post
+queue and publish
+post immediately
+publish now
+publish later
+publish post
+share
+share now
+share post
+go live
+broadcast
+send post
+send for approval
+submit for approval
+post to
+
+# === Phase 1 ONLY: skip Drafts area (crawled in phase 2) ===
+drafts
+new draft
