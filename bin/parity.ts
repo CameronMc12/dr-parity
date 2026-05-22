@@ -94,8 +94,8 @@ const cloneCommand = defineCommand(
       },
       "parity-threshold": {
         type: "string",
-        description: "Pixel diff threshold for parity verification.",
-        default: "0.02",
+        description:
+          "Pixel diff threshold for parity verification. When omitted, the per-target default applies (astro 0.02, react 0.20, webapp 0.20).",
         valueHint: "ratio",
       },
       out: {
