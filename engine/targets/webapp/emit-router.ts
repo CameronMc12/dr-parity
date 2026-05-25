@@ -91,7 +91,19 @@ export function emitStatefulMain(
   const socketImport = withSockets
     ? ["import { startSocketMocks } from './mocks/socket';"]
     : [];
-  const socketBoot = withSockets ? ['    startSocketMocks();'] : [];
+  // Guard the socket-replay boot: mock-socket throws on a duplicate URL (e.g.
+  // captured replays whose query strings normalise to the same endpoint, or a
+  // re-invoked bootstrap during HMR). A socket-mock failure must NEVER block the
+  // React render, so it is caught and logged rather than rejecting bootstrap.
+  const socketBoot = withSockets
+    ? [
+        '    try {',
+        '      startSocketMocks();',
+        '    } catch (err) {',
+        "      console.warn('[dr-parity] socket mocks failed to start:', err);",
+        '    }',
+      ]
+    : [];
 
   const content = [
     "import React from 'react';",

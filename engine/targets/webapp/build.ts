@@ -23,8 +23,8 @@ import type { RouteEntry } from './emit';
 import { writeScaffold } from './scaffold';
 import { loadCrawlGraph, inferStateGroups } from './inference';
 import type { RouteGroup } from './inference';
-import { emitStatefulComponent, writeStatefulPage } from './emit-stateful';
-import { emitRouter, emitStatefulMain } from './emit-router';
+import { emitStatefulMain } from './emit-router';
+import { emitShellSplit } from './shell-split';
 import { emitMocks } from './emit-mocks';
 import { emitRealtime } from './emit-realtime';
 import { writeRealtimeOutputs } from './emit-realtime/write-outputs';
@@ -103,9 +103,6 @@ async function buildFromCrawl(
   const loaded = await loadCrawlGraph(options.crawlDir);
   const inference = await inferStateGroups(loaded.graph, loaded.getStateDom);
 
-  const srcDir = join(absOut, 'src');
-  const pagesDir = join(srcDir, 'pages');
-
   // Scaffold expects a list of RouteEntry — derive from inferred routes.
   const routeEntries: RouteEntry[] = inference.routes.map((r: RouteGroup) => ({
     path: r.routePath,
@@ -114,17 +111,18 @@ async function buildFromCrawl(
 
   writeScaffold(absOut, { name: options.name, routes: routeEntries });
 
-  // Per-route stateful component. Base HTML comes from the base state DOM.
-  let componentsEmitted = 0;
-  for (const routeGroup of inference.routes) {
-    const rawHtml = await loaded.getStateDom(routeGroup.baseStateGroup.baseStateId);
-    const baseHtml = assetMap ? rewriteBodyAssetUrls(rawHtml, assetMap) : rawHtml;
-    const result = emitStatefulComponent({ route: routeGroup, baseHtml });
-    writeStatefulPage(pagesDir, result);
-    componentsEmitted++;
-  }
-
-  emitRouter(inference.routes, absOut);
+  // Shell/content split: detect the persistent app shell shared across routes
+  // vs the per-route content outlet, emit the shell ONCE as a layout component
+  // with a React Router <Outlet/>, emit each route as a content-only component
+  // nested under the layout, and wire the layout-route tree in router.tsx. The
+  // shell stays mounted across client-side navigations; only the outlet swaps.
+  const split = await emitShellSplit({
+    routes: inference.routes,
+    getStateDom: loaded.getStateDom,
+    assetMap,
+    outDir: absOut,
+  });
+  const componentsEmitted = split.contentComponents + 1; // + layout
 
   // Phase 4: mocked backend. emitMocks reads network.jsonl (+ forms.jsonl)
   // from the crawl dir and overwrites the scaffold's empty handlers.ts +
