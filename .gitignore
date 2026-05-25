@@ -82,3 +82,8 @@ temp/
 
 # Regression corpus regenerable artefacts (per-fixture screenshots + diffs)
 tests/fixtures/sites/*/rebuild-pixel-diff/
+
+# Captured secrets + webapp clone output (contain live JWTs / session data)
+clones/
+docs/research/crawl/
+docs/research/audit/

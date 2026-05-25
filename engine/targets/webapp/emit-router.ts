@@ -9,7 +9,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { pascalCase } from '../shared';
+import { deriveComponentName } from './route-naming';
 import type { RouteGroup } from './inference/types';
 
 function ensureDir(filePath: string): void {
@@ -25,12 +25,6 @@ function writeText(filePath: string, content: string): number {
 export interface RouterRouteEntry {
   routePath: string;
   componentName: string;
-}
-
-function deriveComponentName(routePath: string): string {
-  if (routePath === '/' || routePath.length === 0) return 'HomePage';
-  const slug = routePath.replace(/^\/+|\/+$/g, '').replace(/\//g, '-');
-  return `${pascalCase(slug)}Page`;
 }
 
 export function buildRouteEntries(routes: RouteGroup[]): RouterRouteEntry[] {
@@ -78,19 +72,39 @@ export function emitRouter(
   return { name: 'router', bytes };
 }
 
-export function emitStatefulMain(outDir: string): { name: string; bytes: number } {
+export interface EmitStatefulMainOptions {
+  /**
+   * When true, `main.tsx` imports `./mocks/socket` and starts the captured
+   * websocket replay in dev. Defaults to false so the no-realtime path emits
+   * exactly the same boot as before.
+   */
+  startSocketMocks?: boolean;
+}
+
+export function emitStatefulMain(
+  outDir: string,
+  options: EmitStatefulMainOptions = {},
+): { name: string; bytes: number } {
   const filePath = join(outDir, 'src', 'main.tsx');
+  const withSockets = options.startSocketMocks === true;
+
+  const socketImport = withSockets
+    ? ["import { startSocketMocks } from './mocks/socket';"]
+    : [];
+  const socketBoot = withSockets ? ['    startSocketMocks();'] : [];
 
   const content = [
     "import React from 'react';",
     "import ReactDOM from 'react-dom/client';",
     "import { AppRouter } from './router';",
     "import { runPostHydrationSync } from './lib/post-hydration-sync';",
+    ...socketImport,
     '',
     'async function bootstrap(): Promise<void> {',
     '  if (import.meta.env.DEV) {',
     "    const { worker } = await import('./mocks/browser');",
     "    await worker.start({ onUnhandledRequest: 'bypass' });",
+    ...socketBoot,
     '  }',
     '',
     "  const rootEl = document.getElementById('root');",

@@ -54,6 +54,12 @@ export interface WebappBuildSummary {
   pagesEmitted: number;
   assetCount: number;
   assetBytes: number;
+  /** Phase 4: distinct endpoint groups emitted into `src/mocks/handlers.ts`. */
+  endpointsEmitted: number;
+  /** Phase 4: fixture JSON files written under `src/fixtures/`. */
+  fixturesEmitted: number;
+  /** Phase 5: websocket connection groups replayed via `src/mocks/socket.ts`. */
+  wsConnectionsEmitted: number;
 }
 
 /**

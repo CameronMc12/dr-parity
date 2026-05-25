@@ -12,7 +12,8 @@ import { loadNetworkRecords } from './parse-network';
 import { groupByEndpoint } from './group-endpoints';
 import { buildFixtures } from './build-fixtures';
 import { buildHandlersFile, buildEmptyHandlersFile } from './build-handlers';
-import type { EmitMocksResult, FixtureFile } from './types';
+import { redactString, redactSecrets } from '../redact';
+import type { EmitMocksResult, FixtureFile, RequestRecord } from './types';
 
 export type { RequestRecord, EndpointGroup, GeneratedHandler, EmitMocksResult, FixtureFile } from './types';
 export { loadNetworkRecords } from './parse-network';
@@ -22,11 +23,21 @@ export { buildFixtures, slugifyPath, fixtureImportName, normalizeRequestBody } f
 export { buildBranchingHandler } from './branch-by-body';
 export { buildHandlersFile, buildEmptyHandlersFile } from './build-handlers';
 
+function redactRecord(rec: RequestRecord): RequestRecord {
+  return {
+    ...rec,
+    requestBody: rec.requestBody != null ? redactString(rec.requestBody) : rec.requestBody,
+    responseBody: rec.responseBody != null ? redactString(rec.responseBody) : rec.responseBody,
+    responseHeaders: redactSecrets(rec.responseHeaders),
+  };
+}
+
 export async function emitMocks(
   crawlDir: string,
   outDir: string,
 ): Promise<EmitMocksResult> {
-  const { records, warnings } = await loadNetworkRecords(crawlDir);
+  const { records: rawRecords, warnings } = await loadNetworkRecords(crawlDir);
+  const records = rawRecords.map(redactRecord);
 
   if (records.length === 0) {
     const handlersTs = buildEmptyHandlersFile();

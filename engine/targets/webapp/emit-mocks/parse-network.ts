@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { RequestRecord } from './types';
+import { isStaticAssetRequest } from './static-asset';
 
 type RawRequestLine = {
   kind: 'request';
@@ -75,6 +76,7 @@ function pairRequestsAndResponses(
   // event ordering for non-redirected traffic.
   const pending = new Map<string, RawRequestLine[]>();
   const records: RequestRecord[] = [];
+  let staticDropped = 0;
 
   const keyOf = (method: string, url: string): string => `${method.toUpperCase()} ${url}`;
 
@@ -112,13 +114,19 @@ function pairRequestsAndResponses(
     }
     void matchedKey;
 
+    const responseHeaders = line.headers ?? {};
+    if (isStaticAssetRequest({ url: req.url, headers: responseHeaders })) {
+      staticDropped++;
+      continue;
+    }
+
     records.push({
       method: req.method.toUpperCase(),
       url: req.url,
       requestBody: req.postData ?? null,
       responseStatus: line.status,
       responseBody: line.body ?? null,
-      responseHeaders: line.headers ?? {},
+      responseHeaders,
       capturedAt: line.capturedAt,
     });
   }
@@ -128,6 +136,9 @@ function pairRequestsAndResponses(
   for (const list of pending.values()) leftover += list.length;
   if (leftover > 0) {
     warnings.push(`Dropped ${leftover} request(s) without a paired response.`);
+  }
+  if (staticDropped > 0) {
+    warnings.push(`Dropped ${staticDropped} static-asset request(s) (js/css/font/image/wasm).`);
   }
 
   return records;
@@ -141,6 +152,14 @@ function loadForms(filePath: string, warnings: string[]): RequestRecord[] {
     if (!parsed) continue;
     if (!parsed.request || !parsed.response) {
       warnings.push(`forms.jsonl line missing request/response: ${parsed.formName ?? '?'}`);
+      continue;
+    }
+    if (
+      isStaticAssetRequest({
+        url: parsed.request.url,
+        headers: parsed.response.headers,
+      })
+    ) {
       continue;
     }
     out.push({

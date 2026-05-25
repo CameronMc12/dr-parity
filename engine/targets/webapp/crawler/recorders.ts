@@ -106,11 +106,28 @@ export async function startRecorders(
     try {
       const cdp = await context.newCDPSession(page);
       await cdp.send('Network.enable');
+
+      // Track the connection URL per requestId so every frame can be
+      // attributed to its socket endpoint during replay emit.
+      const urlByRequestId = new Map<string, string>();
+
+      cdp.on('Network.webSocketCreated', (evt) => {
+        urlByRequestId.set(evt.requestId, evt.url);
+        // Persist a `created` marker so the emit loader can join frames
+        // to their URL even if a frame line lacks one.
+        writeLine(streams.websocket, {
+          kind: 'created',
+          capturedAt: nowIso(),
+          requestId: evt.requestId,
+          url: evt.url,
+        });
+      });
       cdp.on('Network.webSocketFrameSent', (evt) => {
         writeLine(streams.websocket, {
           capturedAt: nowIso(),
           direction: 'sent',
           requestId: evt.requestId,
+          url: urlByRequestId.get(evt.requestId) ?? null,
           timestamp: evt.timestamp,
           opcode: evt.response.opcode,
           payloadData: evt.response.payloadData.slice(0, 10_000),
@@ -121,6 +138,7 @@ export async function startRecorders(
           capturedAt: nowIso(),
           direction: 'received',
           requestId: evt.requestId,
+          url: urlByRequestId.get(evt.requestId) ?? null,
           timestamp: evt.timestamp,
           opcode: evt.response.opcode,
           payloadData: evt.response.payloadData.slice(0, 10_000),

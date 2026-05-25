@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import type { RouteGroup, StateToggle } from '../inference/types';
-import { pascalCase } from '../../shared';
+import { deriveComponentName } from '../route-naming';
 
 import { deriveToggleNames, type ToggleNames } from './name-deriver';
 import { emitStateHooks } from './state-hooks';
@@ -24,12 +24,6 @@ export { emitDismissEffects } from './dismiss-effects';
 export { injectTriggerHandlers } from './inject-handlers';
 export { emitOverlayBlocks } from './overlay-render';
 export { emitComponentShell } from './component-shell';
-
-function deriveComponentName(routePath: string): string {
-  if (routePath === '/' || routePath.length === 0) return 'HomePage';
-  const slug = routePath.replace(/^\/+|\/+$/g, '').replace(/\//g, '-');
-  return `${pascalCase(slug)}Page`;
-}
 
 export interface StatefulEmitInput {
   route: RouteGroup;

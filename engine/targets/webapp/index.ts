@@ -63,6 +63,11 @@ export type {
 } from './inference';
 export { emitStatefulComponent, writeStatefulPage } from './emit-stateful';
 export { emitRouter, emitStatefulMain } from './emit-router';
+export { emitMocks } from './emit-mocks';
+export { emitRealtime } from './emit-realtime';
+export { writeRealtimeOutputs } from './emit-realtime/write-outputs';
+export { emitSpec } from './emit-spec';
+export type { EmitSpecResult } from './emit-spec';
 
 function deriveDefaultName(cloneDir: string): string {
   const manifestPath = join(cloneDir, 'manifest.json');

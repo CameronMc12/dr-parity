@@ -14,7 +14,7 @@ import { join, resolve } from 'node:path';
 import * as cheerioModule from 'cheerio';
 const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 
-import { extractHead, sliceBody, copyAssetsToPublic, pascalCase } from '../shared';
+import { extractHead, sliceBody, copyAssetsToPublic } from '../shared';
 import { htmlToJsx } from '../react/html-to-jsx';
 import { writeApp, writeComponent, writeIndexHtml, writeMain } from './emit';
 import type { RouteEntry } from './emit';
@@ -23,6 +23,11 @@ import { loadCrawlGraph, inferStateGroups } from './inference';
 import type { RouteGroup } from './inference';
 import { emitStatefulComponent, writeStatefulPage } from './emit-stateful';
 import { emitRouter, emitStatefulMain } from './emit-router';
+import { emitMocks } from './emit-mocks';
+import { emitRealtime } from './emit-realtime';
+import { writeRealtimeOutputs } from './emit-realtime/write-outputs';
+import { emitSpec } from './emit-spec';
+import { deriveComponentName } from './route-naming';
 import type { ComponentDef } from '../shared/types';
 import type {
   WebappBuildOptions,
@@ -73,12 +78,6 @@ export function validateCloneDir(cloneDir: string): void {
   }
 }
 
-function deriveComponentName(routePath: string): string {
-  if (routePath === '/' || routePath.length === 0) return 'HomePage';
-  const slug = routePath.replace(/^\/+|\/+$/g, '').replace(/\//g, '-');
-  return `${pascalCase(slug)}Page`;
-}
-
 async function buildFromCrawl(
   options: WebappBuildOptions & { crawlDir: string },
   absClone: string,
@@ -115,8 +114,35 @@ async function buildFromCrawl(
   }
 
   emitRouter(inference.routes, absOut);
-  emitStatefulMain(absOut);
+
+  // Phase 4: mocked backend. emitMocks reads network.jsonl (+ forms.jsonl)
+  // from the crawl dir and overwrites the scaffold's empty handlers.ts +
+  // writes fixtures into src/fixtures/. The empty case emits a valid
+  // zero-handler file, so this never breaks the no-traffic path.
+  const mocks = await emitMocks(options.crawlDir, absOut);
+
+  // Phase 5: websocket replay. emitRealtime returns code without touching
+  // disk; writeRealtimeOutputs persists src/mocks/socket.ts + ws fixtures.
+  // Frames-present is the only case that wires socket.ts into the boot.
+  const realtime = await emitRealtime(options.crawlDir);
+  const hasSockets = realtime.connectionCount > 0;
+  if (hasSockets) {
+    writeRealtimeOutputs(absOut, realtime);
+  }
+
+  emitStatefulMain(absOut, { startSocketMocks: hasSockets });
   writeIndexHtml({ outDir: absOut, head });
+
+  // Phase 6: documentation inventory. Reuses the same parse/group passes
+  // as emit-mocks plus the inferred state groups. Guarded internally for
+  // empty network/websocket logs.
+  const spec = await emitSpec({
+    crawlDir: options.crawlDir,
+    outDir: absOut,
+    name: options.name,
+    routes: inference.routes,
+  });
+  void spec;
 
   return {
     outDir: absOut,
@@ -124,6 +150,9 @@ async function buildFromCrawl(
     pagesEmitted: inference.routes.length,
     assetCount: assetStats.count,
     assetBytes: assetStats.bytes,
+    endpointsEmitted: mocks.endpointCount,
+    fixturesEmitted: mocks.fixtureCount,
+    wsConnectionsEmitted: realtime.connectionCount,
   };
 }
 
@@ -210,5 +239,8 @@ export async function buildWebappProject(
     pagesEmitted: routeEntries.length,
     assetCount: assetStats.count,
     assetBytes: assetStats.bytes,
+    endpointsEmitted: 0,
+    fixturesEmitted: 0,
+    wsConnectionsEmitted: 0,
   };
 }
