@@ -77,6 +77,78 @@ function neutraliseEmbedded($: any): void {
 }
 
 /**
+ * Captured-open overlay containers that must NOT show on base-body load.
+ * The base-state capture sometimes freezes a modal/backdrop open; rendering it
+ * verbatim covers the underlying page. These selectors target clear modal /
+ * backdrop / overlay containers only — page chrome (sidebar, top bar, main
+ * content) never matches.
+ */
+const OPEN_OVERLAY_SELECTORS = [
+  'dialog.modal',
+  '.modal-backdrop',
+  '.cdk-overlay-backdrop',
+  '.cdk-overlay-container',
+] as const;
+
+const FIXED_Z_INDEX_THRESHOLD = 100;
+const MODAL_HINT_RE = /(^|[\s_-])(modal|backdrop|overlay|dialog|drawer|sheet)([\s_-]|$)/i;
+
+const HIDE_RULE = 'display: none !important;';
+
+function hideElement($el: any): void {
+  $el.attr('hidden', '');
+  const existing = ($el.attr('style') ?? '').trim();
+  if (existing.includes(HIDE_RULE)) return;
+  const sep = existing.length > 0 && !existing.endsWith(';') ? '; ' : existing.length > 0 ? ' ' : '';
+  $el.attr('style', `${existing}${sep}${HIDE_RULE}`);
+}
+
+/** Read a `position: fixed` + numeric `z-index` from an inline style string. */
+function fixedHighZIndex(style: string): boolean {
+  if (!/position\s*:\s*fixed/i.test(style)) return false;
+  const match = /z-index\s*:\s*(\d+)/i.exec(style);
+  if (!match) return false;
+  return Number(match[1]) >= FIXED_Z_INDEX_THRESHOLD;
+}
+
+/**
+ * Neutralise captured-open modals / backdrops in the BASE body so the inbox
+ * shows by default. Trigger-gated overlay states are emitted separately and are
+ * untouched, so clicking a trigger still opens the real overlay.
+ *
+ * Three passes, all conservative:
+ *   1. Every `<dialog>` loses `open` and is hidden (top-layer modals).
+ *   2. Known modal / backdrop / overlay container classes are hidden.
+ *   3. `.ReactModalPortal` is hidden only when it has rendered children.
+ *   4. `position:fixed` + high `z-index` elements are hidden only when their
+ *      class/id also looks like a modal/backdrop/overlay (avoids real chrome).
+ */
+function neutraliseOpenOverlays($: any): void {
+  $('dialog').each((_i: number, el: any) => {
+    const $el = $(el);
+    $el.removeAttr('open');
+    hideElement($el);
+  });
+
+  for (const sel of OPEN_OVERLAY_SELECTORS) {
+    $(sel).each((_i: number, el: any) => hideElement($(el)));
+  }
+
+  $('.ReactModalPortal').each((_i: number, el: any) => {
+    const $el = $(el);
+    if ($el.children().length > 0) hideElement($el);
+  });
+
+  $('[style]').each((_i: number, el: any) => {
+    const $el = $(el);
+    const style = $el.attr('style') ?? '';
+    if (!fixedHighZIndex(style)) return;
+    const idClass = `${$el.attr('id') ?? ''} ${$el.attr('class') ?? ''}`;
+    if (MODAL_HINT_RE.test(idClass)) hideElement($el);
+  });
+}
+
+/**
  * Build the verbatim base-body HTML and the trigger wiring list.
  *
  * Triggers are matched by their captured CSS selector (cheerio, never regex)
@@ -91,6 +163,7 @@ export function buildVerbatimBody(
 ): VerbatimBodyResult {
   const $ = cheerio.load(baseHtml, null, false);
   neutraliseEmbedded($);
+  neutraliseOpenOverlays($);
 
   const triggers: TriggerWiring[] = [];
   const unmatched: string[] = [];
