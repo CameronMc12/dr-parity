@@ -10,3 +10,6 @@ export * from './crawler';
 export * from './nav-discovery';
 export * from './route-budget';
 export * from './route-recapture';
+export * from './click-ledger';
+export * from './overlay-settle';
+export { normalizeRouteUrl } from './url-normalize';

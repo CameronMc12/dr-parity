@@ -18,7 +18,8 @@
  * run through `redactString` so live tokens are not baked into fixtures.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 
 import { redactString } from '../redact';
@@ -92,16 +93,19 @@ export async function loadWsFrames(crawlDir: string): Promise<LoadResult> {
     return { frames: [], warnings };
   }
 
-  const raw = readFileSync(filePath, 'utf8');
-  const lines = raw.split('\n');
-
   const urlByRequestId = new Map<string, string>();
   const rawFrames: RawFrame[] = [];
   let parseFailures = 0;
   let binaryDropped = 0;
   let synthesizedCount = 0;
 
-  for (const line of lines) {
+  // Stream line-by-line so a multi-GB log never becomes a single string
+  // (Node caps strings at ~512MB).
+  const rl = createInterface({
+    input: createReadStream(filePath, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
+  });
+  for await (const line of rl) {
     if (line.trim().length === 0) continue;
     const parsed = parseLine(line);
     if (!parsed) {

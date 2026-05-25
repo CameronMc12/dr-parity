@@ -23,6 +23,7 @@ export type DiscoveredElement = {
   text: string;
   ariaLabel: string;
   tag: string;
+  role: string | null;
   blocked: boolean;
 };
 
@@ -31,6 +32,7 @@ type RawElement = {
   text: string;
   ariaLabel: string;
   tag: string;
+  role: string | null;
   blocked: boolean;
   selectorHint: string;
 };
@@ -106,6 +108,7 @@ export async function discoverInteractive(
       var text = (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
       var ariaLabel = el.getAttribute('aria-label') || '';
       var tag = el.tagName.toLowerCase();
+      var role = el.getAttribute('role');
       var blocked = isBlockedInPage(el);
       var testid = el.getAttribute('data-testid');
       var selectorHint = testid
@@ -114,7 +117,7 @@ export async function discoverInteractive(
             ? tag + '[aria-label="' + ariaLabel + '"]'
             : tag + (text ? ' ("' + text.slice(0, 30) + '")' : ''));
       w.__drParityElements.push(el);
-      out.push({ index: index, text: text, ariaLabel: ariaLabel, tag: tag, blocked: blocked, selectorHint: selectorHint });
+      out.push({ index: index, text: text, ariaLabel: ariaLabel, tag: tag, role: role, blocked: blocked, selectorHint: selectorHint });
       index++;
       if (out.length >= 200) break;
     }
@@ -126,6 +129,7 @@ export async function discoverInteractive(
   // Sanity guard: also run host-side blocklist (defence in depth).
   return raw.map((r) => ({
     ...r,
+    role: r.role ?? null,
     blocked:
       r.blocked ||
       isBlocked(

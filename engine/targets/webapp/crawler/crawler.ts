@@ -1,16 +1,21 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { chromium, type BrowserContext, type ElementHandle, type Page } from 'playwright';
+import { chromium, type Page } from 'playwright';
+import { clickSignature, createClickLedger } from './click-ledger';
+import { populateSearch, scrollToLoad } from './content-populate';
 import { computeDomHash } from './dom-hash';
 import {
   discoverInteractive,
   discoverRightClickTargets,
   type DiscoveredElement,
 } from './interactive-discovery';
+import { dismissStrayOverlays, waitForPopulatedOverlay, waitForSteadyState } from './overlay-settle';
+import { createRouteBudget } from './route-budget';
 import { buildSelectorForHandle } from './selector-builder';
 import { createSignatureScan, scanPage } from './signature-scan';
 import { captureState } from './state-capture';
 import { startRecorders, type Recorders } from './recorders';
+import { normalizeRouteUrl } from './url-normalize';
 import type {
   CrawlGraph,
   CrawlOptions,
@@ -20,6 +25,8 @@ import type {
   StateEdge,
   StateNode,
 } from './types';
+
+const ROUTE_INTERACTION_LIMIT = 60;
 
 const LOGIN_HINT_RE = /\/(login|signin|sign-in|signup|sign-up|auth)\b/i;
 
@@ -58,23 +65,31 @@ async function settle(page: Page, timeoutMs = 1_500): Promise<void> {
   await page.waitForTimeout(200);
 }
 
-async function dismissOverlay(page: Page, expectedUrl: string): Promise<void> {
-  await page.keyboard.press('Escape').catch(() => {});
-  await page.waitForTimeout(250);
-  try {
-    await page.mouse.click(5, 5);
-  } catch {
-    // noop
+/**
+ * Restore the base view after an overlay interaction WITHOUT reloading when
+ * possible. Dismisses the overlay (Escape + backdrop, re-checked) and verifies
+ * restoration by comparing the post-dismiss normalised DOM hash to the captured
+ * base hash. Only falls back to a full `page.goto` reload when dismissal failed
+ * to restore the base (hash mismatch) or the URL drifted to another route.
+ */
+async function restoreBase(
+  page: Page,
+  expectedUrl: string,
+  baseHash: string,
+): Promise<void> {
+  await dismissStrayOverlays(page);
+
+  const urlDrifted = normalizeRouteUrl(page.url()) !== normalizeRouteUrl(expectedUrl);
+  if (!urlDrifted) {
+    const { hash } = await computeDomHash(page);
+    if (hash === baseHash) return; // restored in place — no reload needed
   }
-  await page.waitForTimeout(250);
-  // Navigate back if the URL drifted unintentionally
-  if (page.url() !== expectedUrl) {
-    try {
-      await page.goto(expectedUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-      await settle(page);
-    } catch {
-      // best-effort
-    }
+
+  try {
+    await page.goto(expectedUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+    await settle(page);
+  } catch {
+    // best-effort
   }
 }
 
@@ -91,24 +106,35 @@ function makeEdge(
   };
 }
 
+type InteractResult =
+  | { ok: true }
+  | { ok: false; reason: 'missing' | 'error'; error?: string };
+
+/**
+ * Resolve the element FRESH at click time by stable selector, never by a
+ * stashed `window.__drParityElements` index (stale after any DOM mutation /
+ * SPA re-render). A 0-match resolution means the element no longer exists after
+ * prior interactions — that is skipped gracefully, not counted as an error.
+ */
 async function tryInteract(
   page: Page,
-  index: number,
+  selector: string,
   kind: 'click' | 'right-click',
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<InteractResult> {
+  let target;
   try {
-    const handleScript = `((window.__drParityElements && window.__drParityElements[${index}]) || null)`;
-    const handle = await page.evaluateHandle(handleScript);
-    const el = handle.asElement() as ElementHandle<HTMLElement> | null;
-    if (!el) return { ok: false, error: 'element handle null' };
-    if (kind === 'click') {
-      await el.click({ timeout: 2_000, force: false });
-    } else {
-      await el.click({ timeout: 2_000, button: 'right' });
-    }
+    const locator = page.locator(selector).first();
+    if ((await locator.count()) === 0) return { ok: false, reason: 'missing' };
+    target = locator;
+  } catch {
+    return { ok: false, reason: 'missing' };
+  }
+  try {
+    const button = kind === 'right-click' ? 'right' : 'left';
+    await target.click({ timeout: 2_000, button, force: false });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, reason: 'error', error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -175,7 +201,15 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
   };
 
   const hashToStateId = new Map<string, string>();
-  const visitedUrls = new Set<string>();
+  // Normalised route keys we have already BASE-captured. Each distinct route
+  // is base-captured exactly once; this is the primary loop guard.
+  const baseCapturedRoutes = new Set<string>();
+  // Normalised route keys already enqueued, to avoid duplicate queue entries.
+  const enqueuedRoutes = new Set<string>();
+  const clickLedger = createClickLedger();
+  const routeBudget = createRouteBudget(ROUTE_INTERACTION_LIMIT, (routePath, limit) => {
+    console.log(`[crawl] route budget exhausted for ${routePath} (limit ${limit})`);
+  });
   let blockedCount = 0;
   let errorCount = 0;
   let stateIndex = 0;
@@ -230,14 +264,20 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
   }
 
   const queue: QueueItem[] = [{ url: opts.startUrl, depth: 0, viaEdge: null }];
+  enqueuedRoutes.add(normalizeRouteUrl(opts.startUrl));
   let reachedLimit: CrawlSummary['reachedLimit'] = 'queue-empty';
 
-  const captureCurrent = async (depth: number): Promise<StateNode | null> => {
+  // Capture the current DOM. Returns the node plus its dom hash so callers can
+  // scope per-state ledgers. Reuses an existing node when the (normalised) DOM
+  // hash already exists, which is the core state-dedup guard.
+  const captureCurrent = async (
+    depth: number,
+  ): Promise<{ node: StateNode; hash: string } | null> => {
     const { hash } = await computeDomHash(page);
     const existing = hashToStateId.get(hash);
     if (existing) {
       const found = graph.nodes.find((n) => n.id === existing);
-      return found ?? null;
+      return found ? { node: found, hash } : null;
     }
     stateIndex++;
     const result = await captureState(page, opts.outDir, stateIndex, depth);
@@ -245,7 +285,7 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
     graph.nodes.push(result.node);
     signatureScan.add(result.rawHtml);
     persistGraph();
-    return result.node;
+    return { node: result.node, hash };
   };
 
   while (queue.length > 0) {
@@ -261,7 +301,12 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
     const item = queue.shift()!;
     if (item.depth > opts.maxDepth) continue;
 
-    if (page.url() !== item.url) {
+    const routeKey = normalizeRouteUrl(item.url);
+    // Route-once guard: a route that has already been base-captured is never
+    // re-explored. This is what stops the 96x-same-route loop.
+    if (baseCapturedRoutes.has(routeKey) && item.viaEdge === null) continue;
+
+    if (normalizeRouteUrl(page.url()) !== routeKey) {
       try {
         await page.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       } catch (err) {
@@ -276,58 +321,140 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
       await settle(page);
     }
 
-    const node = await captureCurrent(item.depth);
-    if (!node) continue;
+    // Close any modal/dialog/overlay left open before the BASE capture so the
+    // snapshot is the real underlying view, not a view behind a stuck modal.
+    await dismissStrayOverlays(page);
+    // Wait for the route to FULLY settle (network idle + DOM-mutation quiet)
+    // before the single base capture, so heavy SPAs are snapshotted at steady
+    // state rather than mid-load.
+    await waitForSteadyState(page);
+
+    const base = await captureCurrent(item.depth);
+    if (!base) continue;
+    const node = base.node;
+    const baseHash = base.hash;
 
     if (item.viaEdge) {
       graph.edges.push({ ...item.viaEdge, toStateId: node.id });
       persistGraph();
     }
 
-    visitedUrls.add(item.url);
+    baseCapturedRoutes.add(routeKey);
+
+    // Content-population pass. Wake lazy/infinite content with safe read-only
+    // actions (scroll + benign search query) so list rows, inbox items, chat
+    // history and search results are captured populated rather than as empty
+    // shells. Each population action self-restores (scroll-to-top / Escape) and
+    // any resulting distinct DOM is captured via the dedup'd captureCurrent, so
+    // the route-once guard and the no-reload behaviour are unaffected.
+    if (Date.now() <= deadline && graph.nodes.length < opts.maxStates) {
+      await scrollToLoad(page);
+      await waitForSteadyState(page, { quietMs: 400, timeoutMs: 6_000 });
+      const scrolled = await captureCurrent(item.depth);
+      if (scrolled && scrolled.node.id !== node.id) {
+        graph.edges.push(
+          makeEdge(node.id, scrolled.node.id, {
+            kind: 'keyboard',
+            selector: 'window',
+            selectorLabel: 'scroll-to-load',
+            elementTag: 'window',
+          }),
+        );
+        persistGraph();
+      }
+    }
+
+    if (Date.now() <= deadline && graph.nodes.length < opts.maxStates) {
+      const beforeSearchUrl = page.url();
+      const populated = await populateSearch(page);
+      if (populated) {
+        const search = await captureCurrent(item.depth + 1);
+        if (search && search.node.id !== node.id) {
+          graph.edges.push(
+            makeEdge(node.id, search.node.id, {
+              kind: 'keyboard',
+              selector: 'cu-search-modal-toggle',
+              selectorLabel: 'search-populate',
+              elementTag: 'input',
+              opensOverlay: true,
+            }),
+          );
+          persistGraph();
+        }
+      }
+      // populateSearch closes search with Escape; restore base in place if the
+      // search UI left any stray overlay or drifted the DOM.
+      await restoreBase(page, beforeSearchUrl, baseHash);
+    }
 
     if (item.depth >= opts.maxDepth) continue;
 
-    // Click pass
-    const elements: DiscoveredElement[] = await discoverInteractive(page, opts.extraBlocklist);
-    for (const el of elements) {
-      if (Date.now() > deadline) break;
-      if (graph.nodes.length >= opts.maxStates) break;
+    // Click pass. Capture stable selectors UP FRONT from the single discovery
+    // pass, BEFORE any click mutates the DOM. We then resolve each element
+    // fresh by selector at click time, so the stale-index problem is gone.
+    const discovered: DiscoveredElement[] = await discoverInteractive(page, opts.extraBlocklist);
+    const targets: { interaction: Interaction; role: string | null }[] = [];
+    for (const el of discovered) {
       if (el.blocked) {
         blockedCount++;
         continue;
       }
+      const selector = await buildSelectorForHandle(page, el.index);
+      targets.push({
+        role: el.role,
+        interaction: {
+          kind: 'click',
+          selector: selector?.selector ?? el.selectorHint,
+          selectorLabel: selector?.label ?? (el.text || el.ariaLabel || el.tag),
+          elementTag: selector?.tag ?? el.tag,
+        },
+      });
+    }
+
+    for (const { interaction, role } of targets) {
+      if (Date.now() > deadline) break;
+      if (graph.nodes.length >= opts.maxStates) break;
+      if (routeBudget.isExhausted(routeKey)) {
+        routeBudget.logIfFirstHit(routeKey);
+        break;
+      }
+
+      // Per-state click ledger: never re-click the same element on this state.
+      const sig = clickSignature({
+        selector: interaction.selector,
+        role,
+        text: interaction.selectorLabel,
+      });
+      if (clickLedger.seen(baseHash, sig)) continue;
+      clickLedger.mark(baseHash, sig);
+      routeBudget.bump(routeKey);
 
       const beforeUrl = page.url();
-      const { hash: beforeHash } = await computeDomHash(page);
 
-      const selector = await buildSelectorForHandle(page, el.index);
-      const interaction: Interaction = {
-        kind: 'click',
-        selector: selector?.selector ?? el.selectorHint,
-        selectorLabel: selector?.label ?? (el.text || el.ariaLabel || el.tag),
-        elementTag: selector?.tag ?? el.tag,
-      };
-
-      const click = await tryInteract(page, el.index, 'click');
+      const click = await tryInteract(page, interaction.selector, 'click');
       if (!click.ok) {
-        errorCount++;
-        recorders.writeError({
-          kind: 'click-failed',
-          selector: interaction.selector,
-          message: click.error,
-        });
+        // Element gone after prior interactions — skip silently. Only true
+        // click errors are recorded.
+        if (click.reason === 'error') {
+          errorCount++;
+          recorders.writeError({
+            kind: 'click-failed',
+            selector: interaction.selector,
+            message: click.error,
+          });
+        }
         continue;
       }
 
       await settle(page);
 
       const afterUrl = page.url();
-      const { hash: afterHash } = await computeDomHash(page);
 
-      if (afterUrl !== beforeUrl) {
-        // Treat as route navigation; enqueue if not visited.
-        if (!visitedUrls.has(afterUrl)) {
+      if (normalizeRouteUrl(afterUrl) !== routeKey) {
+        // Route navigation. Enqueue the new route once (normalised key).
+        const afterKey = normalizeRouteUrl(afterUrl);
+        if (!baseCapturedRoutes.has(afterKey) && !enqueuedRoutes.has(afterKey)) {
+          enqueuedRoutes.add(afterKey);
           queue.push({
             url: afterUrl,
             depth: item.depth + 1,
@@ -338,7 +465,7 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
             },
           });
         }
-        // Go back to the originating state for further exploration.
+        // Return to the originating route for further exploration.
         try {
           await page.goto(beforeUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 });
           await settle(page);
@@ -348,54 +475,71 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
         continue;
       }
 
-      if (afterHash !== beforeHash) {
-        const overlayNode = await captureCurrent(item.depth + 1);
-        if (overlayNode && overlayNode.id !== node.id) {
-          graph.edges.push(makeEdge(node.id, overlayNode.id, interaction));
+      // Same route: did an overlay open? Wait for it to POPULATE first so we
+      // snapshot real content rather than an empty shell.
+      const { hash: probeHash } = await computeDomHash(page);
+      if (probeHash !== baseHash) {
+        await waitForPopulatedOverlay(page);
+        const overlay = await captureCurrent(item.depth + 1);
+        if (overlay && overlay.node.id !== node.id) {
+          graph.edges.push(makeEdge(node.id, overlay.node.id, { ...interaction, opensOverlay: true }));
           persistGraph();
-          // Queue the overlay for further exploration.
-          queue.push({
-            url: overlayNode.url,
-            depth: item.depth + 1,
-            viaEdge: null,
-          });
         }
-        await dismissOverlay(page, beforeUrl);
-        await settle(page);
+        // Overlays are NOT enqueued as routes — they belong to this route's
+        // base state and are reached via their trigger edge. Restore the base
+        // in place (no reload) unless dismissal failed.
+        await restoreBase(page, beforeUrl, baseHash);
       }
     }
 
-    // Right-click pass
+    // Right-click pass. Resolve selectors up front, then click fresh by
+    // selector — same stale-index avoidance as the click pass.
     if (item.depth < opts.maxDepth) {
       const rcIndices = await discoverRightClickTargets(page);
+      const rcTargets: Interaction[] = [];
       for (const idx of rcIndices) {
+        const selector = await buildSelectorForHandle(page, idx);
+        if (!selector) continue;
+        rcTargets.push({
+          kind: 'right-click',
+          selector: selector.selector,
+          selectorLabel: selector.label,
+          elementTag: selector.tag,
+        });
+      }
+
+      for (const interaction of rcTargets) {
         if (Date.now() > deadline) break;
         if (graph.nodes.length >= opts.maxStates) break;
+        if (routeBudget.isExhausted(routeKey)) {
+          routeBudget.logIfFirstHit(routeKey);
+          break;
+        }
+
+        const sig = clickSignature({
+          selector: interaction.selector,
+          role: 'context-menu',
+          text: interaction.selectorLabel,
+        });
+        if (clickLedger.seen(baseHash, sig)) continue;
+        clickLedger.mark(baseHash, sig);
+        routeBudget.bump(routeKey);
 
         const beforeUrl = page.url();
-        const { hash: beforeHash } = await computeDomHash(page);
 
-        const selector = await buildSelectorForHandle(page, idx);
-        const interaction: Interaction = {
-          kind: 'right-click',
-          selector: selector?.selector ?? `index-${idx}`,
-          selectorLabel: selector?.label ?? `right-click-${idx}`,
-          elementTag: selector?.tag ?? 'unknown',
-        };
-
-        const rc = await tryInteract(page, idx, 'right-click');
+        const rc = await tryInteract(page, interaction.selector, 'right-click');
         if (!rc.ok) continue;
         await settle(page, 800);
 
-        const { hash: afterHash } = await computeDomHash(page);
-        if (afterHash !== beforeHash) {
-          const overlayNode = await captureCurrent(item.depth + 1);
-          if (overlayNode && overlayNode.id !== node.id) {
-            graph.edges.push(makeEdge(node.id, overlayNode.id, interaction));
+        const { hash: probeHash } = await computeDomHash(page);
+        if (probeHash !== baseHash) {
+          await waitForPopulatedOverlay(page);
+          const overlay = await captureCurrent(item.depth + 1);
+          if (overlay && overlay.node.id !== node.id) {
+            graph.edges.push(makeEdge(node.id, overlay.node.id, { ...interaction, opensOverlay: true }));
             persistGraph();
           }
-          await dismissOverlay(page, beforeUrl);
-          await settle(page);
+          await restoreBase(page, beforeUrl, baseHash);
         }
       }
     }

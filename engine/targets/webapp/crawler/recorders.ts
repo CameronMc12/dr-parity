@@ -19,6 +19,84 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+/** Non-asset bodies (API/JSON/etc) are capped at this many bytes before encoding. */
+const NON_ASSET_BODY_CAP = 300_000;
+
+const BINARY_EXTENSIONS = new Set([
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.otf',
+  '.eot',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.avif',
+  '.ico',
+  '.wasm',
+]);
+
+const TEXT_ASSET_EXTENSIONS = new Set(['.css', '.svg', '.html', '.htm']);
+
+// JS bundles and source maps are never used by the clone (verbatim-body strips
+// <script>) or the mock layer (only API JSON matters). Capturing their full
+// multi-MB bodies is pure bloat, so we record the metadata and omit the body.
+const STRIPPED_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.map']);
+const STRIPPED_CT_EXACT = new Set([
+  'application/javascript',
+  'text/javascript',
+  'application/x-javascript',
+  'application/json+sourcemap',
+]);
+
+const BINARY_CT_PREFIXES = ['font/', 'image/'];
+const BINARY_CT_EXACT = new Set([
+  'application/wasm',
+  'application/octet-stream',
+  'application/vnd.ms-fontobject',
+]);
+
+const TEXT_ASSET_CT_EXACT = new Set([
+  'text/css',
+  'text/html',
+  'image/svg+xml',
+]);
+
+type BodyClass = 'binary' | 'text' | 'stripped' | 'other';
+
+function extOfUrl(url: string): string {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    pathname = url.split(/[?#]/)[0];
+  }
+  const lastSeg = pathname.slice(pathname.lastIndexOf('/') + 1);
+  const dot = lastSeg.lastIndexOf('.');
+  return dot < 0 ? '' : lastSeg.slice(dot).toLowerCase();
+}
+
+/** Classify a response body by content-type first, then URL extension. */
+function classifyBody(contentType: string, url: string): BodyClass {
+  const ct = contentType.split(';')[0].trim().toLowerCase();
+  const ext = extOfUrl(url);
+
+  // JS bundles and source maps are stripped regardless of how they declare
+  // themselves (a .map often arrives as application/json).
+  if (STRIPPED_CT_EXACT.has(ct) || STRIPPED_EXTENSIONS.has(ext)) return 'stripped';
+
+  if (BINARY_CT_EXACT.has(ct) || BINARY_CT_PREFIXES.some((p) => ct.startsWith(p))) {
+    return 'binary';
+  }
+  if (TEXT_ASSET_CT_EXACT.has(ct)) return 'text';
+
+  if (BINARY_EXTENSIONS.has(ext)) return 'binary';
+  if (TEXT_ASSET_EXTENSIONS.has(ext)) return 'text';
+  return 'other';
+}
+
 export async function startRecorders(
   context: BrowserContext,
   outDir: string,
@@ -53,15 +131,33 @@ export async function startRecorders(
 
   context.on('response', async (res) => {
     let body: string | null = null;
+    let bodyEncoding: 'utf8' | 'base64' = 'utf8';
     let bodySize: number | null = null;
     const headers = res.headers();
     const ct = headers['content-type'] ?? '';
+    const url = res.url();
+    const bodyClass = classifyBody(ct, url);
     try {
-      if (/json|text|xml|javascript|html/i.test(ct)) {
+      if (bodyClass === 'binary') {
+        // Binary assets (fonts/images/wasm): capture full, store base64-safe.
         const buf = await res.body();
         bodySize = buf.byteLength;
-        // cap stored body to ~50KB per response
-        body = buf.toString('utf8').slice(0, 50_000);
+        body = buf.toString('base64');
+        bodyEncoding = 'base64';
+      } else if (bodyClass === 'text') {
+        // Text assets (css/svg/html): capture full, no truncation.
+        const buf = await res.body();
+        bodySize = buf.byteLength;
+        body = buf.toString('utf8');
+      } else if (bodyClass === 'stripped') {
+        // JS bundles + source maps: record size only, omit the body. Neither
+        // the clone nor the mock layer reads JS file contents.
+        bodySize = Number(headers['content-length'] ?? 0) || null;
+      } else if (/json|text|xml|html/i.test(ct)) {
+        // Other textual bodies (API/JSON): cap the BUFFER before decoding.
+        const buf = await res.body();
+        bodySize = buf.byteLength;
+        body = buf.subarray(0, NON_ASSET_BODY_CAP).toString('utf8');
       } else {
         bodySize = Number(headers['content-length'] ?? 0) || null;
       }
@@ -72,9 +168,10 @@ export async function startRecorders(
       kind: 'response',
       capturedAt: nowIso(),
       status: res.status(),
-      url: res.url(),
+      url,
       headers,
       body,
+      bodyEncoding,
       bodySize,
     });
   });

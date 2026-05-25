@@ -7,7 +7,8 @@
  * already served from the scaffold's public/ directory.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 
 import type { RequestRecord } from './types';
@@ -30,6 +31,8 @@ type RawResponseLine = {
   url: string;
   headers?: Record<string, string>;
   body?: string | null;
+  /** Additive: 'base64' for binary assets, 'utf8'/absent for text/API bodies. */
+  bodyEncoding?: 'utf8' | 'base64';
   bodySize?: number | null;
 };
 
@@ -51,10 +54,24 @@ type RawFormLine = {
 
 const FETCH_LIKE = new Set(['fetch', 'xhr']);
 
-function readLines(filePath: string): string[] {
-  if (!existsSync(filePath)) return [];
-  const raw = readFileSync(filePath, 'utf8');
-  return raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+/**
+ * Stream a `.jsonl` file line-by-line, invoking `onLine` for each non-empty
+ * line. The file is never loaded into a single string, so multi-GB crawl logs
+ * stay under Node's ~512MB string limit. Each line is parsed individually.
+ */
+async function streamLines(
+  filePath: string,
+  onLine: (line: string) => void,
+): Promise<void> {
+  if (!existsSync(filePath)) return;
+  const rl = createInterface({
+    input: createReadStream(filePath, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
+  });
+  for await (const line of rl) {
+    if (line.trim().length === 0) continue;
+    onLine(line);
+  }
 }
 
 function parseLine<T>(line: string, warnings: string[]): T | null {
@@ -144,15 +161,14 @@ function pairRequestsAndResponses(
   return records;
 }
 
-function loadForms(filePath: string, warnings: string[]): RequestRecord[] {
-  const lines = readLines(filePath);
+async function loadForms(filePath: string, warnings: string[]): Promise<RequestRecord[]> {
   const out: RequestRecord[] = [];
-  for (const line of lines) {
+  await streamLines(filePath, (line) => {
     const parsed = parseLine<RawFormLine>(line, warnings);
-    if (!parsed) continue;
+    if (!parsed) return;
     if (!parsed.request || !parsed.response) {
       warnings.push(`forms.jsonl line missing request/response: ${parsed.formName ?? '?'}`);
-      continue;
+      return;
     }
     if (
       isStaticAssetRequest({
@@ -160,7 +176,7 @@ function loadForms(filePath: string, warnings: string[]): RequestRecord[] {
         headers: parsed.response.headers,
       })
     ) {
-      continue;
+      return;
     }
     out.push({
       method: parsed.request.method.toUpperCase(),
@@ -171,7 +187,7 @@ function loadForms(filePath: string, warnings: string[]): RequestRecord[] {
       responseHeaders: parsed.response.headers ?? {},
       capturedAt: parsed.capturedAt,
     });
-  }
+  });
   return out;
 }
 
@@ -183,16 +199,33 @@ export async function loadNetworkRecords(
   const networkPath = join(crawlDir, 'network.jsonl');
   const formsPath = join(crawlDir, 'forms.jsonl');
 
-  const rawLines = readLines(networkPath);
+  // Stream-parse, retaining only what pairing needs. Non-fetch request lines
+  // and static-asset responses are never kept as records, so we drop them (and,
+  // critically, their bodies) at stream time. This keeps the retained set tiny
+  // even on multi-GB legacy crawls whose JS bundles still carry full bodies.
   const parsed: (RawRequestLine | RawResponseLine)[] = [];
-  for (const line of rawLines) {
+  await streamLines(networkPath, (line) => {
     const p = parseLine<RawRequestLine | RawResponseLine>(line, warnings);
-    if (!p) continue;
-    if (p.kind === 'request' || p.kind === 'response') parsed.push(p);
-  }
+    if (!p) return;
+    if (p.kind === 'request') {
+      const resourceType = (p.resourceType ?? '').toLowerCase();
+      if (resourceType && !FETCH_LIKE.has(resourceType)) return;
+      parsed.push(p);
+      return;
+    }
+    if (p.kind === 'response') {
+      if (isStaticAssetRequest({ url: p.url, headers: p.headers })) {
+        // Keep a body-less marker so request/response pairing stays aligned,
+        // but never retain the (possibly multi-MB) static body in memory.
+        parsed.push({ ...p, body: null });
+        return;
+      }
+      parsed.push(p);
+    }
+  });
 
   const networkRecords = pairRequestsAndResponses(parsed, warnings);
-  const formRecords = loadForms(formsPath, warnings);
+  const formRecords = await loadForms(formsPath, warnings);
 
   return { records: [...networkRecords, ...formRecords], warnings };
 }

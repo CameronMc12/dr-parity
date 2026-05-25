@@ -45,6 +45,12 @@ export interface ShellSplitInput {
   getStateDom: (stateId: string) => Promise<string>;
   assetMap: CloneAssetMap | null;
   outDir: string;
+  /**
+   * Verbatim hidden icon-sprite `<svg>` (union of all captured `<symbol>` defs).
+   * Prepended to the verbatim shell HTML so every `<use xlink:href="#cu3-icon-X">`
+   * across the app resolves in-document. Empty string injects nothing.
+   */
+  spriteSvg?: string;
 }
 
 export interface ShellSplitResult {
@@ -66,6 +72,7 @@ function pickShellSourceIndex(contentLengths: number[]): number {
 
 export async function emitShellSplit(input: ShellSplitInput): Promise<ShellSplitResult> {
   const { routes, getStateDom, assetMap, outDir } = input;
+  const spriteSvg = input.spriteSvg ?? '';
   if (routes.length === 0) {
     throw new Error('emitShellSplit requires at least one route.');
   }
@@ -90,8 +97,12 @@ export async function emitShellSplit(input: ShellSplitInput): Promise<ShellSplit
 
   const pagesDir = join(outDir, 'src', 'pages');
 
-  // 1. Layout component from the richest base DOM.
-  const { shellHtml } = buildShellHtml(baseHtmls[shellIdx], outletSelector);
+  // 1. Layout component from the richest base DOM. The harvested icon sprite is
+  // prepended VERBATIM (outside cheerio) so the camelCase `cu3-icon-*` symbol
+  // ids survive untouched; routing it through cheerio would lower-case them and
+  // break every `<use xlink:href="#cu3-icon-X">` lookup.
+  const built = buildShellHtml(baseHtmls[shellIdx], outletSelector);
+  const shellHtml = spriteSvg ? `${spriteSvg}${built.shellHtml}` : built.shellHtml;
   const layoutTsx = emitLayoutComponent({
     componentName: LAYOUT_COMPONENT_NAME,
     shellHtml,

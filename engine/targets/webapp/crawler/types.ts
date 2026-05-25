@@ -18,6 +18,12 @@ export type Interaction = {
   selectorLabel: string;
   elementTag: string;
   keyCombo?: string;
+  /**
+   * Additive. Set when the resulting state is an overlay (modal/dropdown/menu)
+   * that the crawler waited to fully populate before snapshotting. Lets emit
+   * distinguish a populated overlay edge from a plain inline change.
+   */
+  opensOverlay?: boolean;
 };
 
 export type StateNode = {

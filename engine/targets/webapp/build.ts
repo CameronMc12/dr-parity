@@ -25,6 +25,8 @@ import { loadCrawlGraph, inferStateGroups } from './inference';
 import type { RouteGroup } from './inference';
 import { emitStatefulMain } from './emit-router';
 import { emitShellSplit } from './shell-split';
+import { emitAssetsFromCrawl, mergeCrawlIntoCloneMap } from './emit-assets-from-crawl';
+import { harvestSprite } from './harvest-sprite';
 import { emitMocks } from './emit-mocks';
 import { emitRealtime } from './emit-realtime';
 import { writeRealtimeOutputs } from './emit-realtime/write-outputs';
@@ -98,7 +100,27 @@ async function buildFromCrawl(
   // rewrite every captured body reference to its local served path before
   // JSX emission. Missing parsed inputs → null → bodies pass through unchanged.
   const parsedDir = join(absClone, '..', 'parsed');
-  const assetMap: CloneAssetMap | null = buildCloneAssetMap(parsedDir);
+  const cloneMap: CloneAssetMap | null = buildCloneAssetMap(parsedDir);
+
+  // Localize EVERY static asset from the crawl's network.jsonl (superset of all
+  // routes), skipping anything the complete clone-dir already covers and any
+  // body the crawler truncated. Then merge crawl entries UNDER the clone map so
+  // the complete clone copy always wins on conflict, and so routes the clone
+  // never captured still resolve their CSS/JS/SVG locally.
+  const cloneKnownUrls = new Set<string>(cloneMap ? cloneMap.servedPaths.keys() : []);
+  const crawlAssets = await emitAssetsFromCrawl({
+    crawlDir: options.crawlDir,
+    publicDir,
+    existingUrls: cloneKnownUrls,
+  });
+  const assetMap: CloneAssetMap | null =
+    cloneMap || crawlAssets.servedPaths.size > 0
+      ? mergeCrawlIntoCloneMap(cloneMap, crawlAssets, cloneMap?.documentUrl ?? '')
+      : null;
+
+  // Harvest the union of in-document icon-sprite `<symbol>` defs across every
+  // captured state DOM so injected `<use>` refs resolve app-wide.
+  const sprite = harvestSprite(options.crawlDir);
 
   const loaded = await loadCrawlGraph(options.crawlDir);
   const inference = await inferStateGroups(loaded.graph, loaded.getStateDom);
@@ -121,6 +143,7 @@ async function buildFromCrawl(
     getStateDom: loaded.getStateDom,
     assetMap,
     outDir: absOut,
+    spriteSvg: sprite.spriteSvg,
   });
   const componentsEmitted = split.contentComponents + 1; // + layout
 
