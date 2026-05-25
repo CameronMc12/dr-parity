@@ -39,11 +39,23 @@ const CDN_FALLBACK_HOST = 'app-cdn.clickup.com';
 /** Only these hosts (and subdomains) are backfilled from the live CDN. */
 const FIRST_PARTY_HOSTS = ['clickup.com'];
 
+/** Max fetch attempts per asset before giving up (1 try + 3 retries). */
+const MAX_FETCH_ATTEMPTS = 4;
+/** Base delay for exponential backoff between retries, in milliseconds. */
+const RETRY_BASE_DELAY_MS = 300;
+
 export type BackfillResult = {
   /** Count of references backfilled (written to disk + added to the map). */
   backfilled: number;
   /** Count of references that were missing but could not be fetched. */
   failed: number;
+  /**
+   * CRITICAL first-party assets (bootstrap stylesheet / script / importmap
+   * target) that could NOT be fetched after all retries. A non-empty list means
+   * the replay will boot UNSTYLED or BROKEN — the build must surface this loudly
+   * so a flaky fetch is never silently shipped.
+   */
+  criticalFailures: string[];
   /** Warning lines for the build summary. */
   warnings: string[];
 };
@@ -81,17 +93,20 @@ function originOf(url: string): string | null {
 /**
  * Collect every static reference in the bootstrap HTML that is NOT yet
  * localized: stylesheet/script srcs, importmap targets, and root-relative
- * /assets/* and /styles-* refs. Returns absolute URLs against the doc base.
+ * /assets/* and /styles-* refs. Returns absolute URLs against the doc base,
+ * plus the subset that is CRITICAL (render-blocking bootstrap stylesheet /
+ * script / importmap target — a miss here breaks the whole replay).
  */
 function collectMissingFromHtml(
   $: cheerio.CheerioAPI,
   base: string,
   docOrigin: string,
   assetMap: CloneAssetMap,
-): Set<string> {
+): { missing: Set<string>; critical: Set<string> } {
   const missing = new Set<string>();
+  const critical = new Set<string>();
 
-  const consider = (raw: string | undefined, against: string): void => {
+  const consider = (raw: string | undefined, against: string, isCritical: boolean): void => {
     if (!raw) return;
     const abs = resolveUrl(against, raw);
     if (!abs) return;
@@ -104,12 +119,15 @@ function collectMissingFromHtml(
       return;
     }
     missing.add(abs);
+    if (isCritical) critical.add(abs);
   };
 
-  $('link[rel~="stylesheet"][href], link[rel="preload"][href], link[rel="modulepreload"][href]').each(
-    (_i, el) => consider($(el).attr('href'), base),
+  // Stylesheets and module scripts are render-blocking: a miss boots UNSTYLED.
+  $('link[rel~="stylesheet"][href]').each((_i, el) => consider($(el).attr('href'), base, true));
+  $('link[rel="preload"][href], link[rel="modulepreload"][href]').each((_i, el) =>
+    consider($(el).attr('href'), base, false),
   );
-  $('script[src]').each((_i, el) => consider($(el).attr('src'), base));
+  $('script[src]').each((_i, el) => consider($(el).attr('src'), base, true));
 
   $('script[type="importmap"]').each((_i, el) => {
     const raw = $(el).html();
@@ -125,11 +143,12 @@ function collectMissingFromHtml(
     if (parsed.scopes) {
       for (const specs of Object.values(parsed.scopes)) values.push(...Object.values(specs));
     }
-    for (const value of values) consider(value, base);
+    for (const value of values) consider(value, base, true);
   });
 
   // Root-relative /assets/* and /styles-* refs resolve against the doc origin,
-  // not the (CDN) base — they were served from the app host.
+  // not the (CDN) base — they were served from the app host. The global
+  // stylesheet (/styles-*.css) is critical; bare /assets/* media is not.
   const rootRelative = new Set<string>();
   $('[href], [src]').each((_i, el) => {
     const node = $(el);
@@ -138,13 +157,15 @@ function collectMissingFromHtml(
       if (v && (v.startsWith('/assets/') || v.startsWith('/styles-'))) rootRelative.add(v);
     }
   });
-  for (const raw of rootRelative) consider(raw, docOrigin);
+  for (const raw of rootRelative) consider(raw, docOrigin, raw.startsWith('/styles-'));
 
-  return missing;
+  return { missing, critical };
 }
 
-/** Fetch a URL with a browser UA, returning the body bytes or null. */
-async function fetchBody(url: string): Promise<Uint8Array | null> {
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Single fetch attempt with a browser UA, returning the body bytes or null. */
+async function fetchOnce(url: string): Promise<Uint8Array | null> {
   try {
     const res = await fetch(url, {
       headers: { 'user-agent': BROWSER_UA, accept: '*/*' },
@@ -159,9 +180,25 @@ async function fetchBody(url: string): Promise<Uint8Array | null> {
 }
 
 /**
+ * Fetch a URL with exponential backoff. A transient network error or a flaky
+ * 5xx that previously slipped through (silently breaking styling) is now
+ * retried up to MAX_FETCH_ATTEMPTS times before giving up.
+ */
+async function fetchBody(url: string): Promise<Uint8Array | null> {
+  for (let attempt = 0; attempt < MAX_FETCH_ATTEMPTS; attempt++) {
+    const body = await fetchOnce(url);
+    if (body) return body;
+    if (attempt < MAX_FETCH_ATTEMPTS - 1) {
+      await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+    }
+  }
+  return null;
+}
+
+/**
  * Fetch a first-party asset, trying the original origin first, then the CDN
- * fallback host (root-relative ClickUp refs are served from both). Returns the
- * body or null.
+ * fallback host (root-relative ClickUp refs are served from both). Each host is
+ * retried with backoff via fetchBody. Returns the body or null.
  */
 async function fetchFirstParty(absUrl: string): Promise<Uint8Array | null> {
   const direct = await fetchBody(absUrl);
@@ -272,9 +309,10 @@ export async function backfillFromCdn(args: {
   const base = effectiveBase($, documentUrl);
   const docOrigin = originOf(documentUrl) ?? originOf(base) ?? '';
 
-  const missing = collectMissingFromHtml($, base, docOrigin, assetMap);
+  const { missing, critical } = collectMissingFromHtml($, base, docOrigin, assetMap);
 
   const warnings: string[] = [];
+  const criticalFailures: string[] = [];
   let backfilled = 0;
   let failed = 0;
   const writtenCss: WrittenAsset[] = [];
@@ -286,7 +324,14 @@ export async function backfillFromCdn(args: {
     const written = await backfillOne(absUrl, outDir, assetMap);
     if (!written) {
       failed++;
-      warnings.push(`CDN backfill failed: ${absUrl}`);
+      if (critical.has(absUrl)) {
+        criticalFailures.push(absUrl);
+        warnings.push(
+          `CRITICAL CDN backfill failed after ${MAX_FETCH_ATTEMPTS} attempts (replay will boot BROKEN): ${absUrl}`,
+        );
+      } else {
+        warnings.push(`CDN backfill failed: ${absUrl}`);
+      }
       continue;
     }
     backfilled++;
@@ -325,5 +370,14 @@ export async function backfillFromCdn(args: {
     if (rewritten !== body) writeFileSync(css.absPath, rewritten, 'utf8');
   }
 
-  return { backfilled, failed, warnings };
+  if (criticalFailures.length > 0) {
+    console.error(
+      `\n[cdn-backfill] ${criticalFailures.length} CRITICAL first-party asset(s) could not be fetched ` +
+        `after ${MAX_FETCH_ATTEMPTS} attempts. The replay will boot BROKEN:`,
+    );
+    for (const url of criticalFailures) console.error(`  - ${url}`);
+    console.error('');
+  }
+
+  return { backfilled, failed, criticalFailures, warnings };
 }

@@ -37,12 +37,21 @@ const UNRECORDED_MODE = ${JSON.stringify(unrecordedMode)};
 const LOCAL_ASSET_PREFIXES = ${JSON.stringify(LOCAL_ASSET_PREFIXES)};
 
 let RECORDINGS = [];
+// Optional bridge index (task id -> list match key). Absent unless the build
+// merged export-generated recordings; when absent, matchKey routing is inert.
+let BRIDGE_INDEX = { taskToList: {}, lists: [] };
 let recordingsReady = (async () => {
   try {
     const res = await fetch('/replay/recordings.json', { cache: 'no-store' });
     RECORDINGS = await res.json();
   } catch (err) {
     RECORDINGS = [];
+  }
+  try {
+    const res = await fetch('/replay/bridge-index.json', { cache: 'no-store' });
+    if (res && res.ok) BRIDGE_INDEX = await res.json();
+  } catch (err) {
+    /* no bridge index: matchKey routing stays inert */
   }
 })();
 
@@ -137,27 +146,82 @@ function normalizeBody(raw) {
   }
 }
 
-function chooseFromCandidates(candidates, bodyKey) {
+/**
+ * Compute the bridge match key for a request, used to route per-list bridge
+ * recordings that share one wildcarded path pattern to the correct list.
+ * Returns '' for any request that is not a bridge endpoint, leaving ordinary
+ * matching untouched. Additive: only fires for the three list-view endpoints.
+ *   - GET  /hierarchy/v1/subcategory/{listId}   -> 'subcat:{listId}'
+ *   - POST /view/v1/genericView                 -> 'gv:{parent.id}'
+ *   - POST /task-v3/.../tasks/bulk              -> 'bulk:{list}' via task-id index
+ */
+function bridgeMatchKey(method, pathname, bodyKey) {
+  const subcat = pathname.match(/\\/hierarchy\\/v1\\/subcategory\\/(\\d+)\\b/);
+  if (method === 'GET' && subcat) return 'subcat:' + subcat[1];
+
+  if (method === 'POST' && /\\/view\\/v1\\/genericView/.test(pathname)) {
+    try {
+      const parsed = JSON.parse(bodyKey);
+      const id = parsed && parsed.parent && parsed.parent.id;
+      if (id) return 'gv:' + String(id);
+    } catch (err) {
+      /* fall through */
+    }
+    return '';
+  }
+
+  if (method === 'POST' && /\\/task-v3\\/experience\\/\\d+\\/tasks\\/bulk/.test(pathname)) {
+    try {
+      const parsed = JSON.parse(bodyKey);
+      const ids = parsed && parsed.ids;
+      if (Array.isArray(ids)) {
+        for (let i = 0; i < ids.length; i++) {
+          const mk = BRIDGE_INDEX.taskToList[ids[i]];
+          if (mk) return mk;
+        }
+      }
+    } catch (err) {
+      /* fall through */
+    }
+    return '';
+  }
+
+  return '';
+}
+
+function chooseFromCandidates(candidates, bodyKey, wantKey) {
   if (candidates.length === 0) return null;
+  // Bridge routing (additive): when the request resolves to a bridge match key
+  // and a candidate carries that exact matchKey, it wins outright — this routes
+  // a per-list recording sharing a wildcarded path to the right list.
+  if (wantKey) {
+    const keyed = candidates.find((r) => r.matchKey === wantKey);
+    if (keyed) return keyed;
+  }
   // Prefer an exact request-body-branch match, then the first body-less record,
   // then any candidate (so GETs without a body still resolve). Among equally
   // valid candidates, prefer one with a non-empty body so a recorded payload
-  // beats a recorded empty/304 sibling.
-  const exact = candidates.find((r) => r.requestBodyKey === bodyKey);
+  // beats a recorded empty/304 sibling. Bridge-keyed recordings are skipped here
+  // so an unrouted request never grabs an arbitrary list's per-list recording.
+  const plain = candidates.filter((r) => !r.matchKey);
+  const pool = plain.length > 0 ? plain : candidates;
+  const exact = pool.find((r) => r.requestBodyKey === bodyKey);
   if (exact) return exact;
-  const empty = candidates.find((r) => r.requestBodyKey === '');
+  const empty = pool.find((r) => r.requestBodyKey === '');
   if (empty) return empty;
-  const withBody = candidates.find((r) => r.body && r.body.length > 2);
+  const withBody = pool.find((r) => r.body && r.body.length > 2);
   if (withBody) return withBody;
-  return candidates[0];
+  return pool[0];
 }
 
 function pickRecording(method, pathname, bodyKey) {
+  const wantKey = bridgeMatchKey(method, pathname, bodyKey);
+
   // 1. Exact path match (numeric/hex id segments wildcarded). The strict path.
   const exactPath = RECORDINGS.filter(
     (r) => r.method === method && pathMatches(pathname, r.pathPattern),
   );
-  const chosen = chooseFromCandidates(exactPath, bodyKey);
+  const chosen = chooseFromCandidates(exactPath, bodyKey, wantKey);
   if (chosen) return chosen;
 
   // 2. Tolerant fallback: a recorded sibling endpoint whose normalized segment
@@ -167,7 +231,7 @@ function pickRecording(method, pathname, bodyKey) {
   const subPath = RECORDINGS.filter(
     (r) => r.method === method && pathSubMatches(pathname, r.pathPattern),
   );
-  return chooseFromCandidates(subPath, bodyKey);
+  return chooseFromCandidates(subPath, bodyKey, wantKey);
 }
 
 // Lightweight served-source counters, readable by a probe via postMessage

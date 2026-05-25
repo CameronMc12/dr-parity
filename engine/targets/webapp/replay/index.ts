@@ -37,6 +37,7 @@ import { backfillFromCdn } from './cdn-backfill';
 import { rewriteBootstrapHtml } from './rewrite-bootstrap';
 import { buildBootShim } from './emit-boot-shim';
 import { buildServiceWorker } from './emit-sw';
+import { generateBridgeRecordings } from './bridge';
 import type {
   ReplayBuildOptions,
   ReplayBuildResult,
@@ -124,6 +125,21 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
   const ws = await loadWsConnections(crawlDir);
   warnings.push(...ws.warnings);
 
+  // 3b. Additive: merge export-bridge recordings so the replay renders lists the
+  // crawl never captured. Bridge recordings are APPENDED (captured recordings
+  // keep priority for their own list); a sidecar index routes tasks/bulk by id.
+  let bridgeRecordingCount = 0;
+  let bridgeListCount = 0;
+  let bridgeIndex: unknown = null;
+  if (options.bridgeExportDir) {
+    const bridge = await generateBridgeRecordings(crawlDir, options.bridgeExportDir);
+    warnings.push(...bridge.warnings);
+    recordings.push(...bridge.recordings);
+    bridgeRecordingCount = bridge.recordings.length;
+    bridgeListCount = bridge.listCount;
+    bridgeIndex = bridge.index;
+  }
+
   // 4. Emit boot shim + SW, rewrite bootstrap HTML.
   const seeded = loadSeededState(crawlDir);
   const bootShimJs = buildBootShim({ seeded, wsConnections: ws.connections });
@@ -140,6 +156,9 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
   writeFile(outDir, 'index.html', html);
   writeFile(outDir, 'sw.js', serviceWorker);
   writeFile(outDir, 'replay/recordings.json', JSON.stringify(recordings));
+  if (bridgeIndex) {
+    writeFile(outDir, 'replay/bridge-index.json', JSON.stringify(bridgeIndex));
+  }
 
   const idbDatabases = seeded?.indexedDB ?? [];
   const idbRecords = idbDatabases.reduce(
@@ -154,6 +173,7 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
     assetCount: assetResult.written,
     backfilledCount: backfill.backfilled,
     backfillFailedCount: backfill.failed,
+    backfillCriticalFailures: backfill.criticalFailures,
     recordingCount: recordings.length,
     wsConnectionCount: ws.connections.length,
     wsFrameCount: ws.frameCount,
@@ -162,6 +182,8 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
     idbDatabases: idbDatabases.length,
     idbRecords,
     unrecordedMode,
+    bridgeRecordingCount,
+    bridgeListCount,
     warnings,
   };
   writeFile(outDir, 'replay-manifest.json', JSON.stringify(manifest, null, 2));

@@ -28,6 +28,7 @@ interface ParsedArgs {
   force: boolean;
   unrecorded: UnrecordedMode;
   name: string | null;
+  bridgeExport: string | null;
 }
 
 const HELP = `Usage:
@@ -46,6 +47,11 @@ Options:
                                 'empty-200' (default) returns {} as 200 JSON so
                                 the app stays alive; 'bypass' hits the network.
   --name=<slug>                 Project name in replay-manifest.json.
+  --bridge-export=<dir>         ADDITIVE. Path to a ClickUp export directory.
+                                When set, the build merges synthetic
+                                INTERNAL-shape recordings for every list/space in
+                                the export, so the replay renders lists the crawl
+                                never captured. Absent: behaviour is unchanged.
   --force                       Overwrite the output directory if it exists.
   --help                        Show this help text.`;
 
@@ -57,6 +63,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     force: false,
     unrecorded: 'empty-200',
     name: null,
+    bridgeExport: null,
   };
   for (const raw of argv) {
     if (raw === '--help' || raw === '-h') {
@@ -77,6 +84,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.unrecorded = value;
     } else if (raw.startsWith('--name=')) {
       result.name = raw.slice('--name='.length);
+    } else if (raw.startsWith('--bridge-export=')) {
+      result.bridgeExport = raw.slice('--bridge-export='.length);
     } else if (raw.startsWith('--')) {
       throw new Error(`Unknown flag: ${raw}`);
     } else if (result.crawlDir === null) {
@@ -138,12 +147,19 @@ async function main(): Promise<void> {
     : defaultOutDir(crawlDir);
 
   try {
+    const bridgeExportDir = parsed.bridgeExport
+      ? isAbsolute(parsed.bridgeExport)
+        ? parsed.bridgeExport
+        : resolve(parsed.bridgeExport)
+      : null;
+
     const result = await emitReplay({
       crawlDir,
       outDir,
       force: parsed.force,
       unrecordedMode: parsed.unrecorded,
       ...(parsed.name ? { name: parsed.name } : {}),
+      ...(bridgeExportDir ? { bridgeExportDir } : {}),
     });
 
     const m = result.manifest;
@@ -152,6 +168,9 @@ async function main(): Promise<void> {
     console.log(`Assets localized: ${m.assetCount}`);
     console.log(`Backfilled ${m.backfilledCount} CDN assets, ${m.backfillFailedCount} failed`);
     console.log(`Recordings: ${m.recordingCount}`);
+    console.log(
+      `Bridge recordings: ${m.bridgeRecordingCount} (${m.bridgeListCount} lists from export)`,
+    );
     console.log(`WS connections: ${m.wsConnectionCount} (${m.wsFrameCount} frames)`);
     console.log(`Storage seeded: ${m.storageSeeded ? 'yes' : 'no'}`);
     console.log(

@@ -23,6 +23,14 @@ export type ReplayRecording = {
   contentType: string;
   /** Response body verbatim (already redacted). */
   body: string;
+  /**
+   * Optional list-id-aware discriminator (additive). When present, the SW
+   * prefers this recording for a request whose computed match key equals this
+   * value, so per-list bridge recordings sharing one wildcarded path pattern
+   * (e.g. /hierarchy/v1/subcategory/* or POST tasks/bulk) resolve to the right
+   * list. Absent on ordinary captured recordings: behaviour is unchanged.
+   */
+  matchKey?: string;
 };
 
 /** Captured WebSocket connection + its server->client frames, for replay. */
@@ -73,6 +81,12 @@ export type ReplayBuildOptions = {
   unrecordedMode?: UnrecordedMode;
   /** Project name written into replay-manifest.json. */
   name?: string;
+  /**
+   * Additive: path to a ClickUp export directory. When set, the build merges
+   * synthetic INTERNAL-shape recordings for every list/space in the export so
+   * the replay renders lists the crawl never captured. Absent: unchanged.
+   */
+  bridgeExportDir?: string;
 };
 
 export type ReplayManifest = {
@@ -83,6 +97,12 @@ export type ReplayManifest = {
   backfilledCount: number;
   /** Count of CDN-backfill references that were missing but could not be fetched. */
   backfillFailedCount: number;
+  /**
+   * CRITICAL first-party assets (bootstrap stylesheet / script / importmap
+   * target) that could not be fetched after all retries. Non-empty means the
+   * replay boots BROKEN — never ship this build silently.
+   */
+  backfillCriticalFailures: string[];
   recordingCount: number;
   wsConnectionCount: number;
   wsFrameCount: number;
@@ -94,6 +114,10 @@ export type ReplayManifest = {
   /** Total records written across all seeded IndexedDB stores. */
   idbRecords: number;
   unrecordedMode: UnrecordedMode;
+  /** Count of export-bridge recordings merged in (0 unless --bridge-export). */
+  bridgeRecordingCount: number;
+  /** Count of lists synthesized from the export (0 unless --bridge-export). */
+  bridgeListCount: number;
   warnings: string[];
 };
 
