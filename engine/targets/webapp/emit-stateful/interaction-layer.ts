@@ -46,16 +46,83 @@ export const SIDEBAR_HOST_SELECTOR = 'cu-simple-bar';
 const SIDEBAR_RAIL_WIDTH_PX = 78;
 
 /**
+ * Custom-element host chain ClickUp's runtime upgrades from inline (the default
+ * for un-upgraded custom elements) to a full-height block/flex layout. We do
+ * not run that runtime, so the captured hosts stay `display: inline` with
+ * `height: auto` and the entire shell collapses to content height (~150-470px),
+ * which in turn starves every flex child of both width and height. Forcing the
+ * chain to `display: block; height: 100%` re-establishes the full-viewport
+ * layout context the panes depend on.
+ */
+const FULL_HEIGHT_HOST_CHAIN = [
+  'html',
+  'body',
+  // React mount root and the verbatim-body wrapper div(s) before <app-root>.
+  'body > div',
+  'body > div > div',
+  '#root',
+  '#root > div',
+  'app-root',
+  'cu-app-view',
+  'cu-app-shell',
+  'cu-manager',
+] as const;
+
+/**
  * A `<style>` tag, emitted into the verbatim body head, that restores the
- * captured sidebar's width. Targets the captured structure generically rather
- * than being hand-edited into the output. `!important` is required to beat the
- * runtime-collapsed inline width the capture froze onto the host.
+ * desktop layout ClickUp normally builds from runtime JS (resizable flex
+ * panes + full-height host chain) which the static clone does not execute.
+ *
+ * Targets the captured ClickUp shell structure generically rather than being
+ * hand-edited into the output. `!important` is required to beat the
+ * runtime-collapsed inline widths/heights the capture froze onto the hosts.
+ *
+ * The CSS does three things:
+ *   1. Full-height chain — force the inline custom-element hosts to
+ *      `display:block; height:100%` so the shell fills the viewport instead of
+ *      collapsing to content height.
+ *   2. Horizontal app shell — make the manager container a row flex (sidebar
+ *      rail + main area), the main body a flex:1 column, and the body-inner +
+ *      its outlet child fill the remaining width (`flex:1 1 auto; width:auto;
+ *      min-width:0`) so route content is not pinned to its content width.
+ *   3. Sidebar rail — fixed 78px width, full height, no shrink, kept above
+ *      adjacent panes so flyout labels are not clipped.
  */
 export function buildSidebarStyleTag(): string {
   const w = `${SIDEBAR_RAIL_WIDTH_PX}px`;
+
+  const fullHeightChain = `${FULL_HEIGHT_HOST_CHAIN.join(',')}{display:block !important;height:100% !important;min-height:0 !important;}`;
+
   const css = [
-    `${SIDEBAR_HOST_SELECTOR}{width:${w} !important;min-width:${w} !important;flex:0 0 ${w} !important;}`,
-    `${SIDEBAR_HOST_SELECTOR} .cu-simple-bar__container{width:${w} !important;min-width:${w} !important;}`,
+    // 1. Full-height host chain so the shell fills the viewport.
+    fullHeightChain,
+    `html,body{margin:0 !important;height:100% !important;overflow:hidden !important;}`,
+    // app-root / cu-app-view stack the top bar above the shell as a column.
+    `app-root,cu-app-view{display:flex !important;flex-direction:column !important;}`,
+    `app-root > cu-app-view{flex:1 1 auto !important;min-height:0 !important;}`,
+    // Angular <router-outlet> is a zero-content anchor; the routed component is
+    // its NEXT sibling (cu-app-shell / cu-manager). Collapse the anchor so it
+    // does not claim a flex share, and let the routed sibling fill instead. The
+    // fixed top bar (cu-global-actions-bar) stays its natural height above.
+    `router-outlet{display:none !important;}`,
+    `cu-app-shell,cu-manager{display:flex !important;flex-direction:column !important;flex:1 1 auto !important;min-height:0 !important;}`,
+
+    // 2. Horizontal app shell. The manager container is the row that holds the
+    // sidebar rail and the main area side by side.
+    `.cu-manager2__container,.cu-manager2__container-inner,.cu-manager2__router-outlet{display:flex !important;flex:1 1 auto !important;flex-direction:row !important;min-width:0 !important;min-height:0 !important;height:100% !important;}`,
+    // Main body fills the remaining width beside the rail and the full height.
+    `.cu-manager2__body{flex:1 1 auto !important;min-width:0 !important;min-height:0 !important;height:100% !important;}`,
+    // The outlet container (route content) fills the body, not its content width.
+    `.cu-manager2__body-inner{flex:1 1 auto !important;width:auto !important;min-width:0 !important;min-height:0 !important;height:100% !important;}`,
+    // The body-inner's direct children are the route panes; let the last one
+    // (the primary content outlet) grow to fill any leftover width. ClickUp's
+    // runtime gives the outlet flex:1; the captured static child is flex:0.
+    `.cu-manager2__body-inner > *{min-width:0 !important;min-height:0 !important;}`,
+    `.cu-manager2__body-inner > *:last-child{flex:1 1 auto !important;}`,
+
+    // 3. Sidebar rail: fixed width, full height, no shrink.
+    `${SIDEBAR_HOST_SELECTOR}{width:${w} !important;min-width:${w} !important;flex:0 0 ${w} !important;height:100% !important;}`,
+    `${SIDEBAR_HOST_SELECTOR} .cu-simple-bar__container{width:${w} !important;min-width:${w} !important;height:100% !important;}`,
     // Keep the rail above adjacent panes so flyout labels are not clipped.
     `${SIDEBAR_HOST_SELECTOR}{position:relative;z-index:5;}`,
   ].join('');
