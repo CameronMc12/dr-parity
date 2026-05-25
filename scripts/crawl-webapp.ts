@@ -26,6 +26,7 @@ type CliArgs = {
   viewport: { width: number; height: number };
   dryRun: boolean;
   aggressive: boolean;
+  captureJs: boolean;
   blocklistPath?: string;
   help: boolean;
 };
@@ -46,6 +47,8 @@ Options:
   --blocklist=<path>      Extra blocklist file (one phrase per line)
   --dry-run               List interactive elements on the start page, no clicks
   --aggressive            Wired but currently still safe (reserved for future)
+  --full-js, --for-replay Capture FULL JS bundles (uncapped) for the replay
+                          target. Source maps stay stripped. Default off.
   -h, --help              Show this help
 `.trim();
 
@@ -69,6 +72,7 @@ function parseArgs(argv: string[]): CliArgs {
     viewport: { width: 1440, height: 900 },
     dryRun: false,
     aggressive: false,
+    captureJs: false,
     help: false,
   };
 
@@ -84,6 +88,10 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (raw === '--aggressive') {
       out.aggressive = true;
+      continue;
+    }
+    if (raw === '--full-js' || raw === '--for-replay') {
+      out.captureJs = true;
       continue;
     }
     if (raw.startsWith('--out=')) {
@@ -171,6 +179,7 @@ async function main(): Promise<void> {
     dryRun: args.dryRun,
     aggressive: args.aggressive,
     extraBlocklist,
+    captureJs: args.captureJs,
   };
 
   console.log(`[crawl] startUrl    : ${opts.startUrl}`);
@@ -182,6 +191,7 @@ async function main(): Promise<void> {
   console.log(`[crawl] userDataDir : ${opts.userDataDir}`);
   console.log(`[crawl] dryRun      : ${opts.dryRun}`);
   console.log(`[crawl] aggressive  : ${opts.aggressive}`);
+  console.log(`[crawl] captureJs   : ${opts.captureJs} (replay full-JS)`);
   console.log(`[crawl] blocklist   : ${extraBlocklist.length} extra phrases`);
 
   const summary = await runCrawler(opts);

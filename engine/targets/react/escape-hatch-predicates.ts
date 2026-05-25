@@ -35,12 +35,49 @@
 import type { Element } from 'domhandler';
 
 /**
- * Shape C predicate: any element marked as an Apple ac-gallery
- * container. Capability-detected via the `data-media-gallery` attribute
- * Apple emits on every gallery root (TV gallery, FAM gallery, etc.).
+ * Single source of truth for every registered escape-hatch pattern.
+ *
+ * Each entry pairs the raw attribute marker (the substring a third-party
+ * runtime script greps the DOM for, and that we test against captured
+ * script source text) with the CSS selector that matches the container
+ * element carrying it. Both the per-element predicate and the deferred-
+ * script machinery derive from this list so they can never drift apart.
  */
-function isAcGalleryContainer(el: Element): boolean {
-  return el.attribs ? 'data-media-gallery' in el.attribs : false;
+interface EscapeHatchPattern {
+  /** Raw attribute name as it appears in the DOM and in script source. */
+  readonly attr: string;
+  /** CSS selector matching the escape-hatch container. */
+  readonly selector: string;
+}
+
+const ESCAPE_HATCH_PATTERNS: readonly EscapeHatchPattern[] = [
+  // Shape C (Apple ac-gallery carousels). Apple's gallery runtime greps
+  // `document.querySelectorAll("[data-media-gallery]")` exactly once at
+  // module top level, so the container must exist before the script runs.
+  { attr: 'data-media-gallery', selector: '[data-media-gallery]' },
+];
+
+/**
+ * CSS selectors for every registered escape-hatch container. Injected into
+ * the emitted post-hydration runtime so it knows which DOM to wait for
+ * before running deferred scripts.
+ */
+export const ESCAPE_HATCH_SELECTORS = ESCAPE_HATCH_PATTERNS.map((p) => p.selector);
+
+/**
+ * Raw marker substrings used to detect, from a hoisted script's SOURCE
+ * text, whether that script depends on escape-hatch DOM. A script whose
+ * source contains any of these is deferred until the matching DOM commits.
+ */
+export const ESCAPE_HATCH_SCRIPT_MARKERS = ESCAPE_HATCH_PATTERNS.map((p) => p.attr);
+
+/**
+ * True when an element carries any registered escape-hatch attribute
+ * marker (capability-detected; sites without these markers see no change).
+ */
+function isEscapeHatchContainer(el: Element): boolean {
+  if (!el.attribs) return false;
+  return ESCAPE_HATCH_PATTERNS.some((p) => p.attr in el.attribs);
 }
 
 /**
@@ -49,5 +86,5 @@ function isAcGalleryContainer(el: Element): boolean {
  * + capability-detected; sites without these markers see no change.
  */
 export function reactEscapeHatchPredicate(el: Element): boolean {
-  return isAcGalleryContainer(el);
+  return isEscapeHatchContainer(el);
 }

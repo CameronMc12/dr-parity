@@ -143,7 +143,7 @@ function sanitizeSegment(segment: string): string {
 }
 
 /** Map an absolute URL to its clone-relative path under `_ext/<host>/...`. */
-function urlToExtPath(absoluteUrl: string): string | null {
+export function urlToExtPath(absoluteUrl: string): string | null {
   let u: URL;
   try {
     u = new URL(absoluteUrl);

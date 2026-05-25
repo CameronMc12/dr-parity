@@ -1,0 +1,254 @@
+{
+  "meta": {
+    "title": "ClickUp Backend API Contract",
+    "generatedAt": "2026-05-25",
+    "workspace": "empty workspace (no Spaces/Folders/Lists/Tasks) — observed bodies are minimal",
+    "idPlaceholders": {
+      "{workspaceId}": "team / workspace id (observed: 90152566819)",
+      "{teamId}": "alias of workspaceId in legacy v1/v2 paths",
+      "{userId}": "user id (observed: 210228534)",
+      "{taskId}": "task id",
+      "{docId}": "doc id",
+      "{pageId}": "doc page id",
+      "{viewId}": "view id",
+      "{roomId}": "chat room id",
+      "{attachmentId}": "attachment id",
+      "{dashboardId}": "dashboard id",
+      "{cardId}": "dashboard card id",
+      "{objectType}": "permissioned object type (task/doc/view/...)",
+      "{objectId}": "permissioned object id",
+      "{configKey}": "growth configuration key",
+      "{entryKey}": "growth configuration entry key",
+      "{ts}": "delta timestamp (ms)"
+    },
+    "hosts": {
+      "frontdoor-prod-eu-west-1-3.clickup.com": "primary API gateway (region-sharded; non-EU users get a different shard host). Almost all core REST lives here.",
+      "id.app.clickup.com": "identity / auth (refresh_token, access_tokens, userWebhook)",
+      "frontdoor-search.clickup-eu.com": "GraphQL search + AI gateway (HTTP POST and WSS)",
+      "pal.p.clickup-attachments.com": "attachments cookie/session bridge",
+      "frontdoor-prod-eu-west-1-3.clickup.com (wss /ws)": "realtime websocket channel",
+      "frontdoor-search.clickup-eu.com (wss /graphql/gateway)": "realtime search/AI graphql websocket"
+    },
+    "notes": "Methods for static-only endpoints are inferred from path semantics where not observed. The crawl ran against an empty workspace and only exercised GET/POST reads; no PUT/DELETE/PATCH were observed at runtime. All mutation classifications below are derived from path naming + the SDK source (src21 v3-user access service uses {param} OpenAPI-style templates)."
+  },
+  "summary": {
+    "distinctEndpoints": 118,
+    "bySource": {
+      "observed": 79,
+      "static": 39,
+      "both": 14
+    },
+    "byClassification": {
+      "READ": 71,
+      "SIMPLE_WRITE": 18,
+      "COMPLEX_LOGIC": 24,
+      "AUTH": 5
+    },
+    "priorityReadEndpoints": [
+      "GET /workspace-v3/experience/bootstrap/{workspaceId}",
+      "GET /workspace-v3/core/workspace/{workspaceId}",
+      "GET /hierarchy/v3/experience/sidebar/workspaces/{workspaceId}/tree",
+      "GET /hierarchy/v3/experience/sidebar/workspaces/{workspaceId}/views",
+      "GET /hierarchy/v3/experience/sidebar/workspaces/{workspaceId}/shared",
+      "GET /hierarchy/v3/experience/workspaces/{workspaceId}?fields[]=core",
+      "GET /hierarchy/v3/experience/workspaces/{workspaceId}?fields[]=location_statuses",
+      "GET /hierarchy/v1/project?team={workspaceId}",
+      "GET /hierarchy/v1/team/{workspaceId}/projectFeatures",
+      "GET /hierarchy/v1/team/{workspaceId}/personalListHierarchy",
+      "GET /user/v1/user?include_teams=true",
+      "GET /v3-user/experience/{workspaceId}/users",
+      "GET /user/v1/team/{workspaceId}/member",
+      "GET /user/v1/team/{workspaceId}/group",
+      "GET /customFields/v1/team/{workspaceId}/fields",
+      "GET /customFields/v2/team/{workspaceId}/fields/taskStatuses",
+      "GET /tasks/v1/{workspaceId}/customItems",
+      "POST /task-v3/experience/{workspaceId}/tasks/bulk",
+      "POST /inbox/v3/workspaces/{workspaceId}/notifications/bundles/search",
+      "POST /inbox/v3/workspaces/{workspaceId}/notifications/bundles/stats/fetch",
+      "GET /data/v3/workspaces/{workspaceId}/badging/badge_count",
+      "GET /home/user/{userId}/lineup?team_id={workspaceId}"
+    ]
+  },
+  "websocket": {
+    "channels": [
+      {
+        "url": "wss://frontdoor-prod-eu-west-1-3.clickup.com/ws?client_platform=web&client_version=<v>",
+        "purpose": "primary realtime change feed + presence",
+        "clientMessageTypes": ["auth", "projectId", "category", "subcategory", "subscribe", "heartbeat"],
+        "serverMessageTypes": ["AuthReceived", "heartbeatReply"],
+        "note": "Empty workspace produced no data-change push frames. Client subscribes via projectId/category/subcategory tuples; server pushes entity-change events on those channels in a populated workspace. Heartbeat keeps the socket alive.",
+        "classification": "COMPLEX_LOGIC"
+      },
+      {
+        "url": "wss://frontdoor-search.clickup-eu.com/graphql/gateway?c=gws-web-1",
+        "purpose": "GraphQL search + AI realtime gateway (graphql-ws protocol)",
+        "classification": "COMPLEX_LOGIC"
+      }
+    ]
+  },
+  "endpoints": [
+    { "host": "id.app.clickup.com", "pathTemplate": "/auth/v1/refresh_token", "methods": ["POST"], "source": "observed", "observedCount": "many", "classification": "AUTH" },
+    { "host": "id.app.clickup.com", "pathTemplate": "/userWebhook/v1/ip", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "AUTH" },
+    { "host": "id.app.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/authentication/access_tokens", "methods": ["POST"], "source": "both", "observedCount": "many", "classification": "AUTH" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/authentication/maven/sso_token", "methods": ["POST"], "source": "static", "classification": "AUTH" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v2/sd/team/{workspaceId}/access-token", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "AUTH" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/workspace-v3/experience/bootstrap/{workspaceId}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "sampleResponseShape": { "ff": "object (feature flags)" } },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/workspace-v3/core/workspace/{workspaceId}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/hierarchy/v3/experience/sidebar/workspaces/{workspaceId}/tree", "methods": ["GET"], "source": "both", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/hierarchy/v3/experience/sidebar/workspaces/{workspaceId}/views", "methods": ["GET"], "source": "both", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/hierarchy/v3/experience/sidebar/workspaces/{workspaceId}/shared", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/hierarchy/v3/experience/workspaces/{workspaceId}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "note": "fields[]=core and fields[]=location_statuses variants" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/hierarchy/v1/project", "methods": ["GET"], "source": "both", "observedCount": "many", "classification": "READ", "note": "?team={workspaceId}&include_view_settings=true" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/hierarchy/v1/team/{workspaceId}/projectFeatures", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/hierarchy/v1/team/{workspaceId}/personalListHierarchy", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/hierarchy/v1/team/{workspaceId}/sidebarViews", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/hierarchy/v1/team/{workspaceId}/tray", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/hierarchy/v1/team/{workspaceId}/tray/{categoryId}/{subcategoryId}", "methods": ["GET"], "source": "static", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/user/v1/user", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "note": "?include_teams=true&include_invited_by=true" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/user/v1/sessionSettings/user", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/user/v1/team/{workspaceId}/group", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/user/v1/team/{workspaceId}/member", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/user/v1/team/{workspaceId}/user/online", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "sampleResponseShape": { "userid": 0 } },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/user/v1/team/{workspaceId}/user/weights", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/user/v1/team/{workspaceId}/customRoles", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/user/v1/team/{workspaceId}/rolePermissionSettings", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/experience/{workspaceId}/users", "methods": ["GET", "POST"], "source": "both", "observedCount": "many", "classification": "READ", "note": "?includeWorkspaceUserProfile=true; POST/bulk variants in SDK" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/experience/{workspaceId}/users/{userId}", "methods": ["GET", "PUT", "DELETE"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/experience/{workspaceId}/users/bulk", "methods": ["POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/experience/{workspaceId}/users/export", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/experience/{workspaceId}/users/downgrade", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/experience/{workspaceId}/users/unfreeze", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/user", "methods": ["GET", "PUT"], "source": "both", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/user/shard_cache", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/user/verification-badge", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/group/{workspaceId}/{groupId}", "methods": ["GET", "PUT", "DELETE"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/group/{workspaceId}/{groupId}/export", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/{workspaceId}/user-attributes", "methods": ["GET", "POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/{workspaceId}/user-attributes/{attributeId}", "methods": ["GET", "PUT", "DELETE"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/{workspaceId}/user-attributes/{userId}/values", "methods": ["GET", "PUT"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/{workspaceId}/user-attributes/{userId}/values/{attributeKey}", "methods": ["GET", "PUT"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/{workspaceId}/user/profiles/attribute-mappings", "methods": ["GET", "PUT"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/{workspaceId}/user/profiles/hierarchy/load", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/{workspaceId}/user/profiles/synchronizations", "methods": ["GET", "POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/users/email/start", "methods": ["POST"], "source": "static", "classification": "AUTH" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/users/email/check", "methods": ["POST"], "source": "static", "classification": "AUTH" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/users/email/finish", "methods": ["POST"], "source": "static", "classification": "AUTH" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/core/users/email/resend-email-code", "methods": ["POST"], "source": "static", "classification": "AUTH" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/access/{workspaceId}/{objectType}/{objectId}/acls", "methods": ["GET", "PUT"], "source": "static", "classification": "COMPLEX_LOGIC", "note": "permissions / ACL service" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/access/{workspaceId}/{objectType}/acls/bulk", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/access/{workspaceId}/{objectType}/{objectId}/requests", "methods": ["GET", "POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/access/{workspaceId}/requests", "methods": ["GET"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/access/{workspaceId}/requests/bulk", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/access/{workspaceId}/requests/{requestId}/{action}", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/access/authz/{workspaceId}/permissions/bulk", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/v3-user/access/{workspaceId}/{objectType}/{objectId}/publish", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/customFields/v1/team/{workspaceId}/fields", "methods": ["GET"], "source": "both", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/customFields/v2/team/{workspaceId}/fields/taskStatuses", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/field/v3/experience/workspaces/{workspaceId}/field/jobs/search", "methods": ["POST"], "source": "observed", "observedCount": "many", "classification": "READ", "note": "search-style POST that returns field jobs" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/tasks/v1/{workspaceId}/customItems", "methods": ["GET"], "source": "both", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/tasks/v1/{workspaceId}/customItem", "methods": ["POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/tasks/v1/{workspaceId}/customItem/{customItemId}", "methods": ["PUT", "DELETE"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/tasks/v1/task/{taskId}/memberHierarchy", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/task-v3/experience/{workspaceId}/tasks/bulk", "methods": ["POST"], "source": "observed", "observedCount": "many", "classification": "READ", "note": "bulk task fetch by ids (read despite POST)" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/task-v3/core/{workspaceId}/tasks/history/latest", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/task-v3/core/{workspaceId}/customItems/{customItemId}/merge", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/comment-service/v3/workspaces/{workspaceId}/scheduled-comments/search", "methods": ["POST"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/comment-service/v3/workspaces/{workspaceId}/comments/last_read_at/search_threads", "methods": ["POST"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/comment-service/v3/workspaces/{workspaceId}/comments/last_read_at/delta/{ts}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/chat/v1/workspaces/{workspaceId}/chat/settings", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/chat/v1/workspaces/{workspaceId}/chat/rooms/delta/{ts}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/chat/v1/workspaces/{workspaceId}/chat/rooms/{roomId}/email_address", "methods": ["GET"], "source": "static", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/inbox/v3/workspaces/{workspaceId}/notifications/bundles/search", "methods": ["POST"], "source": "observed", "observedCount": "many", "classification": "READ", "sampleResponseShape": { "last_page": true } },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/inbox/v3/workspaces/{workspaceId}/notifications/bundles/stats/fetch", "methods": ["POST"], "source": "observed", "observedCount": "many", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/badging/badge_count", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "sampleResponseShape": { "count": 0 } },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/user_sections/{userId}/sections", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/emojis/suggested", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/emojis", "methods": ["GET", "POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/clips/recent", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/billing_usage/rules", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/billing_usage/rules/all/usage", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/billing_usage/rules/billing_dashboard_customizations", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/billing_usage/rules/ai_tools_usage", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/billing_usage/rules/ai_tools_usage/agent/{agentId}/lifetime", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/billing_usage/rules/super_agent_usages/agent_daily_usage_report", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/billing_usage/grant_campaigns", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/billing_usage/grant_campaigns/{campaignId}/claim", "methods": ["POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/workweek_schedules/reference/workspace/{workspaceId}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/schedule_exceptions/reference/workspace/{workspaceId}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/attachments/{attachmentId}", "methods": ["GET", "DELETE"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/attachments/bulk", "methods": ["POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/attachments/public/{attachmentId}", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/attachments/{attachmentId}/duplicate", "methods": ["POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/users/{userId}/attachments/{attachmentId}", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/syncup", "methods": ["GET", "POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/syncup/note", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/recordings", "methods": ["GET", "POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/meetings", "methods": ["GET", "POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/meeting_bot", "methods": ["GET", "POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/cards/{cardId}/copy", "methods": ["POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/dashboards/{dashboardId}/export", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/dashboards/ai", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/gantt", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/gantt/export", "methods": ["POST"], "source": "static", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/workspaces/{workspaceId}/baselines/{a}/{b}/config", "methods": ["GET", "PUT"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/data/v3/utils", "methods": ["GET"], "source": "static", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/ui/v3/workspaces/{workspaceId}/docs/counts", "methods": ["GET"], "source": "both", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/ui/v3/workspaces/{workspaceId}/docs/{docId}/pages", "methods": ["GET", "POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/ui/v3/workspaces/{workspaceId}/docs/{docId}/pages/{pageId}", "methods": ["GET", "PUT", "DELETE"], "source": "static", "classification": "SIMPLE_WRITE" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/ui/v3/workspaces/{workspaceId}/docs/{docId}/pages/{pageId}/history", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/ui/v3/workspaces/{workspaceId}/subtasks/tree/bulk", "methods": ["POST"], "source": "static", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/docs/v1/team/{workspaceId}/docs/{docId}", "methods": ["GET"], "source": "static", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/docs/v1/page/{pageId}/lastViewed", "methods": ["GET", "POST"], "source": "static", "classification": "SIMPLE_WRITE" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/view/v1/public/view/{viewId}", "methods": ["GET"], "source": "static", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/home/user/{userId}/lineup", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "note": "?ids_only=true&team_id={workspaceId}&start_index=0" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/notification/v2/team/{workspaceId}/notificationSettings", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "sampleResponseShape": { "pushEnabled": true } },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/notification/v2/browserEnabledGlobally", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "sampleResponseShape": { "browser_enabled_globally": true, "desktop_enabled_globally": true } },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/team/v1/team/{workspaceId}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "note": "?include_payment_methods=true&include_plan_info=false" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/team/v1/team/{workspaceId}/planChange", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/plan/v1/team/{workspaceId}/trialAvailability", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/plan/v2/team/{workspaceId}/plan", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "sampleResponseShape": { "planId": 0 } },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/plan/v2/team/{workspaceId}/pricing", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/payment/v1/team/{workspaceId}/guestInfo", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/entitlements/v1/team/{workspaceId}/entitlements", "methods": ["GET"], "source": "both", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/entitlements/v1/team/{workspaceId}/entitlements/{entitlementKey}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "note": "keys observed: plans, ai_usage, scheduled_reports, aggregated_auto_ai, recurring_ai_meeting_bot" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/approvals-service/workspace/{workspaceId}/approvals-count", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/scheduling/v1/team/{workspaceId}/time_entries/current", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "sampleResponseShape": { "data": null } },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/goals/v1/team/{workspaceId}/goal", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/dashboard/team/{workspaceId}/dashboards/count", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ", "sampleResponseShape": { "count": 0 } },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/automation/triggersUsage/{workspaceId}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "COMPLEX_LOGIC" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/automation/team/{workspaceId}/agents/all", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "COMPLEX_LOGIC" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/growth-v1/data/users/{userId}/configurations/{configKey}/entries/{entryKey}", "methods": ["GET", "PUT"], "source": "observed", "observedCount": "many", "classification": "READ", "note": "user growth/config flags (behavior, inbox_empty_state, suggested_super_agents_preferences)" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/growth-v1/data/workspaces/{workspaceId}/configurations/{configKey}/entries/{entryKey}", "methods": ["GET", "PUT"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/growth-v1/data/workspaces/{workspaceId}/onboarding/stepsAndTarget", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "READ" },
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/growth-v1/data/generateCannyHash", "methods": ["GET"], "source": "static", "classification": "COMPLEX_LOGIC" },
+
+    { "host": "frontdoor-prod-eu-west-1-3.clickup.com", "pathTemplate": "/shard/v1/handshake/{workspaceId}", "methods": ["GET"], "source": "observed", "observedCount": "many", "classification": "AUTH", "note": "region shard discovery handshake" },
+
+    { "host": "pal.p.clickup-attachments.com", "pathTemplate": "/set-cookie", "methods": ["POST"], "source": "observed", "observedCount": "many", "classification": "AUTH", "note": "attachment-domain session cookie bridge" },
+
+    { "host": "frontdoor-search.clickup-eu.com", "pathTemplate": "/graphql/gateway", "methods": ["POST"], "source": "observed", "observedCount": "many", "classification": "COMPLEX_LOGIC", "note": "GraphQL search/AI gateway; observed operations: ProbeQuery, AiToolsQuery (query name in ?q= param)" }
+  ]
+}

@@ -99,7 +99,7 @@ export async function buildReactProject(options: BuildOptions): Promise<BuildSum
   // (React DOM-renders script tags without executing them — fatal for
   // GSAP/AOS-style libraries). Hoisted scripts are spliced into the
   // root index.html at end of <body> to match source execution order.
-  const bodyScripts = collectAndStripBodyScripts($);
+  const bodyScripts = collectAndStripBodyScripts($, absClone);
   const hoistedScripts = renderHoistedScripts(bodyScripts);
 
   const { components, pageImports } = sliceBody($);

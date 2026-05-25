@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type Page } from 'playwright';
+import { computeCanonicalKey } from './canonical-key';
+import { warmUpChrome } from './chrome-warmup';
 import { clickSignature, createClickLedger } from './click-ledger';
 import { populateSearch, scrollToLoad } from './content-populate';
 import { computeDomHash } from './dom-hash';
@@ -10,23 +12,43 @@ import {
   type DiscoveredElement,
 } from './interactive-discovery';
 import { dismissStrayOverlays, waitForPopulatedOverlay, waitForSteadyState } from './overlay-settle';
+import {
+  closePopup,
+  isSameOrigin,
+  settlePopup,
+  waitForPopup,
+} from './popup-capture';
+import {
+  createPriorityQueue,
+  PRIORITY_NEW_ROUTE,
+  type PriorityQueue,
+} from './priority-queue';
 import { createRouteBudget } from './route-budget';
 import { buildSelectorForHandle } from './selector-builder';
 import { createSignatureScan, scanPage } from './signature-scan';
 import { captureState } from './state-capture';
 import { startRecorders, type Recorders } from './recorders';
+import { captureStorageState } from './storage-state';
 import { normalizeRouteUrl } from './url-normalize';
-import type {
-  CrawlGraph,
-  CrawlOptions,
-  CrawlSummary,
-  Interaction,
-  QueueItem,
-  StateEdge,
-  StateNode,
+import {
+  CRAWL_GRAPH_SCHEMA_VERSION,
+  type CrawlGraph,
+  type CrawlOptions,
+  type CrawlSummary,
+  type Interaction,
+  type QueueItem,
+  type StateEdge,
+  type StateNode,
+  type StateSourceKind,
 } from './types';
 
 const ROUTE_INTERACTION_LIMIT = 60;
+
+// How many levels of in-place overlay/tab/drawer states the crawler will keep
+// exploring FROM. ClickUp-style SPAs change state without changing the URL, so
+// the priority queue (keyed on URL) never sees these states. This bounds the
+// inline recursion that keeps the frontier alive for those in-place states.
+const MAX_INPLACE_EXPLORE_DEPTH = 4;
 
 const LOGIN_HINT_RE = /\/(login|signin|sign-in|signup|sign-up|auth)\b/i;
 
@@ -150,6 +172,12 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
     channel: 'chrome',
     headless: false,
     viewport: opts.viewport,
+    // Block the app's own service worker at the context level. ClickUp (and
+    // similar PWAs) register a SW that serves assets from Cache Storage; that
+    // yields EMPTY `res.body()` even with the browser cache disabled. Blocking
+    // SW registration here, plus the per-page `Network.setBypassServiceWorker`
+    // in recorders, keeps every response on the network path with a real body.
+    serviceWorkers: 'block',
     args: ['--disable-blink-features=AutomationControlled'],
     ignoreDefaultArgs: ['--enable-automation'],
   });
@@ -162,7 +190,9 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
     }
   });
 
-  const recorders: Recorders = await startRecorders(context, opts.outDir);
+  const recorders: Recorders = await startRecorders(context, opts.outDir, {
+    captureJs: opts.captureJs,
+  });
 
   const page = context.pages()[0] ?? (await context.newPage());
   await recorders.attachToPage(page);
@@ -191,8 +221,14 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
 
   await settle(page);
 
+  // Replay seed: dump cookies + localStorage + sessionStorage for the start
+  // route once, after auth + settle, so the replay target can boot into the
+  // authenticated state. IndexedDB is NOT captured (known replay limitation).
+  await captureStorageState(context, page, opts.outDir);
+
   const userAgent = (await page.evaluate('navigator.userAgent')) as string;
   const graph: CrawlGraph = {
+    schemaVersion: CRAWL_GRAPH_SCHEMA_VERSION,
     nodes: [],
     edges: [],
     startUrl: opts.startUrl,
@@ -200,6 +236,9 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
     viewport: `${opts.viewport.width}x${opts.viewport.height}`,
   };
 
+  // Composite-canonical-key dedup set (#5). Falls back to the dom hash when a
+  // key cannot be computed, so dedup behaviour never weakens.
+  const canonicalToStateId = new Map<string, string>();
   const hashToStateId = new Map<string, string>();
   // Normalised route keys we have already BASE-captured. Each distinct route
   // is base-captured exactly once; this is the primary loop guard.
@@ -263,29 +302,303 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
     return summary;
   }
 
-  const queue: QueueItem[] = [{ url: opts.startUrl, depth: 0, viaEdge: null }];
+  // Priority frontier (#7): unexplored routes/states are dequeued before
+  // re-derivable ones, still breadth-first-ish within a tier. Budget caps and
+  // the route-once / dedup guards are unchanged — only the dequeue ORDER moves.
+  const queue: PriorityQueue = createPriorityQueue([
+    { url: opts.startUrl, depth: 0, viaEdge: null, priority: PRIORITY_NEW_ROUTE },
+  ]);
   enqueuedRoutes.add(normalizeRouteUrl(opts.startUrl));
   let reachedLimit: CrawlSummary['reachedLimit'] = 'queue-empty';
 
+  // Interaction kinds already exercised per route (#7) — used to prioritise
+  // routes that still have an un-exercised interaction type.
+  const exercisedKinds = new Map<string, Set<Interaction['kind']>>();
+  const markExercised = (routeKey: string, kind: Interaction['kind']): void => {
+    const set = exercisedKinds.get(routeKey) ?? new Set<Interaction['kind']>();
+    set.add(kind);
+    exercisedKinds.set(routeKey, set);
+  };
+
   // Capture the current DOM. Returns the node plus its dom hash so callers can
-  // scope per-state ledgers. Reuses an existing node when the (normalised) DOM
-  // hash already exists, which is the core state-dedup guard.
+  // scope per-state ledgers. Dedup key (#5) is the COMPOSITE canonical key
+  // (normalised route + visible overlay/tab/drawer/panel signature + dom hash),
+  // NOT the dom hash alone. This keeps genuinely-different states on the same
+  // route (different modal/tab) distinct, while id-reroll-only differences still
+  // collapse because they share route + signature + normalised hash. The plain
+  // dom-hash map is still maintained so per-state ledgers keyed on the hash and
+  // any hash-based fast path keep working.
   const captureCurrent = async (
     depth: number,
+    sourceKind: StateSourceKind = 'route',
   ): Promise<{ node: StateNode; hash: string } | null> => {
     const { hash } = await computeDomHash(page);
-    const existing = hashToStateId.get(hash);
+    const canonicalKey = await computeCanonicalKey(page, hash).catch(() => hash);
+
+    const existing = canonicalToStateId.get(canonicalKey);
     if (existing) {
       const found = graph.nodes.find((n) => n.id === existing);
       return found ? { node: found, hash } : null;
     }
     stateIndex++;
-    const result = await captureState(page, opts.outDir, stateIndex, depth);
-    hashToStateId.set(hash, result.node.id);
+    const result = await captureState(page, opts.outDir, stateIndex, depth, sourceKind);
+    canonicalToStateId.set(canonicalKey, result.node.id);
+    if (!hashToStateId.has(hash)) hashToStateId.set(hash, result.node.id);
     graph.nodes.push(result.node);
     signatureScan.add(result.rawHtml);
     persistGraph();
     return { node: result.node, hash };
+  };
+
+  // Explore one DOM state: discover its interactive elements, click each fresh,
+  // and route the outcome.
+  //   - new tab / popup           -> capture + enqueue route (priority queue)
+  //   - URL navigation            -> enqueue route (priority queue), return
+  //   - in-place overlay/tab/etc. -> capture as a NEW canonical state AND
+  //                                  recurse into it (inline frontier) so its
+  //                                  own actions get explored, deduped by the
+  //                                  COMPOSITE canonical key, bounded by
+  //                                  MAX_INPLACE_EXPLORE_DEPTH + route budget.
+  // `stateNode` / `stateHash` identify the state we are exploring FROM.
+  // `routeDepth` is the crawl depth used for newly-enqueued routes.
+  // `inPlaceDepth` is the inline-overlay recursion depth (0 at the base state).
+  // Hard-restore the route view to a fully-settled clean base. In-place
+  // dismissal (Escape/backdrop) alone is unreliable for heavy SPA modals, so
+  // this dismisses, then verifies via dom hash, then reloads to the route and
+  // waits for steady state when the in-place restore did not land. Guarantees
+  // the next sibling click starts from a stable DOM, killing the click-timeout
+  // cascade that previously stalled the crawl after the first overlay.
+  const restoreToCleanBase = async (expectedUrl: string, baseHash: string): Promise<void> => {
+    await dismissStrayOverlays(page);
+    const urlDrifted = normalizeRouteUrl(page.url()) !== normalizeRouteUrl(expectedUrl);
+    if (!urlDrifted) {
+      const { hash } = await computeDomHash(page);
+      if (hash === baseHash) return; // restored in place
+    }
+    try {
+      await page.goto(expectedUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+      await dismissStrayOverlays(page);
+      await waitForSteadyState(page);
+    } catch {
+      /* best-effort */
+    }
+  };
+
+  const exploreState = async (
+    stateNode: StateNode,
+    stateHash: string,
+    routeDepth: number,
+    routeKey: string,
+    inPlaceDepth: number,
+  ): Promise<void> => {
+    // New in-place states discovered during this state's sibling sweep, explored
+    // breadth-first AFTER the sweep so the base view stays clean for siblings.
+    const deferredInPlace: { node: StateNode; hash: string; trigger: Interaction }[] = [];
+    const exploredInPlaceNodeIds = new Set<string>();
+
+    const discovered: DiscoveredElement[] = await discoverInteractive(page, opts.extraBlocklist);
+    const targets: { interaction: Interaction; role: string | null }[] = [];
+    for (const el of discovered) {
+      if (el.blocked) {
+        blockedCount++;
+        continue;
+      }
+      const selector = await buildSelectorForHandle(page, el.index);
+      targets.push({
+        role: el.role,
+        interaction: {
+          kind: 'click',
+          selector: selector?.selector ?? el.selectorHint,
+          selectorLabel: selector?.label ?? (el.text || el.ariaLabel || el.tag),
+          elementTag: selector?.tag ?? el.tag,
+        },
+      });
+    }
+
+    for (const { interaction, role } of targets) {
+      if (Date.now() > deadline) break;
+      if (graph.nodes.length >= opts.maxStates) break;
+      if (routeBudget.isExhausted(routeKey)) {
+        routeBudget.logIfFirstHit(routeKey);
+        break;
+      }
+
+      // Per-state click ledger: never re-click the same element on this state.
+      // Keyed on THIS state's hash so the same control on a different state
+      // (e.g. a tab inside an opened modal) is still explored.
+      const sig = clickSignature({
+        selector: interaction.selector,
+        role,
+        text: interaction.selectorLabel,
+      });
+      if (clickLedger.seen(stateHash, sig)) continue;
+      clickLedger.mark(stateHash, sig);
+      routeBudget.bump(routeKey);
+
+      const beforeUrl = page.url();
+
+      // Arm popup detection BEFORE the click so a new tab opened by the click is
+      // not missed (#8). The promise is consumed right after settle.
+      const popupPromise = waitForPopup(context, 1_500);
+
+      const click = await tryInteract(page, interaction.selector, 'click');
+      if (!click.ok) {
+        // Element gone after prior interactions — skip silently. Only true
+        // click errors are recorded.
+        if (click.reason === 'error') {
+          errorCount++;
+          recorders.writeError({
+            kind: 'click-failed',
+            selector: interaction.selector,
+            message: click.error,
+          });
+        }
+        // Drain the popup race so it does not leak.
+        void popupPromise.then((p) => (p ? closePopup(p) : undefined));
+        continue;
+      }
+
+      await settle(page);
+
+      // Popup / new-tab pass (#8): if the click opened a new page, capture it as
+      // its own state + edge and enqueue its route when same-origin + unvisited.
+      // The extra page is always closed afterwards to avoid runaway tabs.
+      const popup = await popupPromise;
+      if (popup && popup !== page) {
+        markExercised(routeKey, 'click');
+        await settlePopup(popup);
+        const popupUrl = popup.url();
+        const { hash: popupHash } = await computeDomHash(popup).catch(() => ({ hash: '' }));
+        const popupCanonical = await computeCanonicalKey(popup, popupHash).catch(() => popupHash);
+        if (popupCanonical && !canonicalToStateId.get(popupCanonical)) {
+          stateIndex++;
+          const captured = await captureState(
+            popup,
+            opts.outDir,
+            stateIndex,
+            routeDepth + 1,
+            'popup',
+          );
+          canonicalToStateId.set(popupCanonical, captured.node.id);
+          if (popupHash && !hashToStateId.has(popupHash)) {
+            hashToStateId.set(popupHash, captured.node.id);
+          }
+          graph.nodes.push(captured.node);
+          signatureScan.add(captured.rawHtml);
+          graph.edges.push(
+            makeEdge(stateNode.id, captured.node.id, { ...interaction, opensPopup: true }),
+          );
+          persistGraph();
+
+          const popupKey = normalizeRouteUrl(popupUrl);
+          if (
+            isSameOrigin(popupUrl, opts.startUrl) &&
+            !baseCapturedRoutes.has(popupKey) &&
+            !enqueuedRoutes.has(popupKey)
+          ) {
+            enqueuedRoutes.add(popupKey);
+            queue.push({
+              url: popupUrl,
+              depth: routeDepth + 1,
+              priority: PRIORITY_NEW_ROUTE,
+              viaEdge: null,
+            });
+          }
+        }
+        await closePopup(popup);
+        continue;
+      }
+
+      const afterUrl = page.url();
+
+      if (normalizeRouteUrl(afterUrl) !== routeKey) {
+        markExercised(routeKey, 'navigate');
+        // Route navigation. Enqueue the new route once (normalised key).
+        const afterKey = normalizeRouteUrl(afterUrl);
+        if (!baseCapturedRoutes.has(afterKey) && !enqueuedRoutes.has(afterKey)) {
+          enqueuedRoutes.add(afterKey);
+          queue.push({
+            url: afterUrl,
+            depth: routeDepth + 1,
+            // Never-visited route — top priority tier (#7).
+            priority: PRIORITY_NEW_ROUTE,
+            viaEdge: {
+              fromStateId: stateNode.id,
+              interaction: { ...interaction, kind: 'navigate' },
+              capturedAt: new Date().toISOString(),
+            },
+          });
+        }
+        // Return to the originating view for further exploration of THIS state.
+        try {
+          await page.goto(beforeUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+          await settle(page);
+        } catch {
+          break;
+        }
+        continue;
+      }
+
+      markExercised(routeKey, 'click');
+
+      // Same URL: did an in-place state (overlay/tab/drawer/panel) open? Wait
+      // for it to POPULATE first so we snapshot real content, not an empty
+      // shell. captureCurrent dedups on the COMPOSITE canonical key, so a
+      // genuinely-new in-place state gets its own node even though the URL is
+      // unchanged.
+      const { hash: probeHash } = await computeDomHash(page);
+      if (probeHash !== stateHash) {
+        await waitForPopulatedOverlay(page);
+        const overlay = await captureCurrent(routeDepth + 1, 'overlay');
+        if (overlay && overlay.node.id !== stateNode.id) {
+          graph.edges.push(
+            makeEdge(stateNode.id, overlay.node.id, { ...interaction, opensOverlay: true }),
+          );
+          persistGraph();
+          // Defer recursion into this NEW in-place state until AFTER the full
+          // sibling sweep. Depth-first recursion here wrecks the base view (deep
+          // ClickUp modals do not dismiss via Escape), making every remaining
+          // sibling click time out. Breadth-first over the current state keeps
+          // each sibling clicking from the same clean base.
+          if (inPlaceDepth + 1 < MAX_INPLACE_EXPLORE_DEPTH) {
+            deferredInPlace.push({ node: overlay.node, hash: overlay.hash, trigger: interaction });
+          }
+        }
+        // Hard-restore the originating view so the next sibling clicks from a
+        // clean, fully-settled base. In-place dismissal alone is unreliable for
+        // heavy SPA modals, so reload to the route then wait for steady state.
+        await restoreToCleanBase(beforeUrl, stateHash);
+      }
+    }
+
+    // Phase 2: explore the deferred in-place states. Each was reached from THIS
+    // state via its trigger; re-click the trigger from the (restored) clean base
+    // to re-reach it, then recurse. Bounded by depth cap, budget, max-states,
+    // deadline. Deduped: a state already fully explored is skipped by its node id.
+    for (const deferred of deferredInPlace) {
+      if (Date.now() > deadline) break;
+      if (graph.nodes.length >= opts.maxStates) break;
+      if (routeBudget.isExhausted(routeKey)) break;
+      if (exploredInPlaceNodeIds.has(deferred.node.id)) continue;
+      exploredInPlaceNodeIds.add(deferred.node.id);
+
+      // Re-reach the in-place state by re-clicking its trigger from the clean base.
+      const reClick = await tryInteract(page, deferred.trigger.selector, 'click');
+      if (!reClick.ok) continue;
+      await settle(page);
+      await waitForPopulatedOverlay(page);
+      const { hash: reHash } = await computeDomHash(page);
+      if (reHash === stateHash) continue; // trigger no longer opens the state
+
+      await exploreState(
+        deferred.node,
+        reHash,
+        routeDepth + 1,
+        routeKey,
+        inPlaceDepth + 1,
+      );
+      await restoreToCleanBase(page.url(), stateHash);
+    }
   };
 
   while (queue.length > 0) {
@@ -298,7 +611,8 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
       break;
     }
 
-    const item = queue.shift()!;
+    const item = queue.dequeue();
+    if (!item) break;
     if (item.depth > opts.maxDepth) continue;
 
     const routeKey = normalizeRouteUrl(item.url);
@@ -329,6 +643,13 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
     // state rather than mid-load.
     await waitForSteadyState(page);
 
+    // Chrome/icon WARM-UP: hover every sidebar + chrome icon host and force
+    // lazy <img> sources so hover/visibility-loaded icons fire their requests
+    // (recorded into network.jsonl) and their sprite <symbol>s inject BEFORE
+    // the base capture. Hover-only + blocklist-aware + no reload, so the
+    // route-once loop guard is unaffected. Cheap enough to run per route.
+    await warmUpChrome(page);
+
     const base = await captureCurrent(item.depth);
     if (!base) continue;
     const node = base.node;
@@ -350,7 +671,7 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
     if (Date.now() <= deadline && graph.nodes.length < opts.maxStates) {
       await scrollToLoad(page);
       await waitForSteadyState(page, { quietMs: 400, timeoutMs: 6_000 });
-      const scrolled = await captureCurrent(item.depth);
+      const scrolled = await captureCurrent(item.depth, 'scroll');
       if (scrolled && scrolled.node.id !== node.id) {
         graph.edges.push(
           makeEdge(node.id, scrolled.node.id, {
@@ -368,7 +689,7 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
       const beforeSearchUrl = page.url();
       const populated = await populateSearch(page);
       if (populated) {
-        const search = await captureCurrent(item.depth + 1);
+        const search = await captureCurrent(item.depth + 1, 'scroll');
         if (search && search.node.id !== node.id) {
           graph.edges.push(
             makeEdge(node.id, search.node.id, {
@@ -389,112 +710,30 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
 
     if (item.depth >= opts.maxDepth) continue;
 
-    // Click pass. Capture stable selectors UP FRONT from the single discovery
-    // pass, BEFORE any click mutates the DOM. We then resolve each element
-    // fresh by selector at click time, so the stale-index problem is gone.
-    const discovered: DiscoveredElement[] = await discoverInteractive(page, opts.extraBlocklist);
-    const targets: { interaction: Interaction; role: string | null }[] = [];
-    for (const el of discovered) {
-      if (el.blocked) {
-        blockedCount++;
-        continue;
-      }
-      const selector = await buildSelectorForHandle(page, el.index);
-      targets.push({
-        role: el.role,
-        interaction: {
-          kind: 'click',
-          selector: selector?.selector ?? el.selectorHint,
-          selectorLabel: selector?.label ?? (el.text || el.ariaLabel || el.tag),
-          elementTag: selector?.tag ?? el.tag,
-        },
-      });
-    }
+    // The content-population passes (scroll + search) above can leave the SPA
+    // mid-render or trigger a restoreBase reload. ClickUp-style Angular apps need
+    // far longer than a 1.5s settle to re-bootstrap their interactive shell, so
+    // re-settle to steady state before discovery — otherwise discoverInteractive
+    // sees only the static chrome (~5 elements) and the frontier dies. This also
+    // re-syncs baseHash to the now-settled DOM so the in-place change probe is
+    // measured against the real base, not a transient mid-render snapshot.
+    await dismissStrayOverlays(page);
+    await waitForSteadyState(page);
+    const { hash: settledBaseHash } = await computeDomHash(page);
 
-    for (const { interaction, role } of targets) {
-      if (Date.now() > deadline) break;
-      if (graph.nodes.length >= opts.maxStates) break;
-      if (routeBudget.isExhausted(routeKey)) {
-        routeBudget.logIfFirstHit(routeKey);
-        break;
-      }
-
-      // Per-state click ledger: never re-click the same element on this state.
-      const sig = clickSignature({
-        selector: interaction.selector,
-        role,
-        text: interaction.selectorLabel,
-      });
-      if (clickLedger.seen(baseHash, sig)) continue;
-      clickLedger.mark(baseHash, sig);
-      routeBudget.bump(routeKey);
-
-      const beforeUrl = page.url();
-
-      const click = await tryInteract(page, interaction.selector, 'click');
-      if (!click.ok) {
-        // Element gone after prior interactions — skip silently. Only true
-        // click errors are recorded.
-        if (click.reason === 'error') {
-          errorCount++;
-          recorders.writeError({
-            kind: 'click-failed',
-            selector: interaction.selector,
-            message: click.error,
-          });
-        }
-        continue;
-      }
-
-      await settle(page);
-
-      const afterUrl = page.url();
-
-      if (normalizeRouteUrl(afterUrl) !== routeKey) {
-        // Route navigation. Enqueue the new route once (normalised key).
-        const afterKey = normalizeRouteUrl(afterUrl);
-        if (!baseCapturedRoutes.has(afterKey) && !enqueuedRoutes.has(afterKey)) {
-          enqueuedRoutes.add(afterKey);
-          queue.push({
-            url: afterUrl,
-            depth: item.depth + 1,
-            viaEdge: {
-              fromStateId: node.id,
-              interaction: { ...interaction, kind: 'navigate' },
-              capturedAt: new Date().toISOString(),
-            },
-          });
-        }
-        // Return to the originating route for further exploration.
-        try {
-          await page.goto(beforeUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-          await settle(page);
-        } catch {
-          break;
-        }
-        continue;
-      }
-
-      // Same route: did an overlay open? Wait for it to POPULATE first so we
-      // snapshot real content rather than an empty shell.
-      const { hash: probeHash } = await computeDomHash(page);
-      if (probeHash !== baseHash) {
-        await waitForPopulatedOverlay(page);
-        const overlay = await captureCurrent(item.depth + 1);
-        if (overlay && overlay.node.id !== node.id) {
-          graph.edges.push(makeEdge(node.id, overlay.node.id, { ...interaction, opensOverlay: true }));
-          persistGraph();
-        }
-        // Overlays are NOT enqueued as routes — they belong to this route's
-        // base state and are reached via their trigger edge. Restore the base
-        // in place (no reload) unless dismissal failed.
-        await restoreBase(page, beforeUrl, baseHash);
-      }
-    }
+    // Click pass. Explore this base state's interactive elements. New URL
+    // navigations + popups feed the priority queue; new IN-PLACE overlay/tab
+    // states (same URL, different canonical key) are explored inline so the
+    // frontier does not die on SPAs that mutate state without changing the URL.
+    await exploreState(node, settledBaseHash, item.depth, routeKey, 0);
 
     // Right-click pass. Resolve selectors up front, then click fresh by
-    // selector — same stale-index avoidance as the click pass.
-    if (item.depth < opts.maxDepth) {
+    // selector — same stale-index avoidance as the click pass. Frontier rule
+    // (#7): skip the right-click discovery only when right-click was already
+    // exercised on this route from an earlier visit, so we never repeat an
+    // interaction type that has been covered.
+    const rcAlreadyExercised = exercisedKinds.get(routeKey)?.has('right-click') ?? false;
+    if (item.depth < opts.maxDepth && !rcAlreadyExercised) {
       const rcIndices = await discoverRightClickTargets(page);
       const rcTargets: Interaction[] = [];
       for (const idx of rcIndices) {
@@ -521,8 +760,8 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
           role: 'context-menu',
           text: interaction.selectorLabel,
         });
-        if (clickLedger.seen(baseHash, sig)) continue;
-        clickLedger.mark(baseHash, sig);
+        if (clickLedger.seen(settledBaseHash, sig)) continue;
+        clickLedger.mark(settledBaseHash, sig);
         routeBudget.bump(routeKey);
 
         const beforeUrl = page.url();
@@ -531,15 +770,16 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
         if (!rc.ok) continue;
         await settle(page, 800);
 
+        markExercised(routeKey, 'right-click');
         const { hash: probeHash } = await computeDomHash(page);
-        if (probeHash !== baseHash) {
+        if (probeHash !== settledBaseHash) {
           await waitForPopulatedOverlay(page);
-          const overlay = await captureCurrent(item.depth + 1);
+          const overlay = await captureCurrent(item.depth + 1, 'overlay');
           if (overlay && overlay.node.id !== node.id) {
             graph.edges.push(makeEdge(node.id, overlay.node.id, { ...interaction, opensOverlay: true }));
             persistGraph();
           }
-          await restoreBase(page, beforeUrl, baseHash);
+          await restoreBase(page, beforeUrl, settledBaseHash);
         }
       }
     }

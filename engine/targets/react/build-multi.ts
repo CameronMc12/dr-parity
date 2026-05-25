@@ -165,7 +165,7 @@ export async function buildReactMulti(
 
     // Strip body scripts BEFORE slicing so JSX emitter doesn't render
     // them; then splice back into this page's <body>.
-    const bodyScripts = collectAndStripBodyScripts($);
+    const bodyScripts = collectAndStripBodyScripts($, p.cloneDir);
     const hoistedBodyScripts = renderHoistedScripts(bodyScripts);
 
     const { components, pageImports } = sliceBody($);

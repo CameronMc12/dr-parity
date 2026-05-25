@@ -42,14 +42,18 @@ const TEXT_ASSET_EXTENSIONS = new Set(['.css', '.svg', '.html', '.htm']);
 
 // JS bundles and source maps are never used by the clone (verbatim-body strips
 // <script>) or the mock layer (only API JSON matters). Capturing their full
-// multi-MB bodies is pure bloat, so we record the metadata and omit the body.
-const STRIPPED_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.map']);
-const STRIPPED_CT_EXACT = new Set([
+// multi-MB bodies is pure bloat, so by default we record the metadata and omit
+// the body. The replay target needs the real JS though — pass `captureJs: true`
+// to keep the JS/mjs/cjs bodies (source maps stay stripped regardless: huge and
+// unused by replay).
+const JS_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
+const SOURCEMAP_EXTENSION = '.map';
+const JS_CT_EXACT = new Set([
   'application/javascript',
   'text/javascript',
   'application/x-javascript',
-  'application/json+sourcemap',
 ]);
+const SOURCEMAP_CT_EXACT = new Set(['application/json+sourcemap']);
 
 const BINARY_CT_PREFIXES = ['font/', 'image/'];
 const BINARY_CT_EXACT = new Set([
@@ -64,7 +68,15 @@ const TEXT_ASSET_CT_EXACT = new Set([
   'image/svg+xml',
 ]);
 
-type BodyClass = 'binary' | 'text' | 'stripped' | 'other';
+type BodyClass = 'binary' | 'text' | 'js' | 'sourcemap' | 'other';
+
+export type RecorderOptions = {
+  /**
+   * When true, JS/mjs/cjs bodies are captured FULL (uncapped) for the replay
+   * target. Source maps remain stripped. Default false.
+   */
+  captureJs?: boolean;
+};
 
 function extOfUrl(url: string): string {
   let pathname: string;
@@ -83,9 +95,13 @@ function classifyBody(contentType: string, url: string): BodyClass {
   const ct = contentType.split(';')[0].trim().toLowerCase();
   const ext = extOfUrl(url);
 
-  // JS bundles and source maps are stripped regardless of how they declare
-  // themselves (a .map often arrives as application/json).
-  if (STRIPPED_CT_EXACT.has(ct) || STRIPPED_EXTENSIONS.has(ext)) return 'stripped';
+  // Source maps first (a .map often arrives as application/json, so match the
+  // extension/CT explicitly before the JS check). Always stripped — huge and
+  // unused by every target including replay.
+  if (SOURCEMAP_CT_EXACT.has(ct) || ext === SOURCEMAP_EXTENSION) return 'sourcemap';
+
+  // JS bundles, classified regardless of how they declare themselves.
+  if (JS_CT_EXACT.has(ct) || JS_EXTENSIONS.has(ext)) return 'js';
 
   if (BINARY_CT_EXACT.has(ct) || BINARY_CT_PREFIXES.some((p) => ct.startsWith(p))) {
     return 'binary';
@@ -100,7 +116,9 @@ function classifyBody(contentType: string, url: string): BodyClass {
 export async function startRecorders(
   context: BrowserContext,
   outDir: string,
+  options: RecorderOptions = {},
 ): Promise<Recorders> {
+  const captureJs = options.captureJs ?? false;
   const streams: Streams = {
     network: createWriteStream(join(outDir, 'network.jsonl'), { flags: 'a' }),
     websocket: createWriteStream(join(outDir, 'websocket.jsonl'), { flags: 'a' }),
@@ -145,13 +163,28 @@ export async function startRecorders(
         body = buf.toString('base64');
         bodyEncoding = 'base64';
       } else if (bodyClass === 'text') {
-        // Text assets (css/svg/html): capture full, no truncation.
+        // Text assets (css/svg/html): capture full, no truncation. The
+        // top-level navigation document (the pre-JS index.html the server
+        // returns) lands here via text/html and is therefore recorded full —
+        // the replay target boots from this original shell.
         const buf = await res.body();
         bodySize = buf.byteLength;
         body = buf.toString('utf8');
-      } else if (bodyClass === 'stripped') {
-        // JS bundles + source maps: record size only, omit the body. Neither
-        // the clone nor the mock layer reads JS file contents.
+      } else if (bodyClass === 'js') {
+        if (captureJs) {
+          // Replay mode: capture the full JS bundle, uncapped. Stored base64 so
+          // any non-utf8 bytes in minified bundles round-trip safely.
+          const buf = await res.body();
+          bodySize = buf.byteLength;
+          body = buf.toString('base64');
+          bodyEncoding = 'base64';
+        } else {
+          // Default: record size only, omit the body. Neither the clone nor the
+          // mock layer reads JS file contents.
+          bodySize = Number(headers['content-length'] ?? 0) || null;
+        }
+      } else if (bodyClass === 'sourcemap') {
+        // Source maps: always stripped (huge, unused by every target).
         bodySize = Number(headers['content-length'] ?? 0) || null;
       } else if (/json|text|xml|html/i.test(ct)) {
         // Other textual bodies (API/JSON): cap the BUFFER before decoding.
@@ -177,6 +210,8 @@ export async function startRecorders(
   });
 
   const cdpAttached = new WeakSet<Page>();
+  // Clear the browser cache exactly once, up front, on the first CDP session.
+  let browserCacheCleared = false;
 
   const attachToPage = async (page: Page): Promise<void> => {
     page.on('console', (msg) => {
@@ -203,6 +238,33 @@ export async function startRecorders(
     try {
       const cdp = await context.newCDPSession(page);
       await cdp.send('Network.enable');
+
+      // Defeat the persistent-profile disk/memory cache. Without this, ClickUp's
+      // cached static JS chunks are served from cache and `res.body()` returns
+      // EMPTY (the bytes never traversed the network), so half the JS bundle is
+      // uncaptured and the replay target crashes on a missing chunk. Disabling
+      // the cache on the CDP session forces every asset to be fetched fresh with
+      // a real body. The flag is bound to this session and survives every
+      // navigation the page makes; we re-assert it per new page too.
+      await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
+
+      // Bypass the APP'S OWN service worker. ClickUp registers a SW that serves
+      // assets from Cache Storage; even with the browser cache disabled, those
+      // responses are fulfilled by the SW from its own cache and `res.body()`
+      // comes back EMPTY (the bytes never hit the network). This was the real
+      // cause of the ~5030 empty JS bodies. Bypassing the SW forces every
+      // request to the network with a real body. Combined with the
+      // context-level `serviceWorkers: 'block'` launch option, the app SW is
+      // fully out of the capture path. Bound to this CDP session, re-asserted
+      // per new page.
+      await cdp
+        .send('Network.setBypassServiceWorker', { bypass: true })
+        .catch(() => {});
+
+      if (!browserCacheCleared) {
+        browserCacheCleared = true;
+        await cdp.send('Network.clearBrowserCache').catch(() => {});
+      }
 
       // Track the connection URL per requestId so every frame can be
       // attributed to its socket endpoint during replay emit.

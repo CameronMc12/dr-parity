@@ -1,8 +1,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from 'playwright';
+import { captureAriaSnapshot } from './aria-snapshot';
+import { computeCanonicalKey } from './canonical-key';
 import { computeDomHash } from './dom-hash';
-import type { StateNode } from './types';
+import type { StateNode, StateSourceKind } from './types';
 
 export type CapturedState = {
   node: StateNode;
@@ -15,6 +17,7 @@ export async function captureState(
   outDir: string,
   stateIndex: number,
   depth: number,
+  sourceKind: StateSourceKind = 'route',
 ): Promise<CapturedState> {
   const id = `state-${String(stateIndex).padStart(4, '0')}`;
   const dir = join(outDir, 'states', id);
@@ -34,6 +37,12 @@ export async function captureState(
   writeFileSync(domPath, normalisedHtml, 'utf8');
   writeFileSync(join(dir, 'dom-raw.html'), rawHtml, 'utf8');
 
+  // ARIA snapshot — low-noise semantic signal. Defensive; may be null.
+  const { ariaPath } = await captureAriaSnapshot(page, dir);
+
+  // Composite canonical key — route + structural signature + dom hash.
+  const canonicalKey = await computeCanonicalKey(page, hash);
+
   const url = page.url();
   const title = await page.title().catch(() => '');
   const capturedAt = new Date().toISOString();
@@ -45,6 +54,9 @@ export async function captureState(
     depth,
     domHash: hash,
     capturedAt,
+    ariaPath: ariaPath ?? undefined,
+    canonicalKey,
+    sourceKind,
   };
   writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
 
@@ -57,6 +69,9 @@ export async function captureState(
     domPath,
     capturedAt,
     depth,
+    ariaPath: ariaPath ?? undefined,
+    canonicalKey,
+    sourceKind,
   };
 
   return { node, rawHtml, normalisedHtml };

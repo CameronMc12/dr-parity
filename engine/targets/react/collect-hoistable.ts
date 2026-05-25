@@ -16,11 +16,13 @@
  * Astro frontmatter) means a future non-React target could reuse it.
  */
 
-import { readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 import type { CheerioAPI } from 'cheerio';
 import type { Element, AnyNode } from 'domhandler';
+
+import { ESCAPE_HATCH_SCRIPT_MARKERS } from './escape-hatch-predicates';
 
 export interface HoistedScript {
   /** True if `<script src="...">`, false for inline. */
@@ -29,6 +31,19 @@ export interface HoistedScript {
   attrs: string;
   /** Inline script body. Empty when external. */
   body: string;
+  /**
+   * True when this external script's SOURCE references a registered
+   * escape-hatch marker. Deferred scripts are emitted as inert
+   * placeholders so the browser neither fetches nor runs them at parse
+   * time; the post-hydration runtime injects the real script only after
+   * the escape-hatch DOM commits. Always false for inline scripts and
+   * for clones with no escape-hatch markers.
+   */
+  deferred: boolean;
+  /** Original `src` attribute value, preserved for deferred re-injection. */
+  src: string;
+  /** True when the original script was `type="module"`. */
+  module: boolean;
 }
 
 /**
@@ -37,8 +52,18 @@ export interface HoistedScript {
  *
  * Preserves document order. Skips the root #root mount script if any
  * future code introduces it here — we only ever collect captured scripts.
+ *
+ * When `cloneDir` is given, each external script's captured source is read
+ * from disk and tested against the registered escape-hatch markers. A
+ * matching script is flagged `deferred` so `renderHoistedScripts` emits an
+ * inert placeholder instead of an executable tag. This is fully additive:
+ * clones whose scripts reference no escape-hatch marker yield `deferred:
+ * false` for every script and render byte-identically to before.
  */
-export function collectAndStripBodyScripts($: CheerioAPI): HoistedScript[] {
+export function collectAndStripBodyScripts(
+  $: CheerioAPI,
+  cloneDir?: string,
+): HoistedScript[] {
   const body = $('body').first();
   if (body.length === 0) return [];
 
@@ -51,7 +76,9 @@ export function collectAndStripBodyScripts($: CheerioAPI): HoistedScript[] {
   for (const el of scriptEls) {
     const tag = el as Element;
     const attribs: Record<string, string> = { ...(tag.attribs ?? {}) };
-    const isExternal = typeof attribs.src === 'string' && attribs.src.length > 0;
+    const src = typeof attribs.src === 'string' ? attribs.src : '';
+    const isExternal = src.length > 0;
+    const isModule = (attribs.type ?? '').toLowerCase() === 'module';
 
     let body = '';
     if (!isExternal) {
@@ -62,10 +89,16 @@ export function collectAndStripBodyScripts($: CheerioAPI): HoistedScript[] {
       }
     }
 
+    const deferred =
+      isExternal && cloneDir !== undefined && scriptSourceHasMarker(cloneDir, src);
+
     collected.push({
       external: isExternal,
       attrs: serialiseAttrs(attribs),
       body,
+      deferred,
+      src,
+      module: isModule,
     });
 
     $(tag).remove();
@@ -75,12 +108,45 @@ export function collectAndStripBodyScripts($: CheerioAPI): HoistedScript[] {
 }
 
 /**
+ * Read the captured source for a script `src` (root-anchored after path
+ * normalisation, e.g. `/v/home/a/built/scripts/gallery.built.js`) from the
+ * clone directory and report whether it references any escape-hatch marker.
+ * Returns false on any read failure so a missing asset never breaks emit.
+ */
+function scriptSourceHasMarker(cloneDir: string, normalisedSrc: string): boolean {
+  if (ESCAPE_HATCH_SCRIPT_MARKERS.length === 0) return false;
+  const rel = normalisedSrc.replace(/^\//, '').split(/[?#]/, 1)[0];
+  if (rel.length === 0) return false;
+  const assetPath = join(cloneDir, ...rel.split('/'));
+  let source: string;
+  try {
+    source = readFileSync(assetPath, 'utf8');
+  } catch {
+    return false;
+  }
+  return ESCAPE_HATCH_SCRIPT_MARKERS.some((marker) => source.includes(marker));
+}
+
+/**
  * Render hoisted scripts as plain HTML strings ready to splice into the
  * end of <body> in the generated index.html. Preserves all attributes
  * (including async/defer/type=module) and document order.
  */
 export function renderHoistedScripts(scripts: readonly HoistedScript[]): string[] {
   return scripts.map((s) => {
+    if (s.deferred) {
+      // Deferred escape-hatch script: emit an inert placeholder carrying
+      // the original src + module flag. No `src` and a custom `type` mean
+      // the browser neither fetches nor executes it at parse time; the
+      // post-hydration runtime injects the real <script> once the
+      // escape-hatch DOM exists, winning the race the runtime would
+      // otherwise lose against React's deferred commit.
+      return [
+        '<script type="application/parity-deferred"',
+        ` data-parity-deferred-src="${escapeAttr(s.src)}"`,
+        ` data-parity-deferred-module="${s.module ? 'true' : 'false'}"></script>`,
+      ].join('');
+    }
     if (s.external) {
       // External scripts: always emit as paired <script ...></script> for
       // maximum compatibility (some loaders dislike self-closed forms).
