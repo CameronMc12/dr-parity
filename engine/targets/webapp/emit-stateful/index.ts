@@ -14,9 +14,8 @@ import { deriveComponentName } from '../route-naming';
 import { deriveToggleNames, type ToggleNames } from './name-deriver';
 import { emitStateHooks } from './state-hooks';
 import { emitDismissEffects } from './dismiss-effects';
-import { injectTriggerHandlers } from './inject-handlers';
-import { emitOverlayBlocks } from './overlay-render';
-import { emitComponentShell } from './component-shell';
+import { buildVerbatimBody, buildVerbatimOverlays } from './verbatim-body';
+import { emitVerbatimComponentShell } from './component-shell-verbatim';
 
 export { deriveToggleNames } from './name-deriver';
 export { emitStateHooks } from './state-hooks';
@@ -24,6 +23,8 @@ export { emitDismissEffects } from './dismiss-effects';
 export { injectTriggerHandlers } from './inject-handlers';
 export { emitOverlayBlocks } from './overlay-render';
 export { emitComponentShell } from './component-shell';
+export { buildVerbatimBody, buildVerbatimOverlays } from './verbatim-body';
+export { emitVerbatimComponentShell } from './component-shell-verbatim';
 
 export interface StatefulEmitInput {
   route: RouteGroup;
@@ -52,26 +53,32 @@ export function emitStatefulComponent(input: StatefulEmitInput): StatefulEmitRes
 
   const pairs = buildPairs(route.baseStateGroup.toggles);
 
+  // WEBAPP fidelity: the body and overlays are embedded VERBATIM via
+  // dangerouslySetInnerHTML rather than converted through htmlToJsx. htmlToJsx
+  // camelCases / hyphen-strips attribute names, which breaks framework-scoped
+  // CSS (Angular ViewEncapsulation.Emulated `[_ngcontent-ng-c*]` selectors)
+  // and leaves the clone unstyled. Verbatim embedding preserves every
+  // attribute exactly as captured. Trigger / close-button interactions are
+  // wired post-mount via marker attributes instead of JSX onClick handlers.
   const hooks = emitStateHooks(pairs);
   const effects = emitDismissEffects(pairs);
-  const injected = injectTriggerHandlers(baseHtml, pairs);
-  const overlays = emitOverlayBlocks(pairs);
+  const verbatim = buildVerbatimBody(baseHtml, pairs);
+  const overlays = buildVerbatimOverlays(pairs);
 
-  const reactHookImports = new Set<string>([...hooks.importNames, ...effects.importNames]);
-
-  const tsx = emitComponentShell({
+  const tsx = emitVerbatimComponentShell({
     componentName,
-    reactHookImports,
     stateHookLines: hooks.lines,
     effectLines: effects.lines,
-    baseJsx: injected.jsx,
-    overlayLines: overlays.lines,
+    effectImportNames: effects.importNames,
+    bodyHtml: verbatim.bodyHtml,
+    triggers: verbatim.triggers,
+    overlays,
   });
 
   return {
     componentName,
     tsx,
-    unmatchedTriggers: injected.unmatched,
+    unmatchedTriggers: verbatim.unmatched,
   };
 }
 
