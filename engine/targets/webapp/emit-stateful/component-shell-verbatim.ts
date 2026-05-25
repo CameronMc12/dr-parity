@@ -15,6 +15,7 @@
 
 import { TRIGGER_MARKER_ATTR, CLOSE_MARKER_ATTR } from './verbatim-body';
 import type { OverlayWiring, TriggerWiring } from './verbatim-body';
+import { emitInteractionEffect } from './interaction-layer';
 
 export interface VerbatimShellArgs {
   componentName: string;
@@ -115,15 +116,18 @@ export function emitVerbatimComponentShell(args: VerbatimShellArgs): string {
   } = args;
 
   const wiring = emitWiringEffect(triggers, overlays);
+  // The generic interaction layer (tabs / search modal / sidebar nav) always
+  // runs against the verbatim body, independent of inferred state toggles.
+  const interaction = emitInteractionEffect();
+  const needsBodyRef = wiring.needsEffect || interaction.needsEffect;
 
   const usesState = stateHookLines.some((l) => l.includes('useState('));
-  const usesRef =
-    stateHookLines.some((l) => l.includes('useRef(')) || wiring.needsEffect;
+  const usesRef = stateHookLines.some((l) => l.includes('useRef(')) || needsBodyRef;
 
   const hookImports = new Set<string>(effectImportNames);
   if (usesState) hookImports.add('useState');
   if (usesRef) hookImports.add('useRef');
-  if (wiring.needsEffect || effectLines.length > 0) hookImports.add('useEffect');
+  if (needsBodyRef || effectLines.length > 0) hookImports.add('useEffect');
 
   const importLine =
     hookImports.size > 0
@@ -140,10 +144,10 @@ export function emitVerbatimComponentShell(args: VerbatimShellArgs): string {
   if (stateHookLines.length > 0) {
     body.push(...stateHookLines);
   }
-  if (wiring.needsEffect) {
+  if (needsBodyRef) {
     body.push('  const bodyRef = useRef<HTMLDivElement | null>(null);');
   }
-  if (stateHookLines.length > 0 || wiring.needsEffect) {
+  if (stateHookLines.length > 0 || needsBodyRef) {
     body.push('');
   }
 
@@ -155,8 +159,12 @@ export function emitVerbatimComponentShell(args: VerbatimShellArgs): string {
     body.push(...wiring.lines);
     body.push('');
   }
+  if (interaction.lines.length > 0) {
+    body.push(...interaction.lines);
+    body.push('');
+  }
 
-  const bodyRefAttr = wiring.needsEffect ? ' ref={bodyRef}' : '';
+  const bodyRefAttr = needsBodyRef ? ' ref={bodyRef}' : '';
   body.push('  return (');
   body.push('    <>');
   body.push(

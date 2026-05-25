@@ -25,6 +25,7 @@ export { emitOverlayBlocks } from './overlay-render';
 export { emitComponentShell } from './component-shell';
 export { buildVerbatimBody, buildVerbatimOverlays } from './verbatim-body';
 export { emitVerbatimComponentShell } from './component-shell-verbatim';
+export { buildSidebarStyleTag, emitInteractionEffect } from './interaction-layer';
 
 export interface StatefulEmitInput {
   route: RouteGroup;

@@ -23,6 +23,7 @@ const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 
 import type { StateToggle } from '../inference/types';
 import type { ToggleNames } from './name-deriver';
+import { buildSidebarStyleTag } from './interaction-layer';
 
 export const TRIGGER_MARKER_ATTR = 'data-dr-parity-trigger';
 export const CLOSE_MARKER_ATTR = 'data-dr-parity-close';
@@ -164,6 +165,11 @@ export function buildVerbatimBody(
   const $ = cheerio.load(baseHtml, null, false);
   neutraliseEmbedded($);
   neutraliseOpenOverlays($);
+
+  // Restore captured chrome (e.g. a collapsed sidebar rail whose width is
+  // normally set by runtime JS we do not run) via a single emitted style tag.
+  // Prepended so it loads before the captured markup; targets stable structure.
+  $.root().prepend(buildSidebarStyleTag());
 
   const triggers: TriggerWiring[] = [];
   const unmatched: string[] = [];
