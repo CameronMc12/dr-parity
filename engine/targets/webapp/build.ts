@@ -15,6 +15,8 @@ import * as cheerioModule from 'cheerio';
 const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 
 import { extractHead, sliceBody, copyAssetsToPublic } from '../shared';
+import { buildCloneAssetMap, rewriteBodyAssetUrls } from '../shared';
+import type { CloneAssetMap } from '../shared';
 import { htmlToJsx } from '../react/html-to-jsx';
 import { writeApp, writeComponent, writeIndexHtml, writeMain } from './emit';
 import type { RouteEntry } from './emit';
@@ -90,6 +92,14 @@ async function buildFromCrawl(
   const $ = cheerio.load(html, null, true);
   const head = extractHead($);
 
+  // Body asset rewriting: crawl-state DOM carries ABSOLUTE asset URLs that
+  // fail cross-origin at runtime even though the same assets are captured
+  // locally. Rebuild the clone's url map from the sibling parsed/ dir and
+  // rewrite every captured body reference to its local served path before
+  // JSX emission. Missing parsed inputs → null → bodies pass through unchanged.
+  const parsedDir = join(absClone, '..', 'parsed');
+  const assetMap: CloneAssetMap | null = buildCloneAssetMap(parsedDir);
+
   const loaded = await loadCrawlGraph(options.crawlDir);
   const inference = await inferStateGroups(loaded.graph, loaded.getStateDom);
 
@@ -107,7 +117,8 @@ async function buildFromCrawl(
   // Per-route stateful component. Base HTML comes from the base state DOM.
   let componentsEmitted = 0;
   for (const routeGroup of inference.routes) {
-    const baseHtml = await loaded.getStateDom(routeGroup.baseStateGroup.baseStateId);
+    const rawHtml = await loaded.getStateDom(routeGroup.baseStateGroup.baseStateId);
+    const baseHtml = assetMap ? rewriteBodyAssetUrls(rawHtml, assetMap) : rawHtml;
     const result = emitStatefulComponent({ route: routeGroup, baseHtml });
     writeStatefulPage(pagesDir, result);
     componentsEmitted++;

@@ -47,12 +47,25 @@ function quoteJson(value: string): string {
   return JSON.stringify(value);
 }
 
+/**
+ * Compose the MSW handler URL. The cloned app issues real cross-origin
+ * requests (e.g. https://frontdoor-prod-eu-west-1-3.clickup.com/tasks/v1/:id),
+ * and MSW relative patterns only match the document origin (localhost). So we
+ * register the absolute captured origin whenever one is known. The `:param`
+ * path-param syntax works the same way against absolute URLs in MSW 2.x.
+ */
+export function buildHandlerUrl(origin: string, pathPattern: string): string {
+  if (!origin) return pathPattern;
+  const normalizedPath = pathPattern.startsWith('/') ? pathPattern : `/${pathPattern}`;
+  return `${origin}${normalizedPath}`;
+}
+
 export function buildBranchingHandler(
   group: EndpointGroup,
   refs: FixtureRef[],
 ): { handlerCode: string; imports: string[] } {
   const methodLower = group.method.toLowerCase();
-  const handlerPath = group.pathPattern;
+  const handlerPath = buildHandlerUrl(group.origin, group.pathPattern);
   const uniqueRefs = uniqueByImport(refs);
   const imports = uniqueRefs.map((r) => r.importName);
 

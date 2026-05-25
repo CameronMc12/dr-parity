@@ -12,3 +12,5 @@ export { copyAssetsToPublic, dirSizeBytes } from './asset-copy';
 export type { AssetCopyStats } from './asset-copy';
 export { hoistNoscriptPictureSources } from './hoist-noscript-picture';
 export type { HoistNoscriptPictureResult } from './hoist-noscript-picture';
+export { buildCloneAssetMap, rewriteBodyAssetUrls } from './rewrite-body-assets';
+export type { CloneAssetMap } from './rewrite-body-assets';

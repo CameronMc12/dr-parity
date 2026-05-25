@@ -20,7 +20,7 @@ export { loadNetworkRecords } from './parse-network';
 export { groupByEndpoint } from './group-endpoints';
 export { inferUrlPattern } from './url-pattern';
 export { buildFixtures, slugifyPath, fixtureImportName, normalizeRequestBody } from './build-fixtures';
-export { buildBranchingHandler } from './branch-by-body';
+export { buildBranchingHandler, buildHandlerUrl } from './branch-by-body';
 export { buildHandlersFile, buildEmptyHandlersFile } from './build-handlers';
 
 function redactRecord(rec: RequestRecord): RequestRecord {
