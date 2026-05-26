@@ -133,10 +133,24 @@ export function buildBootShim(args: BootShimArgs): string {
   if (WS_CONNECTIONS.length > 0 && typeof window.WebSocket !== 'undefined') {
     var NativeWebSocket = window.WebSocket;
 
-    // ClickUp's connectivity manager also keys off navigator.onLine + the
-    // window 'offline'/'online' events. Under a static replay the page is
-    // genuinely offline to the network, so force-report online and swallow the
-    // browser's 'offline' event so the "Offline mode" toast does not fire.
+    // ClickUp's connectivity manager keys off navigator.onLine + the window
+    // 'offline'/'online' events for the SOURCE of its connectivity observable,
+    // but the actual gate is a real network probe: it fetches a 1x1 pixel GIF
+    // (./media/pixel-EYYJE32I.gif?ngsw-bypass=1&cache-bust=<ts>) via new
+    // Image() and only emits "online" when that image's onload fires. The
+    // ngsw-bypass=1 query forces the request PAST the service worker, so the
+    // replay's SW never serves it and the request 404s -> onerror -> the
+    // observable emits false -> NgRx store selector disconnected = true ->
+    // the "Offline mode" toast appears. Overriding navigator.onLine alone (as
+    // tried before) does NOT help, because the pixel probe runs regardless.
+    //
+    // Fix every layer of the signal deterministically:
+    //   (a) report navigator.onLine = true and swallow the 'offline' event so
+    //       the observable SOURCE never emits offline,
+    //   (b) intercept the connectivity pixel probe at Image.prototype.src so
+    //       it resolves with onload (success), exactly as it would online,
+    //       feeding the observable GATE a healthy result. Scoped strictly to
+    //       the connectivity pixel; all other images load natively.
     try {
       Object.defineProperty(window.navigator, 'onLine', {
         configurable: true,
@@ -151,6 +165,42 @@ export function buildBootShim(args: BootShimArgs): string {
     setTimeout(function () {
       try { window.dispatchEvent(new Event('online')); } catch (e) {}
     }, 0);
+
+    // Force the connectivity pixel probe to "load". Match ONLY the connectivity
+    // GIF so ordinary <img> loads keep their native behaviour.
+    try {
+      var ImageProto = window.HTMLImageElement && window.HTMLImageElement.prototype;
+      var nativeSrc = ImageProto && Object.getOwnPropertyDescriptor(ImageProto, 'src');
+      if (nativeSrc && nativeSrc.set && nativeSrc.configurable) {
+        var isConnectivityPixel = function (value) {
+          var v = String(value);
+          return v.indexOf('pixel-EYYJE32I') !== -1 ||
+                 (v.indexOf('/media/pixel-') !== -1 && v.indexOf('ngsw-bypass') !== -1);
+        };
+        Object.defineProperty(ImageProto, 'src', {
+          configurable: true,
+          enumerable: nativeSrc.enumerable,
+          get: function () { return nativeSrc.get.call(this); },
+          set: function (value) {
+            if (isConnectivityPixel(value)) {
+              var img = this;
+              // Mark the probe as a same-size loaded image and fire onload async,
+              // mirroring a successful network fetch without touching the network.
+              setTimeout(function () {
+                try {
+                  if (typeof img.onload === 'function') {
+                    img.onload({ type: 'load', target: img });
+                  }
+                  img.dispatchEvent(new Event('load'));
+                } catch (e) {}
+              }, 0);
+              return;
+            }
+            nativeSrc.set.call(this, value);
+          },
+        });
+      }
+    } catch (e) { /* if src is non-configurable, fall back to network behaviour */ }
 
     function stripQuery(u) { var i = u.indexOf('?'); return i === -1 ? u : u.slice(0, i); }
 
