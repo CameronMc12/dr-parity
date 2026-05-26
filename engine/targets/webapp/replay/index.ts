@@ -33,6 +33,7 @@ import { emitAssetsFromCrawl, mergeCrawlIntoCloneMap } from '../emit-assets-from
 import { loadWsFrames, groupByConnection } from '../emit-realtime';
 import { loadBootstrapDocument, loadSeededState } from './load-bootstrap-html';
 import { buildRecordings } from './build-recordings';
+import { mergeRecordings, mergeAssets } from './merge-crawls';
 import { backfillFromCdn } from './cdn-backfill';
 import { rewriteBootstrapHtml } from './rewrite-bootstrap';
 import { buildBootShim } from './emit-boot-shim';
@@ -88,14 +89,21 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
   const unrecordedMode = options.unrecordedMode ?? 'empty-200';
   const warnings: string[] = [];
 
+  // The bootstrap crawl is always FIRST in the union so its assets win on a
+  // content conflict and its recordings seed the dedup map. Extra merge dirs
+  // (one per app section) fill in every other route's data + assets.
+  const extraDirs = (options.mergeDirs ?? []).filter((d) => d !== crawlDir);
+  const allCrawlDirs = [crawlDir, ...extraDirs];
+
   prepareOutDir(outDir, force);
 
-  // 1. Localize every captured asset into <outDir>/_ext/... and build the map.
-  const assetResult = await emitAssetsFromCrawl({
-    crawlDir,
-    publicDir: outDir,
-    existingUrls: new Set<string>(),
-  });
+  // 1. Localize every captured asset across ALL crawls into <outDir>/_ext/...
+  // First-writer wins (identical content-hashed bundles), so the bootstrap crawl
+  // keeps priority and later crawls only fill gaps. A single dir reduces to the
+  // original single-crawl localize.
+  const mergedAssets = await mergeAssets({ crawlDirs: allCrawlDirs, publicDir: outDir });
+  warnings.push(...mergedAssets.warnings);
+  const assetResult = mergedAssets.combined;
 
   // 2. Load the original bootstrap HTML.
   const bootstrap = await loadBootstrapDocument(crawlDir);
@@ -119,9 +127,11 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
   });
   warnings.push(...backfill.warnings);
 
-  // 3. Build recordings + WS connections.
-  const { recordings, warnings: recWarnings } = await buildRecordings(crawlDir);
-  warnings.push(...recWarnings);
+  // 3. Build recordings (UNIONED across every crawl, deduped by request
+  // fingerprint, richest body wins) + WS connections (from the bootstrap crawl).
+  const merged = await mergeRecordings(allCrawlDirs);
+  const recordings = merged.recordings;
+  warnings.push(...merged.warnings);
   const ws = await loadWsConnections(crawlDir);
   warnings.push(...ws.warnings);
 
@@ -184,6 +194,9 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
     unrecordedMode,
     bridgeRecordingCount,
     bridgeListCount,
+    mergedCrawlDirs: allCrawlDirs,
+    recordingsBeforeDedup: merged.totalBeforeDedup,
+    recordingBodyBytes: merged.bodyBytes,
     warnings,
   };
   writeFile(outDir, 'replay-manifest.json', JSON.stringify(manifest, null, 2));

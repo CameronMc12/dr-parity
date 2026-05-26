@@ -23,7 +23,10 @@ import type { UnrecordedMode } from '../engine/targets/webapp/replay/types';
 
 interface ParsedArgs {
   help: boolean;
-  crawlDir: string | null;
+  /** Crawl dirs in order. The FIRST is the bootstrap (unless --bootstrap-dir set). */
+  crawlDirs: string[];
+  /** Explicit bootstrap crawl dir; overrides the first --crawl-dir for booting. */
+  bootstrapDir: string | null;
   outDir: string | null;
   force: boolean;
   unrecorded: UnrecordedMode;
@@ -39,9 +42,20 @@ Required:
   --crawl-dir=<path>            Crawl directory with network.jsonl (original
                                 navigation HTML + JS/CSS/asset bodies), and
                                 optionally websocket.jsonl, graph.json,
-                                storage-state.json.
+                                storage-state.json. REPEATABLE: pass it multiple
+                                times to UNION the recordings + assets of every
+                                crawl into one corpus (deduped by request
+                                fingerprint, richest body wins) so every app
+                                section renders. The FIRST --crawl-dir boots
+                                (its HTML/storage/WS) unless --bootstrap-dir set.
 
 Options:
+  --merge-dirs=<a,b,c>          ADDITIVE. Comma-separated extra crawl dirs to
+                                union into the corpus (alternative to repeating
+                                --crawl-dir). Combined with all --crawl-dir paths.
+  --bootstrap-dir=<path>        Crawl dir whose navigation HTML, storage-state,
+                                and WS frames seed the page. Defaults to the first
+                                --crawl-dir. Must also appear in the union.
   --out=<dir>                   Output directory. Defaults to a sibling
                                 'replay-site/' next to the crawl directory.
   --unrecorded=<mode>           How unrecorded requests are answered.
@@ -64,7 +78,8 @@ Options:
 function parseArgs(argv: string[]): ParsedArgs {
   const result: ParsedArgs = {
     help: false,
-    crawlDir: null,
+    crawlDirs: [],
+    bootstrapDir: null,
     outDir: null,
     force: false,
     unrecorded: 'empty-200',
@@ -78,7 +93,12 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (raw === '--force') {
       result.force = true;
     } else if (raw.startsWith('--crawl-dir=')) {
-      result.crawlDir = raw.slice('--crawl-dir='.length);
+      result.crawlDirs.push(raw.slice('--crawl-dir='.length));
+    } else if (raw.startsWith('--merge-dirs=')) {
+      const list = raw.slice('--merge-dirs='.length).split(',').map((s) => s.trim()).filter(Boolean);
+      result.crawlDirs.push(...list);
+    } else if (raw.startsWith('--bootstrap-dir=')) {
+      result.bootstrapDir = raw.slice('--bootstrap-dir='.length);
     } else if (raw.startsWith('--out=')) {
       result.outDir = raw.slice('--out='.length);
     } else if (raw.startsWith('--out-dir=')) {
@@ -97,10 +117,9 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.backend = raw.slice('--backend='.length);
     } else if (raw.startsWith('--')) {
       throw new Error(`Unknown flag: ${raw}`);
-    } else if (result.crawlDir === null) {
-      result.crawlDir = raw;
     } else {
-      throw new Error(`Unexpected positional argument: ${raw}`);
+      // Bare positional = a crawl dir (first one if none via --crawl-dir).
+      result.crawlDirs.push(raw);
     }
   }
   return result;
@@ -134,20 +153,28 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (parsed.help || parsed.crawlDir === null) {
+  if (parsed.help || parsed.crawlDirs.length === 0) {
     console.log(HELP);
     process.exit(parsed.help ? 0 : 2);
     return;
   }
 
-  const crawlDir = resolve(parsed.crawlDir);
+  // Resolve + dedup all crawl dirs preserving order. The bootstrap is either the
+  // explicit --bootstrap-dir or the first crawl dir; it leads the union.
+  const resolvedDirs = Array.from(new Set(parsed.crawlDirs.map((d) => resolve(d))));
+  const bootstrapDir = parsed.bootstrapDir ? resolve(parsed.bootstrapDir) : resolvedDirs[0];
+  const orderedDirs = [bootstrapDir, ...resolvedDirs.filter((d) => d !== bootstrapDir)];
+
   try {
-    assertValidCrawlDir(crawlDir);
+    for (const dir of orderedDirs) assertValidCrawlDir(dir);
   } catch (err) {
     console.error((err as Error).message);
     process.exit(2);
     return;
   }
+
+  const crawlDir = bootstrapDir;
+  const mergeDirs = orderedDirs.slice(1);
 
   const outDir = parsed.outDir
     ? isAbsolute(parsed.outDir)
@@ -164,6 +191,7 @@ async function main(): Promise<void> {
 
     const result = await emitReplay({
       crawlDir,
+      ...(mergeDirs.length > 0 ? { mergeDirs } : {}),
       outDir,
       force: parsed.force,
       unrecordedMode: parsed.unrecorded,
@@ -175,9 +203,14 @@ async function main(): Promise<void> {
     const m = result.manifest;
     console.log(`\nWrote replay project: ${result.outDir}`);
     console.log(`Bootstrap document: ${m.bootstrapUrl}`);
+    console.log(`Merged crawls: ${m.mergedCrawlDirs.length}`);
+    for (const d of m.mergedCrawlDirs) console.log(`  - ${d}`);
     console.log(`Assets localized: ${m.assetCount}`);
     console.log(`Backfilled ${m.backfilledCount} CDN assets, ${m.backfillFailedCount} failed`);
-    console.log(`Recordings: ${m.recordingCount}`);
+    console.log(
+      `Recordings: ${m.recordingCount} deduped from ${m.recordingsBeforeDedup} ` +
+        `(${(m.recordingBodyBytes / 1024 / 1024).toFixed(1)} MB bodies)`,
+    );
     console.log(
       `Bridge recordings: ${m.bridgeRecordingCount} (${m.bridgeListCount} lists from export)`,
     );

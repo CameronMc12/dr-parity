@@ -113,6 +113,25 @@ function pathMatches(requestPath, pattern) {
 }
 
 /**
+ * How LITERAL a pattern's match against the RAW request path is: the count of
+ * pattern segments that equal the corresponding raw request segment verbatim
+ * (no wildcarding on either side). When the merged corpus holds several
+ * recordings whose ids wildcard to the same path (e.g. a numeric-id 404 sibling
+ * viz/v1/view/901523543266 vs the literal viz/v1/view/2kyr6013-1415), the
+ * recording that literally names this resource must win so a wrong-list 404
+ * never shadows the right-list 200. Same-length match is the precondition.
+ */
+function literalMatchStrength(requestPath, pattern) {
+  const reqRaw = segmentize(requestPath);
+  const patRaw = segmentize(pattern);
+  let n = 0;
+  for (let i = 0; i < patRaw.length && i < reqRaw.length; i++) {
+    if (patRaw[i] === reqRaw[i] && !patRaw[i].startsWith(':')) n++;
+  }
+  return n;
+}
+
+/**
  * Looser fallback: does the recorded pattern's normalized segment list match a
  * TRAILING slice of the request path? Tolerates a runtime URL that carries one
  * extra LEADING id segment vs the captured pattern (e.g. a regional-shard
@@ -223,6 +242,13 @@ function chooseFromCandidates(candidates, bodyKey, wantKey) {
   if (exact) return exact;
   const empty = pool.find((r) => r.requestBodyKey === '');
   if (empty) return empty;
+  // Prefer a 2xx payload over a non-2xx sibling so a wrong-list 404 / 401 never
+  // beats a real 200 body when both wildcard-match the same path. Among 2xx,
+  // prefer a non-empty body; fall back to any candidate so GETs still resolve.
+  const ok = pool.filter((r) => r.status >= 200 && r.status < 300);
+  const okWithBody = ok.find((r) => r.body && r.body.length > 2);
+  if (okWithBody) return okWithBody;
+  if (ok.length > 0) return ok[0];
   const withBody = pool.find((r) => r.body && r.body.length > 2);
   if (withBody) return withBody;
   return pool[0];
@@ -232,10 +258,25 @@ function pickRecording(method, pathname, bodyKey) {
   const wantKey = bridgeMatchKey(method, pathname, bodyKey);
 
   // 1. Exact path match (numeric/hex id segments wildcarded). The strict path.
+  // When several recordings wildcard-match the same path, restrict to the ones
+  // whose literal (non-wildcard) overlap with the RAW request path is greatest,
+  // so a recording that literally names this resource (e.g. the right list's
+  // view id) beats a numeric-id sibling that only matched via wildcarding (e.g.
+  // a wrong-list 404). Ties keep every equally-literal candidate for body/status
+  // ranking inside chooseFromCandidates.
   const exactPath = RECORDINGS.filter(
     (r) => r.method === method && pathMatches(pathname, r.pathPattern),
   );
-  const chosen = chooseFromCandidates(exactPath, bodyKey, wantKey);
+  let strongest = exactPath;
+  if (exactPath.length > 1) {
+    let best = -1;
+    for (const r of exactPath) {
+      const s = literalMatchStrength(pathname, r.pathPattern);
+      if (s > best) best = s;
+    }
+    strongest = exactPath.filter((r) => literalMatchStrength(pathname, r.pathPattern) === best);
+  }
+  const chosen = chooseFromCandidates(strongest, bodyKey, wantKey);
   if (chosen) return chosen;
 
   // 2. Tolerant fallback: a recorded sibling endpoint whose normalized segment

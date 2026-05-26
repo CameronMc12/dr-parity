@@ -71,8 +71,20 @@ export type SeededState = {
 export type UnrecordedMode = 'empty-200' | 'bypass';
 
 export type ReplayBuildOptions = {
-  /** Crawl directory carrying network.jsonl, websocket.jsonl, graph.json, states/. */
+  /**
+   * Crawl directory carrying network.jsonl, websocket.jsonl, graph.json, states/.
+   * This is the BOOTSTRAP crawl: its navigation HTML, storage-state, and WS frames
+   * seed the page. When `mergeDirs` is set, its recordings/assets are still merged.
+   */
   crawlDir: string;
+  /**
+   * Additive: extra crawl dirs whose recordings + static assets are UNIONED into
+   * the corpus (deduped by request fingerprint, richest body wins). Each crawl
+   * walks one app section; merging gives every route its data so the whole app
+   * renders. The bootstrap (HTML/storage/WS) always comes from `crawlDir`. Empty
+   * or absent => single-crawl behaviour is unchanged.
+   */
+  mergeDirs?: string[];
   /** Output directory for the runnable replay site. */
   outDir: string;
   /** Overwrite outDir if it exists. */
@@ -125,6 +137,12 @@ export type ReplayManifest = {
   bridgeRecordingCount: number;
   /** Count of lists synthesized from the export (0 unless --bridge-export). */
   bridgeListCount: number;
+  /** Crawl dirs whose recordings/assets were unioned into the corpus. */
+  mergedCrawlDirs: string[];
+  /** Total recordings across all merged crawls BEFORE fingerprint dedup. */
+  recordingsBeforeDedup: number;
+  /** Total response-body bytes in the deduped recordings corpus. */
+  recordingBodyBytes: number;
   warnings: string[];
 };
 
