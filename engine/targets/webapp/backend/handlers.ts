@@ -12,12 +12,15 @@
  */
 
 import { mapGenericView } from '../replay/bridge/map-generic-view';
+import { mapCalendarView } from '../replay/bridge/map-calendar-view';
 import { mapSubcategory } from '../replay/bridge/map-subcategory';
 import { mapTasksBulk } from '../replay/bridge/map-tasks-bulk';
+import type { ExportTask } from '../replay/bridge/load-export';
 import { synthStatusesForList } from '../replay/bridge/synth-statuses';
 import type { CapturedTemplates } from '../replay/bridge/extract-templates';
 import type { BackendStore, StoreMember } from './store-types';
 import { synthVizView, type ViewSynthAssets } from './view-synth';
+import { synthDefaultViews } from './default-views-synth';
 import {
   synthDocData,
   synthDocPages,
@@ -62,19 +65,78 @@ export const subcategoryHandler: Handler = (ctx, store, templates) => {
   return { handler: 'subcategory', body };
 };
 
-/** POST /view/v1/genericView (body.parent.id names the list) */
-export const genericViewHandler: Handler = (ctx, store, templates) => {
-  if (ctx.method !== 'POST' || !/\/view\/v1\/genericView/.test(ctx.pathname)) return null;
-  const parsed = ctx.body as { parent?: { id?: string | number } } | null;
-  const listId = parsed?.parent?.id !== undefined ? String(parsed.parent.id) : null;
-  if (!listId) return null;
-  const list = store.listById(listId);
-  const tasks = store.tasksByList(listId);
-  const statusSet = synthStatusesForList(listId, list, tasks);
-  const body = mapGenericView(listId, list, tasks, statusSet, templates);
-  if (!body) return null;
-  return { handler: 'genericView', body };
+/** ClickUp `parent.type` codes inside a genericView/view request body. */
+const PARENT_TYPE_SPACE = 4;
+const PARENT_TYPE_FOLDER = 5;
+const PARENT_TYPE_LIST = 6;
+/** View `type` code for a calendar view. */
+const VIEW_TYPE_CALENDAR = 5;
+
+type GenericViewRequest = {
+  id?: string | number;
+  type?: number;
+  parent?: { id?: string | number; type?: number };
 };
+
+/**
+ * Collect the export tasks in a view's scope. A list parent uses that list's tasks;
+ * a folder/space parent aggregates the tasks of every list under it (resolved via
+ * each list's `space.id` / `folder.id`).
+ */
+function tasksForParent(
+  store: BackendStore,
+  parentId: string,
+  parentType: number | undefined,
+): { listId: string; tasks: ExportTask[] } {
+  if (parentType === PARENT_TYPE_FOLDER) {
+    const lists = store.lists().filter((l) => l.folder?.id === parentId);
+    return { listId: lists[0]?.id ?? parentId, tasks: lists.flatMap((l) => store.tasksByList(l.id)) };
+  }
+  if (parentType === PARENT_TYPE_SPACE) {
+    const lists = store.lists().filter((l) => l.space?.id === parentId);
+    return { listId: lists[0]?.id ?? parentId, tasks: lists.flatMap((l) => store.tasksByList(l.id)) };
+  }
+  // Default + explicit list parent.
+  return { listId: parentId, tasks: store.tasksByList(parentId) };
+}
+
+/**
+ * POST /view/v1/genericView. The request body names the view (`id` + `type`) and its
+ * `parent` (id + type). A LIST view returns the list-shaped `list.divisions[].groups`
+ * payload; a CALENDAR view (type 5) returns the calendar-shaped `calendar.groups`
+ * payload — serving the list shape to a calendar makes the bundle throw
+ * "We ran into some trouble when loading your view." A factory so the captured
+ * calendar template is closed over; GATED so an unavailable calendar template falls
+ * back to the list mapper (no regression).
+ */
+export function makeGenericViewHandler(
+  calendarTemplate: Record<string, unknown> | null,
+): Handler {
+  return (ctx, store, templates) => {
+    if (ctx.method !== 'POST' || !/\/view\/v1\/genericView/.test(ctx.pathname)) return null;
+    const parsed = ctx.body as GenericViewRequest | null;
+    const rawParentId = parsed?.parent?.id;
+    if (rawParentId === undefined) return null;
+    const parentId = String(rawParentId);
+    const parentType = parsed?.parent?.type;
+
+    // CALENDAR branch: a calendar-shaped body (typeNum 5) so the calendar hydrates.
+    if (parsed?.type === VIEW_TYPE_CALENDAR && calendarTemplate) {
+      const { tasks } = tasksForParent(store, parentId, parentType);
+      const body = mapCalendarView(tasks, calendarTemplate as never);
+      if (body) return { handler: 'genericView.calendar', body };
+      // Calendar template missing/mismatched -> fall through to the list mapper.
+    }
+
+    // LIST branch (default): list-shaped divisions/groups.
+    const { listId, tasks } = tasksForParent(store, parentId, parentType);
+    const list = store.listById(listId);
+    const statusSet = synthStatusesForList(listId, list, tasks);
+    const body = mapGenericView(listId, list, tasks, statusSet, templates);
+    if (!body) return null;
+    return { handler: 'genericView', body };
+  };
+}
 
 /** POST /task-v3/experience/{ws}/tasks/bulk (body.ids names tasks) */
 export const tasksBulkHandler: Handler = (ctx, store, templates) => {
@@ -367,6 +429,51 @@ export function makeVizViewHandler(assets: ViewSynthAssets): Handler {
 }
 
 // ---------------------------------------------------------------------------
+// View-collection synthesizers (close the view-ROUTE-RESOLUTION gap).
+//
+// The SPA resolves a /v/{type}/{viewId} route by ENUMERATING a location's views
+// via two collection reads, then binds the target view from the returned views[]:
+//   GET /viz/v1/default_views?parent_id={loc}&parent_type={t}
+//   GET /viz/v1/view?parent_id={loc}&parent_type={t}&...   (collection, no id)
+// Recordings answer both for the WRONG location with views:[] so the target view
+// is never found and the route falls to the default list scaffold. These handlers
+// populate views[] from the catalogue so the SPA finds + binds the target view and
+// then fetches viz/v1/view/{id} (already synthesized). GATED: null unless the
+// catalog has views for the requested parent, so uncovered locations fall back to
+// the recording (no regression).
+// ---------------------------------------------------------------------------
+
+/** GET /viz/v1/default_views?parent_id={X}&parent_type={T} */
+export function makeDefaultViewsHandler(
+  assets: ViewSynthAssets,
+  envelope: Record<string, unknown> | null,
+): Handler {
+  return (ctx) => {
+    if (ctx.method !== 'GET' || !/\/viz\/v1\/default_views$/.test(ctx.pathname)) return null;
+    const parentId = ctx.query.get('parent_id');
+    if (!parentId) return null;
+    const body = synthDefaultViews(parentId, assets, envelope);
+    if (!body) return null;
+    return { handler: 'defaultViews', body };
+  };
+}
+
+/** GET /viz/v1/view?parent_id={X}&parent_type={T}&... (collection — no id segment) */
+export function makeViewCollectionHandler(
+  assets: ViewSynthAssets,
+  envelope: Record<string, unknown> | null,
+): Handler {
+  return (ctx) => {
+    if (ctx.method !== 'GET' || !/\/viz\/v1\/view$/.test(ctx.pathname)) return null;
+    const parentId = ctx.query.get('parent_id');
+    if (!parentId) return null;
+    const body = synthDefaultViews(parentId, assets, envelope);
+    if (!body) return null;
+    return { handler: 'viewCollection', body };
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Doc render chain (closes the docs UNAVAILABLE gap). Serves the deep-link doc
 // chain from the owned export: doc metadata via docs/bulk, page content via
 // docs/v1/view/{docId}/page. GATED: returns null unless the requested doc id is
@@ -460,7 +567,6 @@ export function makeDocVizViewHandler(docViewTemplate: Record<string, unknown> |
 /** Ordered handler chain. List-render handlers first (highest value). */
 export const HANDLERS: Handler[] = [
   subcategoryHandler,
-  genericViewHandler,
   tasksBulkHandler,
   sidebarTreeHandler,
   projectHandler,

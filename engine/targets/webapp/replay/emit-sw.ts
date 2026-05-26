@@ -342,10 +342,23 @@ const BACKEND_DATA_PATTERNS = [
   // per-type template + the view catalog. GATED end-to-end: the backend returns
   // x-backend:miss (empty {}) for any view it cannot synthesize (uncatalogued or
   // no template for its type), and tryBackend rejects a {} / non-live answer, so
-  // the request falls back to the recording / empty-200 exactly as before. Only
-  // the bare collection root (/viz/v1/view, no id) is excluded — it must stay on
-  // its rich 78KB recording. Requires a trailing id segment to match.
+  // the request falls back to the recording / empty-200 exactly as before.
+  // Requires a trailing id segment to match.
   /\\/viz\\/v1\\/view\\/[^/]+$/,
+  // VIEW-COLLECTION reads (close the view-ROUTE-RESOLUTION gap). The SPA resolves a
+  // /v/{type}/{viewId} route by ENUMERATING a location's views via these two
+  // collection reads, then binds the target view from the returned views[]:
+  //   GET /viz/v1/default_views?parent_id={loc}&parent_type={t}
+  //   GET /viz/v1/view?parent_id={loc}&parent_type={t}&...   (bare collection, no id)
+  // Recordings answer both for ONE wrong location with views:[] so the target view
+  // is never found and the route falls to the default list scaffold. The backend
+  // populates views[] from the catalog so the SPA finds + binds the view. GATED in
+  // the handler: a parent the catalog does not cover returns x-backend:miss, so the
+  // bare-collection recording still answers for uncovered locations (no regression).
+  // Anchored to the bare path (no id) so the per-view viz/v1/view/{id} read above is
+  // unaffected.
+  /\\/viz\\/v1\\/view$/,
+  /\\/viz\\/v1\\/default_views$/,
   // Doc render chain (deep-link doc body). The backend serves doc METADATA from the
   // owned export when it owns the requested doc id, else returns x-backend:miss so the
   // recording / empty-200 answers. docs/bulk is GATED in the handler so the hub

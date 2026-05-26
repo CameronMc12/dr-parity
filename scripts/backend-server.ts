@@ -20,7 +20,8 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { isAbsolute, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import { EventBackedStore } from '../engine/targets/webapp/backend/event-store-backed';
 import { loadTemplates } from '../engine/targets/webapp/backend/templates-cache';
@@ -29,6 +30,9 @@ import { routeCommand } from '../engine/targets/webapp/backend/command-router';
 import { CoverageLog } from '../engine/targets/webapp/backend/coverage';
 import {
   makeVizViewHandler,
+  makeGenericViewHandler,
+  makeDefaultViewsHandler,
+  makeViewCollectionHandler,
   makeDocsBulkHandler,
   makeDocSingleHandler,
   makeDocVizViewHandler,
@@ -38,10 +42,24 @@ import {
   loadViewSynthAssets,
   templatedTypes,
 } from '../engine/targets/webapp/backend/view-synth';
+import { loadDefaultViewsEnvelope } from '../engine/targets/webapp/backend/default-views-synth';
 import {
   loadDocBulkTemplate,
   loadDocViewTemplate,
 } from '../engine/targets/webapp/backend/doc-synth';
+
+const CALENDAR_TEMPLATE_FILE = 'view-templates/_calendar_genericview.json';
+
+/** Load the captured calendar genericView template (calendar-shaped body). */
+function loadCalendarTemplate(backendDir: string): Record<string, unknown> | null {
+  const path = join(backendDir, CALENDAR_TEMPLATE_FILE);
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
 
 const DEFAULT_PORT = 8787;
 const DEFAULT_STORE = '.runs/backend/store.json';
@@ -120,6 +138,19 @@ async function main(): Promise<void> {
   const vizViewHandler = makeVizViewHandler(viewSynth);
   const synthTypes = templatedTypes(viewSynth);
   const catalogViews = viewSynth.catalog ? Object.keys(viewSynth.catalog.views).length : 0;
+
+  // View-collection synthesizers: populate a location's views[] from the catalog so
+  // the SPA can resolve /v/{type}/{viewId} routes (default_views + viz/v1/view
+  // collection). GATED to catalogued parents (else recording answers).
+  const defaultViewsEnvelope = loadDefaultViewsEnvelope(BACKEND_DIR);
+  const defaultViewsHandler = makeDefaultViewsHandler(viewSynth, defaultViewsEnvelope);
+  const viewCollectionHandler = makeViewCollectionHandler(viewSynth, defaultViewsEnvelope);
+
+  // Calendar genericView template (calendar-shaped body, typeNum 5). The list mapper
+  // produces list-shaped divisions; a calendar view needs `calendar.groups[]` or the
+  // bundle throws "ran into trouble". GATED: missing template -> list mapper fallback.
+  const calendarTemplate = loadCalendarTemplate(BACKEND_DIR);
+  const genericViewHandler = makeGenericViewHandler(calendarTemplate);
 
   // Doc render-chain handlers (deep-link doc body from owned export). Factory so
   // the captured doc-bulk template is closed over; GATED to owned doc ids.
@@ -208,8 +239,11 @@ async function main(): Promise<void> {
     }
 
     const routed = routeRequest(ctx, store, templates, coverage, [
+      genericViewHandler,
       docVizViewHandler,
       vizViewHandler,
+      defaultViewsHandler,
+      viewCollectionHandler,
       docsBulkHandler,
       docSingleHandler,
     ]);
