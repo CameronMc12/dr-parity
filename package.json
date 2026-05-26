@@ -74,7 +74,8 @@
     "preview": "serve",
     "schema:infer": "tsx scripts/infer-schema.ts",
     "test:mitm:reader": "tsx engine/extract/capture/mitm/flow-reader.test.ts",
-    "test:merge:fingerprint": "tsx engine/extract/capture/merge/fingerprint.test.ts"
+    "test:merge:fingerprint": "tsx engine/extract/capture/merge/fingerprint.test.ts",
+    "capture:view-templates": "tsx scripts/capture-view-templates.ts"
   },
   "dependencies": {
     "citty": "^0.2.2"

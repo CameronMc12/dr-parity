@@ -27,12 +27,17 @@ import { loadTemplates } from '../engine/targets/webapp/backend/templates-cache'
 import { routeRequest } from '../engine/targets/webapp/backend/router';
 import { routeCommand } from '../engine/targets/webapp/backend/command-router';
 import { CoverageLog } from '../engine/targets/webapp/backend/coverage';
-import type { RequestCtx } from '../engine/targets/webapp/backend/handlers';
+import { makeVizViewHandler, type RequestCtx } from '../engine/targets/webapp/backend/handlers';
+import {
+  loadViewSynthAssets,
+  templatedTypes,
+} from '../engine/targets/webapp/backend/view-synth';
 
 const DEFAULT_PORT = 8787;
 const DEFAULT_STORE = '.runs/backend/store.json';
 const DEFAULT_EVENTS = '.runs/backend/events.db';
 const DEFAULT_CRAWL = 'docs/research/crawl/app.clickup.com/2026-05-25T16-33-12-057Z';
+const BACKEND_DIR = resolve('engine/targets/webapp/backend');
 
 type Args = { port: number; storePath: string; eventsPath: string; crawlDir: string };
 
@@ -99,6 +104,13 @@ async function main(): Promise<void> {
   ].filter(Boolean);
   const coverage = new CoverageLog();
 
+  // viz/v1/view synthesizer assets (catalog + per-type templates). Loaded once;
+  // the handler is GATED so it only answers catalogued + templated views.
+  const viewSynth = loadViewSynthAssets(BACKEND_DIR);
+  const vizViewHandler = makeVizViewHandler(viewSynth);
+  const synthTypes = templatedTypes(viewSynth);
+  const catalogViews = viewSynth.catalog ? Object.keys(viewSynth.catalog.views).length : 0;
+
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     void handle(req, res);
   });
@@ -127,7 +139,14 @@ async function main(): Promise<void> {
     }
     if (url.pathname === '/__health') {
       res.writeHead(200, { 'content-type': 'application/json', ...CORS_HEADERS });
-      res.end(JSON.stringify({ ok: true, templates: haveTemplates, lists: store.lists().length }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          templates: haveTemplates,
+          lists: store.lists().length,
+          viewSynth: { catalogViews, types: synthTypes },
+        }),
+      );
       return;
     }
 
@@ -168,7 +187,7 @@ async function main(): Promise<void> {
       }
     }
 
-    const routed = routeRequest(ctx, store, templates, coverage);
+    const routed = routeRequest(ctx, store, templates, coverage, [vizViewHandler]);
     res.writeHead(routed.status, { ...routed.headers, ...CORS_HEADERS });
     res.end(routed.body);
   }
@@ -178,6 +197,7 @@ async function main(): Promise<void> {
       `OWNED ClickUp backend listening on http://localhost:${args.port}\n` +
         `  store:     ${args.storePath} (${store.lists().length} lists, ${store.allTasks().length} tasks)\n` +
         `  templates: ${haveTemplates.join(', ') || 'NONE (list render will miss)'}\n` +
+        `  viewSynth: ${catalogViews} catalogued views, types [${synthTypes.join(', ') || 'none'}]\n` +
         `  coverage:  GET /__coverage\n`,
     );
   });

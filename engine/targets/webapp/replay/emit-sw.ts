@@ -338,6 +338,14 @@ const BACKEND_DATA_PATTERNS = [
   /\\/hierarchy\\/v1\\/subcategory\\/\\d+/,
   /\\/view\\/v1\\/genericView/,
   /\\/task-v3\\/experience\\/\\d+\\/tasks\\/bulk/,
+  // Per-view METADATA read. The backend synthesizes viz/v1/view/{viewId} from a
+  // per-type template + the view catalog. GATED end-to-end: the backend returns
+  // x-backend:miss (empty {}) for any view it cannot synthesize (uncatalogued or
+  // no template for its type), and tryBackend rejects a {} / non-live answer, so
+  // the request falls back to the recording / empty-200 exactly as before. Only
+  // the bare collection root (/viz/v1/view, no id) is excluded — it must stay on
+  // its rich 78KB recording. Requires a trailing id segment to match.
+  /\\/viz\\/v1\\/view\\/[^/]+$/,
   // NOTE: init/shell reads (bootstrap, workspace-core, user, project, customFields)
   // are deliberately NOT served live. Their store payloads were non-empty but
   // subtly off-shape — they passed the non-degenerate gate yet stalled the bundle's
@@ -520,6 +528,18 @@ async function handleApi(request, url) {
   // An exact body-key capture for any other view-data request is authoritative.
   if (rec && bodyKey && rec.requestBodyKey === bodyKey && rec.body && rec.body.length > 2) {
     return recordedResponse(rec);
+  }
+
+  // 0a2. VIZ-VIEW GUARD (additive, no-regression). A GET viz/v1/view/{id} that
+  // has a REAL 200 recording (the handful of views the crawl actually captured)
+  // is served from that recording, NOT the synthesizer — the recorded per-view
+  // body is the ground truth and richer than a re-populated template. The synth
+  // backend only fills the gap for views with NO 200 recording (the 404 siblings
+  // and every uncaptured view), so the 5 already-rendering views never regress.
+  if (method === 'GET' && /\\/viz\\/v1\\/view\\/[^/]+$/.test(url.pathname)) {
+    if (rec && rec.status >= 200 && rec.status < 300 && rec.body && rec.body.length > 2) {
+      return recordedResponse(rec);
+    }
   }
 
   // 0b. ADDITIVE: forward to the OWNED local backend first (live dynamic reads).

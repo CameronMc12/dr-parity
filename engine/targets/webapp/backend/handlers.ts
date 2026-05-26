@@ -17,6 +17,7 @@ import { mapTasksBulk } from '../replay/bridge/map-tasks-bulk';
 import { synthStatusesForList } from '../replay/bridge/synth-statuses';
 import type { CapturedTemplates } from '../replay/bridge/extract-templates';
 import type { BackendStore, StoreMember } from './store-types';
+import { synthVizView, type ViewSynthAssets } from './view-synth';
 
 export type RequestCtx = {
   method: string;
@@ -336,6 +337,28 @@ export const inboxStatsHandler: Handler = (ctx) => {
   }
   return { handler: 'inboxStats', body: { stats: {} } };
 };
+
+// ---------------------------------------------------------------------------
+// viz/v1/view synthesizer (closes the largest UNAVAILABLE gap).
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /viz/v1/view/{viewId} — synthesize the view body from a per-type template
+ * + the catalog. A factory so the loaded synth assets are captured in a closure
+ * (the generic Handler signature carries no place for them). GATED: returns null
+ * unless the view is catalogued AND its type has a template, so the SW falls
+ * back to the recording / empty-200 for anything uncovered (no regression).
+ */
+export function makeVizViewHandler(assets: ViewSynthAssets): Handler {
+  return (ctx) => {
+    if (ctx.method !== 'GET') return null;
+    const m = ctx.pathname.match(/\/viz\/v1\/view\/([^/]+)\b/);
+    if (!m) return null;
+    const body = synthVizView(decodeURIComponent(m[1]), assets);
+    if (!body) return null;
+    return { handler: 'vizView', body };
+  };
+}
 
 /** Ordered handler chain. List-render handlers first (highest value). */
 export const HANDLERS: Handler[] = [

@@ -7,7 +7,7 @@
  */
 
 import { CoverageLog, type CoverageOutcome } from './coverage';
-import { HANDLERS, type RequestCtx } from './handlers';
+import { HANDLERS, type Handler, type RequestCtx } from './handlers';
 import type { CapturedTemplates } from './templates-cache';
 import type { BackendStore } from './store-types';
 
@@ -26,8 +26,9 @@ export function routeRequest(
   store: BackendStore,
   templates: CapturedTemplates,
   coverage: CoverageLog,
+  extraHandlers: Handler[] = [],
 ): RoutedResponse {
-  for (const handler of HANDLERS) {
+  for (const handler of [...HANDLERS, ...extraHandlers]) {
     const result = handler(ctx, store, templates);
     if (!result) continue;
     coverage.record({
