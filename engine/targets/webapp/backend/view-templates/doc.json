@@ -1,21 +1,20 @@
 {
  "view": {
-  "date_created": "1779697464474",
+  "date_created": null,
   "creator": 210228534,
-  "name": "Product Ideas & Prioritization",
-  "type": 12,
+  "name": "Untitled",
+  "type": 9,
   "parent_id_bigint": null,
-  "orderindex": 4,
+  "orderindex": null,
   "visibility": 1,
   "default": false,
-  "me_view": false,
   "locked": false,
   "team_id": "90152566819",
   "deleted": false,
   "date_deleted": null,
   "public": false,
   "seo_optimized": false,
-  "standard": true,
+  "standard": false,
   "date_frozen": null,
   "frozen_note": null,
   "frozen_by": {
@@ -27,11 +26,11 @@
    "profilePicture": null
   },
   "visible_to": "210228534",
-  "template_visibility": null,
-  "template_visible_to": "32272166",
+  "template_visibility": 4,
+  "template_visible_to": "3911017",
   "deleted_by": null,
-  "locked_permission": null,
-  "date_updated": "1779697464474",
+  "locked_permission": 1,
+  "date_updated": null,
   "public_share_expires_on": null,
   "parent_id_text": null,
   "made_public_by": null,
@@ -49,21 +48,21 @@
    "checklists",
    "coverimage"
   ],
-  "pinned": true,
+  "pinned": false,
   "made_public_time": null,
   "workload_use_points": null,
   "workload_capacity_type": null,
   "exclude_multiple_lists": null,
   "expanded_tasks": null,
   "template_public": null,
-  "share_with_team": null,
+  "share_with_team": true,
   "exclude_sub_multiple_lists": null,
   "relationships_display_setting": null,
   "archived": null,
   "archived_by": null,
   "date_archived": null,
-  "sidebar_view": false,
-  "sidebar_orderindex": null,
+  "sidebar_view": true,
+  "sidebar_orderindex": 1,
   "sidebar_num_subcats_between": null,
   "public_duplication_enabled": null,
   "grouped_orderindex": null,
@@ -81,10 +80,10 @@
   "rectangle_logo": null,
   "used_count": null,
   "last_used": null,
-  "id": "2kyr6013-1155",
+  "id": null,
   "parent": {
-   "id": "901523543274",
-   "type": 6
+   "id": null,
+   "type": 5
   },
   "dashboard": {
    "id": null,
@@ -300,40 +299,18 @@
    "profilePicture": null
   },
   "members": [],
-  "settings": {
-   "show_task_locations": false,
-   "show_subtasks": 1,
-   "show_subtask_parent_names": false,
-   "show_closed_subtasks": false,
-   "show_assignees": true,
-   "show_images": true,
-   "show_timer": false,
-   "collapse_empty_columns": false,
-   "me_comments": true,
-   "me_subtasks": true,
-   "me_checklists": true,
-   "show_empty_statuses": null,
-   "auto_wrap": false,
-   "time_in_status_view": 1,
-   "is_description_pinned": false,
-   "override_parent_hierarchy_filter": false,
-   "fast_load_mode": false,
-   "show_task_properties": true,
-   "show_sprint_cards": {
-    "show_add_tasks": true,
-    "show_add_assignees": true,
-    "show_add_estimates": true
-   }
-  },
-  "team_sidebar": {
-   "assignees": [],
-   "group_assignees": [],
-   "assigned_comments": false,
-   "unassigned_tasks": false
-  },
   "viewing": [],
   "commenting": [],
+  "pageDefaults": null,
   "followers": [],
+  "doc_settings": {
+   "last_page": "2kyr6013-375",
+   "collapsed": [],
+   "full_modal": null,
+   "sidebar_open": null,
+   "workspace_id": "90152566819",
+   "right_sidebar": null
+  },
   "avatar": {
    "value": null,
    "color": null,
@@ -342,6 +319,8 @@
   "branding": {
    "rectangle_logo": null
   },
+  "template_members": [],
+  "template_group_members": [],
   "hierarchy_members": [
    {
     "user": {
@@ -367,11 +346,12 @@
     "role": 1,
     "role_subtype": 0,
     "role_key": "owner",
-    "id": "901523543274"
+    "id": "901516144663"
    }
   ],
   "hierarchy_group_members": [],
   "can_unfreeze_count": 1,
+  "doc_type": 1,
   "hierarchy": {
    "role": 1,
    "role_subtype": 0,
@@ -387,18 +367,11 @@
     "personal_list": null
    },
    "category": {
-    "id": "901516144641",
-    "name": "Roadmap & Backlog",
+    "id": "901516144663",
+    "name": "Sprint Team",
     "accessible": true,
     "archived": false,
     "hidden": false
-   },
-   "subcategory": {
-    "id": "901523543274",
-    "name": "Product Master Backlog",
-    "accessible": true,
-    "archived": false,
-    "personal_list": null
    }
   },
   "group_members": []

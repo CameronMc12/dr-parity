@@ -346,14 +346,22 @@ const BACKEND_DATA_PATTERNS = [
   // the bare collection root (/viz/v1/view, no id) is excluded — it must stay on
   // its rich 78KB recording. Requires a trailing id segment to match.
   /\\/viz\\/v1\\/view\\/[^/]+$/,
-  // Doc render chain (deep-link doc body). The backend serves these from the owned
-  // export when it owns the requested doc id, else returns x-backend:miss so the
-  // recording / empty-200 answers. docs/bulk is GATED in the handler so the hub's
+  // Doc render chain (deep-link doc body). The backend serves doc METADATA from the
+  // owned export when it owns the requested doc id, else returns x-backend:miss so the
+  // recording / empty-200 answers. docs/bulk is GATED in the handler so the hub
   // full-list recording is never shadowed (the handler returns miss unless an owned
-  // id is requested). page-content + single-doc + lastViewed complete the chain.
+  // id is requested). single-doc plus lastViewed complete the metadata chain.
+  //
+  // The PAGE chain (the page list plus the singular page/id) is DELIBERATELY left to
+  // the recordings, NOT the backend. The real page list returns content null with an
+  // editor token plus the 45-field page shape the ProseMirror editor mounts from, and
+  // the singular page/id carries the Quill Delta content. The backend synth only had a
+  // thin markdown shape with no editor token, which mounted the editor shell but never
+  // painted the body. Crawling 2 doc deep-links recorded the real page chain, so the
+  // recording now serves the correct list plus content and the body paints. Unowned
+  // docs have no recording and never painted a body before, so this stays no-regression.
   /\\/docs\\/v1\\/team\\/\\d+\\/docs\\/bulk$/,
   /\\/docs\\/v1\\/team\\/\\d+\\/docs\\/[^/]+$/,
-  /\\/docs\\/v1\\/view\\/[^/]+\\/page$/,
   /\\/docs\\/v1\\/page\\/[^/]+\\/lastViewed$/,
   // NOTE: init/shell reads (bootstrap, workspace-core, user, project, customFields)
   // are deliberately NOT served live. Their store payloads were non-empty but

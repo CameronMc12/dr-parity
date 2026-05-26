@@ -65,23 +65,42 @@ function writeFile(outDir: string, relPath: string, content: string): void {
   writeFileSync(abs, content, 'utf8');
 }
 
+/**
+ * Union WS connections across ALL crawl dirs (bootstrap FIRST). The bootstrap
+ * keeps priority for shared channels it captured (the main `/ws` + the graphql
+ * gateway), and later (e.g. doc) crawls ADD their per-resource channels the
+ * bootstrap never opened — notably the per-doc `coeditor` collaboration socket
+ * whose server frames flip the ProseMirror doc editor from its hidden buffer to
+ * the painted body. Dedup is by connection URL: the first dir to contribute a
+ * given URL wins, so this is purely additive (no shared channel is overwritten).
+ */
 async function loadWsConnections(
-  crawlDir: string,
+  crawlDirs: string[],
 ): Promise<{ connections: ReplayWsConnection[]; frameCount: number; warnings: string[] }> {
-  const { frames, warnings } = await loadWsFrames(crawlDir);
-  if (frames.length === 0) return { connections: [], frameCount: 0, warnings };
+  const byUrl = new Map<string, ReplayWsConnection>();
+  const warnings: string[] = [];
+  let frameCount = 0;
 
-  const groups = groupByConnection(frames);
-  const connections: ReplayWsConnection[] = groups.map((g) => ({
-    url: g.url,
-    urlPattern: g.urlPattern,
-    frames: g.frames.map((f) => ({
-      direction: f.direction,
-      atMs: f.relativeMs,
-      payload: f.payload,
-    })),
-  }));
-  return { connections, frameCount: frames.length, warnings };
+  for (const crawlDir of crawlDirs) {
+    const { frames, warnings: w } = await loadWsFrames(crawlDir);
+    warnings.push(...w);
+    if (frames.length === 0) continue;
+    for (const g of groupByConnection(frames)) {
+      if (byUrl.has(g.url)) continue; // first dir wins for a shared channel
+      byUrl.set(g.url, {
+        url: g.url,
+        urlPattern: g.urlPattern,
+        frames: g.frames.map((f) => ({
+          direction: f.direction,
+          atMs: f.relativeMs,
+          payload: f.payload,
+        })),
+      });
+      frameCount += g.frames.length;
+    }
+  }
+
+  return { connections: [...byUrl.values()], frameCount, warnings };
 }
 
 export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBuildResult> {
@@ -128,11 +147,12 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
   warnings.push(...backfill.warnings);
 
   // 3. Build recordings (UNIONED across every crawl, deduped by request
-  // fingerprint, richest body wins) + WS connections (from the bootstrap crawl).
+  // fingerprint, richest body wins) + WS connections (UNIONED across every crawl,
+  // bootstrap first, deduped by connection URL so per-doc coeditor channels add).
   const merged = await mergeRecordings(allCrawlDirs);
   const recordings = merged.recordings;
   warnings.push(...merged.warnings);
-  const ws = await loadWsConnections(crawlDir);
+  const ws = await loadWsConnections(allCrawlDirs);
   warnings.push(...ws.warnings);
 
   // 3b. Additive: merge export-bridge recordings so the replay renders lists the

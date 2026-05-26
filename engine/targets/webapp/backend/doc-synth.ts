@@ -22,9 +22,8 @@ import type { StoreDoc, StoreDocPages } from './store-types';
 
 const TEMPLATE_FILE = join('doc-templates', 'doc-bulk.json');
 
-/** ClickUp parent.type codes. doc parents can be space(4)/folder(5)/list(6). */
-const PARENT_TYPE_NUM: Record<string, number> = { '1': 6, '4': 4, '5': 5, '6': 6, '7': 7 };
-const DOC_VIEW_TYPE = 12;
+/** Fallback doc viz `type` when the template lacks one (real captured docs use 9). */
+const DOC_VIEW_TYPE = 9;
 
 /** The captured doc-bulk `data` object used as a structural template. */
 export type DocBulkTemplate = Record<string, unknown> | null;
@@ -127,8 +126,12 @@ export function synthDocData(
  * Synthesize a doc-TYPE `viz/v1/view/{docId}` body for an owned doc. The doc
  * deep-link route fetches `viz/v1/view/{docId}` FIRST; without a doc-type view it
  * 404s and the bundle shows "This Doc is unavailable" before the doc chain runs.
- * Returning a doc-type view (type 12) lets the route proceed into the doc body
- * load. Returns null when the doc is not owned or no doc-view template exists.
+ *
+ * The template is a REAL captured doc-type viz body (`view.type === 9`). Type 9 is
+ * what routes the bundle into the ProseMirror doc editor; the earlier hardcoded
+ * type 12 routed it into a list/view shell instead. We PRESERVE the template's
+ * type and overlay only the per-doc identity, mirroring the real capture (parent
+ * carries the export's string type code, not a remapped numeric).
  */
 export function synthDocVizView(
   doc: StoreDoc | undefined,
@@ -138,16 +141,17 @@ export function synthDocVizView(
   if (!doc?.id || !docViewTemplate) return null;
   const view = deepClone(docViewTemplate);
   const parentId = doc.parent?.id != null ? String(doc.parent.id) : workspaceId;
-  const parentTypeCode = doc.parent?.type != null ? String(doc.parent.type) : '4';
-  const parentTypeNum = PARENT_TYPE_NUM[parentTypeCode] ?? 4;
+  const parentType = doc.parent?.type != null ? String(doc.parent.type) : '5';
 
   view.id = doc.id;
   view.name = doc.name ?? 'Untitled';
-  view.type = DOC_VIEW_TYPE;
-  view.parent = { id: parentId, type: parentTypeNum };
+  if (typeof view.type !== 'number') view.type = DOC_VIEW_TYPE;
+  view.parent = { id: parentId, type: parentType };
   view.parent_id_text = parentId;
   if (typeof view.parent_id_bigint !== 'undefined') view.parent_id_bigint = parentId;
   view.team_id = Number(workspaceId) || workspaceId;
+  if (typeof doc.date_created !== 'undefined') view.date_created = String(doc.date_created);
+  if (typeof doc.date_updated !== 'undefined') view.date_updated = String(doc.date_updated);
   return { view };
 }
 
