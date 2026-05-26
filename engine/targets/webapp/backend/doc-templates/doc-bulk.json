@@ -1,0 +1,111 @@
+{
+  "id": "2kyr6013-2035",
+  "name": "Untitled",
+  "creator": {
+    "id": 210228534,
+    "username": "Cameron Mc",
+    "color": "#595d66",
+    "profilePicture": null,
+    "initials": "CM"
+  },
+  "doc_type": 1,
+  "archived": false,
+  "locked": false,
+  "parent": {
+    "id": "901511060743",
+    "type": "4"
+  },
+  "date_created": "1779703662405",
+  "view_date_updated": "1779703662503",
+  "visibility": 1,
+  "date_viewed": "1779703663671",
+  "tags": [],
+  "type": 9,
+  "doc_settings": {
+    "collapsed": null,
+    "last_page": "2kyr6013-475",
+    "full_modal": null,
+    "sidebar_open": false,
+    "right_sidebar": null,
+    "workspace_id": "90152566819"
+  },
+  "assigned_comment_count": 0,
+  "pages": [
+    "2kyr6013-475"
+  ],
+  "last_viewed_page": "2kyr6013-475",
+  "view_member": false,
+  "view_group_member": false,
+  "share_with_team": true,
+  "sidebar_view": true,
+  "members": [],
+  "permissions": {
+    "can_add_automation": true,
+    "can_create_agents": true,
+    "can_create_vibeup_app": true,
+    "can_create_vibeup_chat": true,
+    "can_delete_comments": true,
+    "can_edit_agents": true,
+    "can_edit_vibeup_app": true,
+    "can_edit_vibeup_chat": true,
+    "can_trigger_agent": true,
+    "can_view_agent_internals": true,
+    "can_view_agents": true,
+    "can_view_vibeup_app": true,
+    "can_view_vibeup_chat": true,
+    "chat_add_followers": true,
+    "chat_add_members": true,
+    "chat_add_self_follower": true,
+    "chat_comment": true,
+    "chat_create_channel": true,
+    "chat_delete_channel": true,
+    "chat_manage_tiles": true,
+    "chat_remove_followers": true,
+    "chat_remove_members": true,
+    "chat_remove_self_follower": true,
+    "chat_reply": true,
+    "comment": true,
+    "create_automation": true,
+    "create_private_view": true,
+    "delete_view": true,
+    "edit_doc": true,
+    "edit_view": true
+  },
+  "avatar": {
+    "value": null,
+    "color": null,
+    "attachment_id": null
+  },
+  "authors": [
+    {
+      "id": "210228534",
+      "username": "Cameron Mc",
+      "color": "#595d66",
+      "profilePicture": null,
+      "initials": "CM"
+    }
+  ],
+  "contributors": [],
+  "accessible": true,
+  "hierarchy": {
+    "role": 1,
+    "role_subtype": 0,
+    "role_key": "owner",
+    "hierarchy_permission_level": null,
+    "template": false,
+    "some_unaccessible": false,
+    "project": {
+      "id": "901511060743",
+      "name": "Team Space",
+      "accessible": true,
+      "archived": false,
+      "personal_list": null
+    }
+  },
+  "location": [
+    {
+      "id": "901511060743",
+      "type": "project"
+    }
+  ]
+}
