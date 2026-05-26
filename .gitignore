@@ -93,3 +93,6 @@ docs/research/audit/
 
 # Raw ClickUp workspace data dumps (personal data, regenerable via export:clickup); keep BACKEND_CONTRACT.* at root
 docs/research/clickup-export/*/
+
+# Parity harness output (regenerable)
+parity-track-report/

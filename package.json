@@ -36,6 +36,7 @@
     "build:astro": "tsx scripts/build.ts --target=astro",
     "build:react": "tsx scripts/build.ts --target=react",
     "build:webapp": "tsx scripts/build.ts --target=webapp",
+    "backend:demo": "tsx scripts/backend-demo.ts",
     "build:replay": "tsx scripts/build-replay.ts",
     "test:parity:astro": "tsx engine/tests/multi-viewport-parity.spec.ts",
     "test:parity:react": "tsx engine/tests/multi-viewport-parity-react.spec.ts",
@@ -58,6 +59,7 @@
     "iconify:svgs": "tsx scripts/iconify-svgs.ts",
     "verify:parity": "tsx scripts/verify-parity.ts",
     "parity:score": "tsx scripts/parity-score.ts",
+    "parity:track": "tsx scripts/parity-track.ts",
     "extract:animations": "tsx scripts/extract-animations.ts",
     "scope:styles": "tsx scripts/scope-styles.ts",
     "check:scope-styles": "tsx scripts/check-scope-styles.ts",
@@ -67,7 +69,8 @@
     "rebuild-pro": "tsx scripts/rebuild-pro.ts",
     "generate:edit-playbook": "tsx scripts/generate-edit-playbook.ts",
     "extract:library": "tsx scripts/extract-library.ts",
-    "preview": "serve"
+    "preview": "serve",
+    "schema:infer": "tsx scripts/infer-schema.ts"
   },
   "dependencies": {
     "citty": "^0.2.2"
