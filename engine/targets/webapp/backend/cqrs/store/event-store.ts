@@ -129,6 +129,12 @@ export class EventStore {
     return row.head ?? 0;
   }
 
+  /** Total events persisted. Used to prime an id generator past existing ids. */
+  eventCount(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number };
+    return row.n;
+  }
+
   /** Rehydrate a stream from snapshot (if present) + subsequent events. */
   loadStream<S>(streamId: string): LoadedStream<S> {
     const snapRow = this.db

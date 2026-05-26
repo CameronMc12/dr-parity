@@ -39,4 +39,15 @@ export class DeterministicIdGen implements IdGen {
     this.counters.set(prefix, n);
     return `${prefix}_${String(n).padStart(8, "0")}`;
   }
+
+  /**
+   * Advance a prefix's counter to at least `count` so the next id continues past
+   * already-persisted ids. Used when a fresh generator attaches to an existing
+   * event store: priming "evt" to the current event count avoids id collisions
+   * while staying deterministic for the new run.
+   */
+  primeTo(prefix: string, count: number): void {
+    const current = this.counters.get(prefix) ?? 0;
+    if (count > current) this.counters.set(prefix, count);
+  }
 }

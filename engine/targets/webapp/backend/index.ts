@@ -5,7 +5,15 @@
  */
 
 export { JsonStore } from './json-store';
+export { EventBackedStore, type EventBackedStoreOptions } from './event-store-backed';
 export { seedSnapshot } from './seed';
+export {
+  buildCommandBus,
+  seedEventStore,
+  type SeedEventStoreResult,
+  type Command,
+  type CommandType,
+} from './cqrs/index';
 export { loadTemplates, getCachedTemplates } from './templates-cache';
 export { routeRequest, type RoutedResponse } from './router';
 export { CoverageLog, templatizePath, type CoverageEntry, type CoverageOutcome } from './coverage';

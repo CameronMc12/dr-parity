@@ -264,9 +264,21 @@ let SERVED_BACKEND = 0;
 // proxy can ONLY add live task data, never shadow an init recording the bundle
 // needs to boot and route.
 const BACKEND_DATA_PATTERNS = [
+  // List-render reads (proven live + store-backed, so writes reflect).
   /\\/hierarchy\\/v1\\/subcategory\\/\\d+/,
   /\\/view\\/v1\\/genericView/,
   /\\/task-v3\\/experience\\/\\d+\\/tasks\\/bulk/,
+  // NOTE: init/shell reads (bootstrap, workspace-core, user, project, customFields)
+  // are deliberately NOT served live. Their store payloads were non-empty but
+  // subtly off-shape — they passed the non-degenerate gate yet stalled the bundle's
+  // route mount (list never painted). They fall back to the captured recording so
+  // the SPA boots+routes exactly as recordings-only mode. Re-widen one at a time
+  // ONLY when a payload is parity-verified to keep the list painting.
+  // Mutating task routes the bundle/harness POST/PUT/DELETE to; the backend maps
+  // these to commands. Non-command writes (telemetry/auth) never match here.
+  /\\/cmd\\/v1\\//,
+  /\\/v1\\/list\\/\\d+\\/task$/,
+  /\\/v1\\/task\\/[0-9a-z]+(\\/(assignee|list|comment))?$/i,
 ];
 
 function isBackendDataPath(pathname) {

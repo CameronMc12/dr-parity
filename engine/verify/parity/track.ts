@@ -12,8 +12,11 @@ import type { ParityState } from './state-spec';
 import { scoreVisualAvenue } from './visual-avenue';
 import { scoreDomAvenue } from './dom-avenue';
 import { scoreApiAvenue } from './api-avenue';
-import { scoreStateAvenue, type StateCase } from './state-avenue';
-import { scoreTransitionAvenue } from './transition-avenue';
+import { scoreStateAvenue, scoreStateAvenueFromCrawl, type StateCase } from './state-avenue';
+import { scoreTransitionAvenue, scoreTransitionEdges } from './transition-avenue';
+import { driveGraphEdges } from './transition-driver';
+import type { CrawlGraph } from '../../targets/webapp/crawler/types';
+import type { AvenueScore as AvenueScoreType } from './avenue-types';
 import { buildReport, writeReports, appendHistory } from './aggregate';
 import {
   DEFAULT_AVENUE_WEIGHTS,
@@ -33,8 +36,15 @@ export type TrackOptions = {
   outDir: string;
   historyPath: string;
   target?: number;
-  /** Optional state-avenue cases (wired by the owned backend later). */
+  /** Optional explicit state-avenue cases (overrides crawl-derived cases). */
   stateCases?: StateCase[];
+  /**
+   * Crawl dir used to (a) source state cases (captured task writes, else
+   * synthetic) and (b) load the state graph for the transition avenue.
+   */
+  crawlDir?: string | null;
+  /** Pre-loaded crawl graph for the transition avenue (else derived from crawlDir). */
+  crawlGraph?: CrawlGraph | null;
   onProgress?: (message: string) => void;
 };
 
@@ -87,6 +97,7 @@ export async function runTracking(opts: TrackOptions): Promise<TrackResult> {
     };
     const refCtx = await browser.newContext(ctxOpts);
     const candCtx = await browser.newContext(ctxOpts);
+    const edgeCtx = await browser.newContext(ctxOpts);
 
     let refStates: CapturedState[] = [];
     let candStates: CapturedState[] = [];
@@ -131,16 +142,44 @@ export async function runTracking(opts: TrackOptions): Promise<TrackResult> {
       candidate: flattenResponses(candStates),
       weight: weights.api,
     });
-    const state = scoreStateAvenue({
-      cases: opts.stateCases ?? [],
-      weight: weights.state,
-    });
-    const transition = scoreTransitionAvenue({
-      states: opts.states,
-      reference: refStates,
-      candidate: candStates,
-      weight: weights.transition,
-    });
+    // STATE avenue: explicit cases override; else drive the owned CQRS backend
+    // in-process with cases sourced from the crawl (captured writes else synthetic).
+    let state: AvenueScoreType;
+    if (opts.stateCases && opts.stateCases.length > 0) {
+      state = scoreStateAvenue({ cases: opts.stateCases, weight: weights.state });
+    } else {
+      opts.onProgress?.('  driving state avenue (owned CQRS backend)...');
+      state = await scoreStateAvenueFromCrawl({
+        crawlDir: opts.crawlDir ?? null,
+        weight: weights.state,
+      });
+    }
+
+    // TRANSITION avenue: when a crawl graph is present, drive its edges against
+    // the candidate and score reproduction. Else fall back to signature-direction.
+    let transition: AvenueScoreType;
+    if (opts.crawlGraph && (opts.crawlGraph.edges?.length ?? 0) > 0) {
+      opts.onProgress?.('  driving transition avenue (crawl graph edges)...');
+      const driven = await driveGraphEdges(
+        edgeCtx,
+        opts.candidate,
+        opts.crawlGraph,
+        opts.onProgress,
+      );
+      transition = scoreTransitionEdges({
+        outcomes: driven.outcomes,
+        weight: weights.transition,
+        notes: driven.notes,
+      });
+    } else {
+      transition = scoreTransitionAvenue({
+        states: opts.states,
+        reference: refStates,
+        candidate: candStates,
+        weight: weights.transition,
+      });
+    }
+    await edgeCtx.close().catch(() => {});
 
     const avenues: AvenueScore[] = [visual, dom, api, state, transition];
     const report = buildReport({

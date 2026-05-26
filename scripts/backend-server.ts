@@ -22,30 +22,35 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isAbsolute, resolve } from 'node:path';
 
-import { JsonStore } from '../engine/targets/webapp/backend/json-store';
+import { EventBackedStore } from '../engine/targets/webapp/backend/event-store-backed';
 import { loadTemplates } from '../engine/targets/webapp/backend/templates-cache';
 import { routeRequest } from '../engine/targets/webapp/backend/router';
+import { routeCommand } from '../engine/targets/webapp/backend/command-router';
 import { CoverageLog } from '../engine/targets/webapp/backend/coverage';
 import type { RequestCtx } from '../engine/targets/webapp/backend/handlers';
 
 const DEFAULT_PORT = 8787;
 const DEFAULT_STORE = '.runs/backend/store.json';
+const DEFAULT_EVENTS = '.runs/backend/events.db';
 const DEFAULT_CRAWL = 'docs/research/crawl/app.clickup.com/2026-05-25T16-33-12-057Z';
 
-type Args = { port: number; storePath: string; crawlDir: string };
+type Args = { port: number; storePath: string; eventsPath: string; crawlDir: string };
 
 function parseArgs(argv: string[]): Args {
   let port = DEFAULT_PORT;
   let storePath = DEFAULT_STORE;
+  let eventsPath = DEFAULT_EVENTS;
   let crawlDir = DEFAULT_CRAWL;
   for (const raw of argv) {
     if (raw.startsWith('--port=')) port = Number(raw.slice('--port='.length)) || DEFAULT_PORT;
     else if (raw.startsWith('--store=')) storePath = raw.slice('--store='.length);
+    else if (raw.startsWith('--events=')) eventsPath = raw.slice('--events='.length);
     else if (raw.startsWith('--crawl-dir=')) crawlDir = raw.slice('--crawl-dir='.length);
   }
   return {
     port,
     storePath: isAbsolute(storePath) ? storePath : resolve(storePath),
+    eventsPath: isAbsolute(eventsPath) ? eventsPath : resolve(eventsPath),
     crawlDir: isAbsolute(crawlDir) ? crawlDir : resolve(crawlDir),
   };
 }
@@ -78,7 +83,11 @@ function parseJsonBody(raw: string): unknown {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const store = JsonStore.fromFile(args.storePath);
+  const store = EventBackedStore.create({
+    snapshotPath: args.storePath,
+    eventsDbPath: args.eventsPath,
+  });
+  const commandBus = store.commandBus();
   process.stdout.write(`Loading captured templates from crawl (one-time stream)...\n`);
   const templates = await loadTemplates(args.crawlDir);
   const haveTemplates = [
@@ -130,6 +139,34 @@ async function main(): Promise<void> {
       query: url.searchParams,
       body: parseJsonBody(rawBody),
     };
+
+    // WRITE side: a mutating request that maps to a command is dispatched first.
+    // A non-command write (telemetry/auth beacon) returns null and falls through
+    // to the read router, so no existing behaviour regresses.
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE' || method === 'PATCH') {
+      try {
+        const cmd = routeCommand(ctx, store, commandBus);
+        if (cmd) {
+          coverage.record({ method, path: url.pathname, handler: cmd.handler, outcome: 'live' });
+          res.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'x-backend': 'live',
+            'x-backend-handler': cmd.handler,
+            ...CORS_HEADERS,
+          });
+          res.end(JSON.stringify(cmd.body));
+          return;
+        }
+      } catch (err) {
+        res.writeHead(400, {
+          'content-type': 'application/json; charset=utf-8',
+          'x-backend': 'error',
+          ...CORS_HEADERS,
+        });
+        res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+        return;
+      }
+    }
 
     const routed = routeRequest(ctx, store, templates, coverage);
     res.writeHead(routed.status, { ...routed.headers, ...CORS_HEADERS });

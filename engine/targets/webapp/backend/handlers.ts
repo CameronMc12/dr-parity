@@ -262,12 +262,25 @@ export const customItemsHandler: Handler = (ctx) => {
 // Bootstrap / workspace / counters.
 // ---------------------------------------------------------------------------
 
-/** GET /workspace-v3/experience/bootstrap/{ws} */
-export const bootstrapHandler: Handler = (ctx) => {
+/** GET /workspace-v3/experience/bootstrap/{ws}
+ *  Rich bootstrap shape: workspace identity + a non-degenerate body so init does
+ *  not stall. The `{ff:{}}` stub previously stalled the bundle's boot. */
+export const bootstrapHandler: Handler = (ctx, store) => {
   if (ctx.method !== 'GET' || !/\/workspace-v3\/experience\/bootstrap\/\d+/.test(ctx.pathname)) {
     return null;
   }
-  return { handler: 'bootstrap', body: { ff: {} } };
+  const ws = store.workspace();
+  return {
+    handler: 'bootstrap',
+    body: {
+      workspace_id: store.workspaceId(),
+      workspace_name: (ws?.name as string) ?? 'Workspace',
+      workspace_color: (ws?.color as string) ?? '#40BC86',
+      workspace_avatar: (ws?.avatar as unknown) ?? null,
+      spaces: store.spaces().map((s) => ({ id: s.id, name: s.name })),
+      ff: {},
+    },
+  };
 };
 
 /** GET /workspace-v3/core/workspace/{ws} */

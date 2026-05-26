@@ -9,8 +9,10 @@
  * tracked over time. Loop until >= target on every avenue.
  */
 
-import { resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
 import { VIEWPORTS, VIEWPORT_NAMES, type Viewport } from '../engine/verify/types';
+import type { CrawlGraph } from '../engine/targets/webapp/crawler/types';
 import {
   DEFAULT_AVENUE_WEIGHTS,
   AVENUE_NAMES,
@@ -111,6 +113,17 @@ async function resolveStates(args: Args): Promise<ParityState[]> {
   return [rootState()];
 }
 
+/** Load the crawl graph (for the transition avenue) when a crawl dir is given. */
+async function loadCrawlGraph(crawlDir: string | null): Promise<CrawlGraph | null> {
+  if (!crawlDir) return null;
+  try {
+    const raw = await readFile(join(crawlDir, 'graph.json'), 'utf8');
+    return JSON.parse(raw) as CrawlGraph;
+  } catch {
+    return null;
+  }
+}
+
 async function run(args: Args): Promise<number> {
   const reference = str(args, 'reference');
   const candidate = str(args, 'candidate');
@@ -125,7 +138,9 @@ async function run(args: Args): Promise<number> {
   const outDir = resolve(str(args, 'out') ?? './parity-track-report');
   const historyPath = resolve(str(args, 'history') ?? `${outDir}/parity-history.jsonl`);
   const target = str(args, 'target') ? Number(str(args, 'target')) : 98;
+  const crawlDir = str(args, 'crawl-dir') ? resolve(str(args, 'crawl-dir')!) : null;
   const states = await resolveStates(args);
+  const crawlGraph = await loadCrawlGraph(crawlDir);
 
   process.stdout.write(
     `Parity tracking ${states.length} state(s) at "${viewport.name}":\n` +
@@ -143,6 +158,8 @@ async function run(args: Args): Promise<number> {
     outDir,
     historyPath,
     target,
+    crawlDir,
+    crawlGraph,
     onProgress: (m) => process.stdout.write(`${m}\n`),
   });
 

@@ -1,12 +1,13 @@
 /**
- * State/data avenue: given a command, its expected post-state, and the actual
- * projection the candidate backend produced, score equality.
+ * State/data avenue: apply a command against the OWNED CQRS backend, re-read the
+ * projection, and score it against the expected post-state.
  *
- * This is a PLACEHOLDER HOOK. The owned CQRS/ES backend does not exist yet, so
- * by default no StateCase inputs are supplied and the avenue is skipped. The
- * interface below is the contract the backend will wire into later: feed it
- * captured CommandObservations (command + captured postState) plus the
- * candidate's projected post-state, and it scores projection equality.
+ * The cases are produced by `state-driver.ts`, which drives the backend's domain
+ * layer (CommandBus + EventStore + TasksProjector + TaskQueries) in-process and
+ * hands this scorer real {expectedPostState, actualProjection} pairs. Cases are
+ * sourced from captured mutating writes when the crawl has them, else synthetic
+ * CRUD (see `state-cases.ts`). The avenue only skips when no cases could be
+ * built at all (e.g. the backend domain layer failed to start).
  */
 
 import type { AvenueScore, Gap } from './avenue-types';
@@ -22,11 +23,15 @@ export type StateCase = {
   expectedPostState: unknown;
   /** The candidate backend's projection after applying the command. */
   actualProjection: unknown;
+  /** Optional driver note surfaced into the avenue notes. */
+  note?: string;
 };
 
 export type StateAvenueInput = {
   cases: StateCase[];
   weight: number;
+  /** Optional notes carried through to the avenue score (case source, etc.). */
+  notes?: string[];
 };
 
 const VOLATILE_KEY = /(^|_)(id|token|ts|time|date|updated|created|seq|rev|version)($|_)/i;
@@ -68,14 +73,14 @@ function compare(a: unknown, b: unknown, depth = 0): { matched: number; total: n
 }
 
 export function scoreStateAvenue(input: StateAvenueInput): AvenueScore {
-  const { cases, weight } = input;
+  const { cases, weight, notes = [] } = input;
   if (cases.length === 0) {
     return {
       avenue: 'state',
       score: 0,
       sampleSize: 0,
       gaps: [],
-      notes: ['no state cases supplied; wire the owned backend to enable this avenue'],
+      notes: [...notes, 'no state cases supplied; backend domain layer produced nothing to score'],
       skipped: true,
     };
   }
@@ -86,11 +91,14 @@ export function scoreStateAvenue(input: StateAvenueInput): AvenueScore {
     const eq = projectionEquality(c.expectedPostState, c.actualProjection);
     sum += eq;
     if (eq < 0.99) {
+      const missing = c.actualProjection == null;
       gaps.push({
         avenue: 'state',
         label: c.command + (c.streamId ? ` (${c.streamId})` : ''),
         locator: c.streamId ?? c.command,
-        reason: `projection ${(eq * 100).toFixed(0)}% equal to captured post-state`,
+        reason: missing
+          ? 'command produced no projection row (rejected or not persisted)'
+          : `projection ${(eq * 100).toFixed(0)}% equal to expected post-state`,
         severity: clampScore((1 - eq) * weight * 100),
       });
     }
@@ -102,7 +110,28 @@ export function scoreStateAvenue(input: StateAvenueInput): AvenueScore {
     score: clampScore((sum / cases.length) * 100),
     sampleSize: cases.length,
     gaps,
-    notes: [],
+    notes,
     skipped: false,
   };
+}
+
+/**
+ * High-level entry: build the case set from the crawl (captured or synthetic),
+ * drive the owned CQRS backend in-process, then score. This is what the tracking
+ * orchestrator calls. Skips gracefully only when no cases could be produced.
+ */
+export async function scoreStateAvenueFromCrawl(opts: {
+  crawlDir: string | null;
+  weight: number;
+}): Promise<AvenueScore> {
+  const { buildStateCaseSet } = await import('./state-cases');
+  const { driveStateCases } = await import('./state-driver');
+  const caseSet = await buildStateCaseSet(opts.crawlDir);
+  const driven = driveStateCases(caseSet);
+  const sourceNote = `state cases sourced: ${driven.source} (${driven.cases.length} case(s))`;
+  return scoreStateAvenue({
+    cases: driven.cases,
+    weight: opts.weight,
+    notes: [sourceNote, ...driven.notes],
+  });
 }
