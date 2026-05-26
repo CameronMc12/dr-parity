@@ -70,7 +70,9 @@
     "generate:edit-playbook": "tsx scripts/generate-edit-playbook.ts",
     "extract:library": "tsx scripts/extract-library.ts",
     "preview": "serve",
-    "schema:infer": "tsx scripts/infer-schema.ts"
+    "schema:infer": "tsx scripts/infer-schema.ts",
+    "test:mitm:reader": "tsx engine/extract/capture/mitm/flow-reader.test.ts",
+    "test:merge:fingerprint": "tsx engine/extract/capture/merge/fingerprint.test.ts"
   },
   "dependencies": {
     "citty": "^0.2.2"

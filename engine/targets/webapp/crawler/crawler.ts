@@ -168,7 +168,12 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
   const deadline = start + opts.maxTime * 1_000;
 
   console.log(`[crawl] launching persistent Chrome profile: ${opts.userDataDir}`);
-  const context = await chromium.launchPersistentContext(opts.userDataDir, {
+
+  // Additive launch args. The base set is unchanged; proxy + QUIC-disable are
+  // appended ONLY when the opt-in --proxy flag is set, so default behaviour is
+  // identical to before this flag existed.
+  const launchArgs = ['--disable-blink-features=AutomationControlled'];
+  const launchOpts: Parameters<typeof chromium.launchPersistentContext>[1] = {
     channel: 'chrome',
     headless: false,
     viewport: opts.viewport,
@@ -178,9 +183,23 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
     // SW registration here, plus the per-page `Network.setBypassServiceWorker`
     // in recorders, keeps every response on the network path with a real body.
     serviceWorkers: 'block',
-    args: ['--disable-blink-features=AutomationControlled'],
+    args: launchArgs,
     ignoreDefaultArgs: ['--enable-automation'],
-  });
+  };
+
+  if (opts.proxyServer) {
+    // Route every request through the external transport-capture proxy and
+    // disable QUIC so HTTP/3 traffic does not bypass the (HTTP/TLS) proxy.
+    launchArgs.push('--disable-quic');
+    launchOpts.proxy = { server: opts.proxyServer };
+    console.log(`[crawl] proxy       : ${opts.proxyServer} (QUIC disabled)`);
+    console.log('[crawl] proxy note   : the proxy CA must be trusted by this profile for TLS interception');
+  }
+  if (opts.bypassServiceWorker) {
+    console.log('[crawl] bypass-sw   : service-worker bypass explicitly enforced');
+  }
+
+  const context = await chromium.launchPersistentContext(opts.userDataDir, launchOpts);
 
   await context.addInitScript(() => {
     try {

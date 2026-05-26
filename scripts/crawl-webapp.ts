@@ -27,6 +27,8 @@ type CliArgs = {
   dryRun: boolean;
   aggressive: boolean;
   captureJs: boolean;
+  proxyServer?: string;
+  bypassServiceWorker: boolean;
   blocklistPath?: string;
   help: boolean;
 };
@@ -49,6 +51,10 @@ Options:
   --aggressive            Wired but currently still safe (reserved for future)
   --full-js, --for-replay Capture FULL JS bundles (uncapped) for the replay
                           target. Source maps stay stripped. Default off.
+  --proxy=<host:port>     Route Chromium through an external transport-capture
+                          proxy (e.g. mitmdump) and disable QUIC. Opt-in; the
+                          proxy CA must be trusted by the profile for TLS.
+  --bypass-sw             Explicitly enforce service-worker bypass on capture.
   -h, --help              Show this help
 `.trim();
 
@@ -73,6 +79,7 @@ function parseArgs(argv: string[]): CliArgs {
     dryRun: false,
     aggressive: false,
     captureJs: false,
+    bypassServiceWorker: false,
     help: false,
   };
 
@@ -88,6 +95,14 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (raw === '--aggressive') {
       out.aggressive = true;
+      continue;
+    }
+    if (raw === '--bypass-sw') {
+      out.bypassServiceWorker = true;
+      continue;
+    }
+    if (raw.startsWith('--proxy=')) {
+      out.proxyServer = raw.slice('--proxy='.length);
       continue;
     }
     if (raw === '--full-js' || raw === '--for-replay') {
@@ -180,6 +195,8 @@ async function main(): Promise<void> {
     aggressive: args.aggressive,
     extraBlocklist,
     captureJs: args.captureJs,
+    proxyServer: args.proxyServer,
+    bypassServiceWorker: args.bypassServiceWorker,
   };
 
   console.log(`[crawl] startUrl    : ${opts.startUrl}`);
@@ -192,6 +209,8 @@ async function main(): Promise<void> {
   console.log(`[crawl] dryRun      : ${opts.dryRun}`);
   console.log(`[crawl] aggressive  : ${opts.aggressive}`);
   console.log(`[crawl] captureJs   : ${opts.captureJs} (replay full-JS)`);
+  console.log(`[crawl] proxy       : ${opts.proxyServer ?? 'none'}`);
+  console.log(`[crawl] bypass-sw   : ${opts.bypassServiceWorker ?? false}`);
   console.log(`[crawl] blocklist   : ${extraBlocklist.length} extra phrases`);
 
   const summary = await runCrawler(opts);

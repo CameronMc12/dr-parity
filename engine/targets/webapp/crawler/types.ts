@@ -127,6 +127,21 @@ export type CrawlOptions = {
    * false keeps the lean behaviour the react/static targets rely on.
    */
   captureJs: boolean;
+  /**
+   * Additive, opt-in. When set, Chromium launches with
+   * `--proxy-server=<host:port>` and `--disable-quic` so all traffic routes
+   * through an external transport-capture proxy (e.g. mitmdump). Absent =>
+   * default behaviour unchanged (no proxy). Requires the proxy's CA to be
+   * trusted by the persistent profile for TLS interception to succeed.
+   */
+  proxyServer?: string;
+  /**
+   * Additive, opt-in. When set, the crawler explicitly enforces service-worker
+   * bypass on the capture path (context `serviceWorkers: 'block'` plus the
+   * per-page CDP `Network.setBypassServiceWorker`). Absent leaves the existing
+   * default behaviour untouched.
+   */
+  bypassServiceWorker?: boolean;
 };
 
 export type RecorderHandles = {
