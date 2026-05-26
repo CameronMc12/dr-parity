@@ -29,6 +29,7 @@ interface ParsedArgs {
   unrecorded: UnrecordedMode;
   name: string | null;
   bridgeExport: string | null;
+  backend: string | null;
 }
 
 const HELP = `Usage:
@@ -52,6 +53,11 @@ Options:
                                 INTERNAL-shape recordings for every list/space in
                                 the export, so the replay renders lists the crawl
                                 never captured. Absent: behaviour is unchanged.
+  --backend=<url>               ADDITIVE. URL of the OWNED local backend (e.g.
+                                http://localhost:8787). When set, the emitted SW
+                                forwards internal-API requests to this backend
+                                first and only falls back to recordings on a
+                                backend miss. Absent: recordings only.
   --force                       Overwrite the output directory if it exists.
   --help                        Show this help text.`;
 
@@ -64,6 +70,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     unrecorded: 'empty-200',
     name: null,
     bridgeExport: null,
+    backend: null,
   };
   for (const raw of argv) {
     if (raw === '--help' || raw === '-h') {
@@ -86,6 +93,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       result.name = raw.slice('--name='.length);
     } else if (raw.startsWith('--bridge-export=')) {
       result.bridgeExport = raw.slice('--bridge-export='.length);
+    } else if (raw.startsWith('--backend=')) {
+      result.backend = raw.slice('--backend='.length);
     } else if (raw.startsWith('--')) {
       throw new Error(`Unknown flag: ${raw}`);
     } else if (result.crawlDir === null) {
@@ -160,6 +169,7 @@ async function main(): Promise<void> {
       unrecordedMode: parsed.unrecorded,
       ...(parsed.name ? { name: parsed.name } : {}),
       ...(bridgeExportDir ? { bridgeExportDir } : {}),
+      ...(parsed.backend ? { backendUrl: parsed.backend } : {}),
     });
 
     const m = result.manifest;
@@ -177,6 +187,7 @@ async function main(): Promise<void> {
       `IndexedDB seeded: ${m.idbSeeded ? 'yes' : 'no'} (${m.idbDatabases} databases, ${m.idbRecords} records)`,
     );
     console.log(`Unrecorded mode: ${m.unrecordedMode}`);
+    console.log(`Backend proxy: ${parsed.backend ?? 'none (recordings only)'}`);
     if (m.warnings.length > 0) {
       console.log(`Warnings: ${m.warnings.length}`);
       for (const w of m.warnings.slice(0, 8)) console.log(`  - ${w}`);

@@ -143,7 +143,7 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
   // 4. Emit boot shim + SW, rewrite bootstrap HTML.
   const seeded = loadSeededState(crawlDir);
   const bootShimJs = buildBootShim({ seeded, wsConnections: ws.connections });
-  const serviceWorker = buildServiceWorker(unrecordedMode);
+  const serviceWorker = buildServiceWorker(unrecordedMode, options.backendUrl ?? '');
 
   const { html } = rewriteBootstrapHtml({
     html: bootstrap.html,

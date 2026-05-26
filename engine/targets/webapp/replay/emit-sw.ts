@@ -254,15 +254,38 @@ let SERVED_RECORDING = 0;
 let SERVED_EMPTY200 = 0;
 let SERVED_BACKEND = 0;
 
+// Per-list TASK-DATA endpoints the OWNED backend serves live. The backend proxy
+// is PURELY ADDITIVE and DELIBERATELY NARROW: only the three list-view data
+// endpoints are forwarded — exactly the calls whose purpose is to render a
+// list's tasks (including lists the crawl never captured). Every init/shell
+// endpoint (bootstrap, user, project, customFields, hierarchy, workspace, flags,
+// auth, telemetry, CDN) skips the backend and falls through to the captured
+// recording, which is richer and correct. This is the no-regression guard: the
+// proxy can ONLY add live task data, never shadow an init recording the bundle
+// needs to boot and route.
+const BACKEND_DATA_PATTERNS = [
+  /\\/hierarchy\\/v1\\/subcategory\\/\\d+/,
+  /\\/view\\/v1\\/genericView/,
+  /\\/task-v3\\/experience\\/\\d+\\/tasks\\/bulk/,
+];
+
+function isBackendDataPath(pathname) {
+  return BACKEND_DATA_PATTERNS.some((re) => re.test(pathname));
+}
+
 /**
- * ADDITIVE backend proxy. Forward an internal-API request to the OWNED local
- * backend, preserving method, path, query, and body. Returns the backend
- * Response when it answers LIVE (x-backend:live); returns null on a backend MISS
- * (x-backend:miss) or any network error so the caller falls back to recordings.
- * Inert when BACKEND_URL is empty: behaviour is unchanged (no regression).
+ * ADDITIVE backend proxy. Forwards a request to the OWNED local backend ONLY
+ * when its path matches a routed internal-DATA endpoint (isBackendDataPath).
+ * Returns the backend Response when it answers LIVE (x-backend:live); returns
+ * null for non-data paths, a backend MISS (x-backend:miss or any non-live
+ * answer), an empty body, or any network error — so the caller falls back to
+ * the captured recording. Inert when BACKEND_URL is empty (no regression).
  */
 async function tryBackend(request, url, method, bodyText) {
   if (!BACKEND_URL) return null;
+  // Guard: only forward routed internal-data endpoints. Everything else (flags,
+  // auth, telemetry, CDN) is left for the recording — the proxy never shadows it.
+  if (!isBackendDataPath(url.pathname)) return null;
   let target;
   try {
     const base = new URL(BACKEND_URL);
@@ -278,15 +301,20 @@ async function tryBackend(request, url, method, bodyText) {
   try {
     const res = await fetch(target, init);
     if (!res) return null;
-    if (res.headers.get('x-backend') === 'miss') return null;
+    // Only a positive x-backend:live answer wins. miss / absent / anything else
+    // falls back to the recording (defensive against a cross-origin header that
+    // does not read back as exactly 'live').
+    if (res.headers.get('x-backend') !== 'live') return null;
     const body = await res.text();
+    // An empty/degenerate body is not real data; let the recording answer.
+    if (!body || body === '{}' || body === '[]') return null;
     SERVED_BACKEND++;
     return new Response(body, {
       status: res.status,
       headers: {
         'content-type': res.headers.get('content-type') || 'application/json',
         'x-replay-source': 'backend',
-        'x-backend': res.headers.get('x-backend') || 'live',
+        'x-backend': 'live',
       },
     });
   } catch (err) {

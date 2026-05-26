@@ -87,6 +87,13 @@ export type ReplayBuildOptions = {
    * the replay renders lists the crawl never captured. Absent: unchanged.
    */
   bridgeExportDir?: string;
+  /**
+   * Additive: URL of the OWNED local backend (e.g. http://localhost:8787). When
+   * set, the emitted Service Worker forwards internal-API requests to this
+   * backend first and only falls back to recordings on a backend miss. Absent:
+   * the SW serves recordings only (strict no-regression).
+   */
+  backendUrl?: string;
 };
 
 export type ReplayManifest = {

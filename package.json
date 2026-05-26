@@ -37,6 +37,8 @@
     "build:react": "tsx scripts/build.ts --target=react",
     "build:webapp": "tsx scripts/build.ts --target=webapp",
     "backend:demo": "tsx scripts/backend-demo.ts",
+    "backend": "tsx scripts/backend-server.ts",
+    "backend:seed": "tsx scripts/backend-seed.ts",
     "build:replay": "tsx scripts/build-replay.ts",
     "test:parity:astro": "tsx engine/tests/multi-viewport-parity.spec.ts",
     "test:parity:react": "tsx engine/tests/multi-viewport-parity-react.spec.ts",
