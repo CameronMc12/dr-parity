@@ -12,7 +12,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { loadExport, type ExportTask } from '../replay/bridge/load-export';
-import type { StoreCustomFieldSet, StoreMember, StoreSnapshot } from './store-types';
+import type {
+  StoreCustomFieldSet,
+  StoreDoc,
+  StoreDocPages,
+  StoreMember,
+  StoreSnapshot,
+} from './store-types';
 
 function readJson<T>(dir: string, file: string, fallback: T): T {
   const path = join(dir, file);
@@ -88,6 +94,13 @@ export function seedSnapshot(exportDir: string): StoreSnapshot {
   // the snapshot we keep the full list and let the store index by list.id).
   const tasks = readJson<ExportTask[]>(exportDir, 'tasks.json', []);
 
+  // Doc metadata + per-doc pages-with-content. Powers the doc deep-link render
+  // chain (POST docs/bulk + GET docs/v1/view/{docId}/page) entirely from owned
+  // export data. Both files are optional — an export without them just yields
+  // empty arrays and the doc handlers stay gated (no regression).
+  const docs = readJson<StoreDoc[]>(exportDir, 'docs.json', []);
+  const docPages = readJson<StoreDocPages[]>(exportDir, 'doc-pages.json', []);
+
   return {
     workspaceId: data.workspaceId,
     workspace,
@@ -99,5 +112,7 @@ export function seedSnapshot(exportDir: string): StoreSnapshot {
     tasks,
     customFields,
     tree,
+    docs,
+    docPages,
   };
 }

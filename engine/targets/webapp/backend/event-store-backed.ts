@@ -30,7 +30,13 @@ import { TasksProjector } from "./cqrs/projectors/tasks-projector.js";
 import { TaskQueries, type TaskRow } from "./cqrs/queries/task-queries.js";
 import { buildCommandBus } from "./cqrs/bus-factory.js";
 import type { CommandBus } from "./cqrs/domain/command-bus.js";
-import type { BackendStore, StoreMember, StoreSnapshot } from "./store-types";
+import type {
+  BackendStore,
+  StoreDoc,
+  StoreDocPages,
+  StoreMember,
+  StoreSnapshot,
+} from "./store-types";
 
 const SYNTH_STATUS_COLOR = "#87909e";
 
@@ -49,6 +55,8 @@ export class EventBackedStore implements BackendStore {
   private readonly listIndex = new Map<string, ExportList>();
   private readonly exportTaskById = new Map<string, ExportTask>();
   private readonly customFieldIndex = new Map<string, unknown[]>();
+  private readonly docIndex = new Map<string, StoreDoc>();
+  private readonly docPagesIndex = new Map<string, StoreDocPages>();
 
   constructor(snapshot: StoreSnapshot, eventsDbPath: string) {
     this.snapshot = snapshot;
@@ -81,6 +89,12 @@ export class EventBackedStore implements BackendStore {
     }
     for (const cf of this.snapshot.customFields) {
       this.customFieldIndex.set(cf.listId, cf.fields);
+    }
+    for (const doc of this.snapshot.docs ?? []) {
+      if (doc.id) this.docIndex.set(doc.id, doc);
+    }
+    for (const dp of this.snapshot.docPages ?? []) {
+      if (dp.docId) this.docPagesIndex.set(dp.docId, dp);
     }
   }
 
@@ -143,6 +157,18 @@ export class EventBackedStore implements BackendStore {
 
   tree(): Record<string, unknown> | null {
     return this.snapshot.tree;
+  }
+
+  docs(): StoreDoc[] {
+    return this.snapshot.docs ?? [];
+  }
+
+  docById(docId: string): StoreDoc | undefined {
+    return this.docIndex.get(docId);
+  }
+
+  docPages(docId: string): StoreDocPages | undefined {
+    return this.docPagesIndex.get(docId);
   }
 
   // --- Task reads (served from the PROJECTION, overlaid on export rows) ------

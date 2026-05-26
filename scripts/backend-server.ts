@@ -27,11 +27,21 @@ import { loadTemplates } from '../engine/targets/webapp/backend/templates-cache'
 import { routeRequest } from '../engine/targets/webapp/backend/router';
 import { routeCommand } from '../engine/targets/webapp/backend/command-router';
 import { CoverageLog } from '../engine/targets/webapp/backend/coverage';
-import { makeVizViewHandler, type RequestCtx } from '../engine/targets/webapp/backend/handlers';
+import {
+  makeVizViewHandler,
+  makeDocsBulkHandler,
+  makeDocSingleHandler,
+  makeDocVizViewHandler,
+  type RequestCtx,
+} from '../engine/targets/webapp/backend/handlers';
 import {
   loadViewSynthAssets,
   templatedTypes,
 } from '../engine/targets/webapp/backend/view-synth';
+import {
+  loadDocBulkTemplate,
+  loadDocViewTemplate,
+} from '../engine/targets/webapp/backend/doc-synth';
 
 const DEFAULT_PORT = 8787;
 const DEFAULT_STORE = '.runs/backend/store.json';
@@ -111,6 +121,15 @@ async function main(): Promise<void> {
   const synthTypes = templatedTypes(viewSynth);
   const catalogViews = viewSynth.catalog ? Object.keys(viewSynth.catalog.views).length : 0;
 
+  // Doc render-chain handlers (deep-link doc body from owned export). Factory so
+  // the captured doc-bulk template is closed over; GATED to owned doc ids.
+  const docBulkTemplate = loadDocBulkTemplate(BACKEND_DIR);
+  const docViewTemplate = loadDocViewTemplate(BACKEND_DIR);
+  const docsBulkHandler = makeDocsBulkHandler(docBulkTemplate);
+  const docSingleHandler = makeDocSingleHandler(docBulkTemplate);
+  const docVizViewHandler = makeDocVizViewHandler(docViewTemplate);
+  const docCount = store.docs().length;
+
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     void handle(req, res);
   });
@@ -145,6 +164,7 @@ async function main(): Promise<void> {
           templates: haveTemplates,
           lists: store.lists().length,
           viewSynth: { catalogViews, types: synthTypes },
+          docs: { count: docCount, hasTemplate: docBulkTemplate != null },
         }),
       );
       return;
@@ -187,7 +207,12 @@ async function main(): Promise<void> {
       }
     }
 
-    const routed = routeRequest(ctx, store, templates, coverage, [vizViewHandler]);
+    const routed = routeRequest(ctx, store, templates, coverage, [
+      docVizViewHandler,
+      vizViewHandler,
+      docsBulkHandler,
+      docSingleHandler,
+    ]);
     res.writeHead(routed.status, { ...routed.headers, ...CORS_HEADERS });
     res.end(routed.body);
   }
@@ -198,6 +223,7 @@ async function main(): Promise<void> {
         `  store:     ${args.storePath} (${store.lists().length} lists, ${store.allTasks().length} tasks)\n` +
         `  templates: ${haveTemplates.join(', ') || 'NONE (list render will miss)'}\n` +
         `  viewSynth: ${catalogViews} catalogued views, types [${synthTypes.join(', ') || 'none'}]\n` +
+        `  docs:      ${docCount} docs${docBulkTemplate ? ' (+ bulk template)' : ' (no template)'}\n` +
         `  coverage:  GET /__coverage\n`,
     );
   });

@@ -346,6 +346,15 @@ const BACKEND_DATA_PATTERNS = [
   // the bare collection root (/viz/v1/view, no id) is excluded — it must stay on
   // its rich 78KB recording. Requires a trailing id segment to match.
   /\\/viz\\/v1\\/view\\/[^/]+$/,
+  // Doc render chain (deep-link doc body). The backend serves these from the owned
+  // export when it owns the requested doc id, else returns x-backend:miss so the
+  // recording / empty-200 answers. docs/bulk is GATED in the handler so the hub's
+  // full-list recording is never shadowed (the handler returns miss unless an owned
+  // id is requested). page-content + single-doc + lastViewed complete the chain.
+  /\\/docs\\/v1\\/team\\/\\d+\\/docs\\/bulk$/,
+  /\\/docs\\/v1\\/team\\/\\d+\\/docs\\/[^/]+$/,
+  /\\/docs\\/v1\\/view\\/[^/]+\\/page$/,
+  /\\/docs\\/v1\\/page\\/[^/]+\\/lastViewed$/,
   // NOTE: init/shell reads (bootstrap, workspace-core, user, project, customFields)
   // are deliberately NOT served live. Their store payloads were non-empty but
   // subtly off-shape — they passed the non-degenerate gate yet stalled the bundle's

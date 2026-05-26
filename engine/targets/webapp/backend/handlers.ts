@@ -18,6 +18,12 @@ import { synthStatusesForList } from '../replay/bridge/synth-statuses';
 import type { CapturedTemplates } from '../replay/bridge/extract-templates';
 import type { BackendStore, StoreMember } from './store-types';
 import { synthVizView, type ViewSynthAssets } from './view-synth';
+import {
+  synthDocData,
+  synthDocPages,
+  synthDocVizView,
+  type DocBulkTemplate,
+} from './doc-synth';
 
 export type RequestCtx = {
   method: string;
@@ -360,6 +366,97 @@ export function makeVizViewHandler(assets: ViewSynthAssets): Handler {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Doc render chain (closes the docs UNAVAILABLE gap). Serves the deep-link doc
+// chain from the owned export: doc metadata via docs/bulk, page content via
+// docs/v1/view/{docId}/page. GATED: returns null unless the requested doc id is
+// in the export, so unowned docs fall back to the recording / empty-200.
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /docs/v1/team/{ws}/docs/bulk  body { ids: [...] } -> { docs: [{ object_id,
+ * status:'found', data:{...} }] }. The bundle's `getDoc` keeps only FOUND rows,
+ * so a deep-link doc whose id we own renders; unowned ids are simply omitted.
+ */
+export function makeDocsBulkHandler(template: DocBulkTemplate): Handler {
+  return (ctx, store) => {
+    if (ctx.method !== 'POST' || !/\/docs\/v1\/team\/\d+\/docs\/bulk/.test(ctx.pathname)) return null;
+    const ids = Array.isArray((ctx.body as { ids?: unknown[] })?.ids)
+      ? (ctx.body as { ids: unknown[] }).ids.map(String)
+      : [];
+    if (ids.length === 0) return null;
+    const docs: Record<string, unknown>[] = [];
+    for (const id of ids) {
+      const doc = store.docById(id);
+      if (!doc) continue;
+      const data = synthDocData(doc, store.docPages(id), template, store.workspaceId());
+      if (data) docs.push({ object_id: id, status: 'found', data });
+    }
+    // GATED: only answer when we actually own at least one requested doc; else
+    // null so the hub's recorded docs/bulk (the full list) is not shadowed.
+    if (docs.length === 0) return null;
+    return { handler: 'docsBulk', body: { docs } };
+  };
+}
+
+/**
+ * GET /docs/v1/view/{docId}/page -> { pages: [...] } with markdown content for
+ * every page in the doc. This is the read that paints the doc body.
+ */
+export const docPagesHandler: Handler = (ctx, store) => {
+  if (ctx.method !== 'GET') return null;
+  const m = ctx.pathname.match(/\/docs\/v1\/view\/([^/]+)\/page$/);
+  if (!m) return null;
+  const docId = decodeURIComponent(m[1]);
+  const body = synthDocPages(store.docPages(docId));
+  if (!body) return null;
+  return { handler: 'docPages', body };
+};
+
+/** GET /docs/v1/team/{ws}/docs/{docId} -> single doc (same data shape as bulk). */
+export function makeDocSingleHandler(template: DocBulkTemplate): Handler {
+  return (ctx, store) => {
+    if (ctx.method !== 'GET') return null;
+    const m = ctx.pathname.match(/\/docs\/v1\/team\/\d+\/docs\/([^/]+)$/);
+    if (!m) return null;
+    const docId = decodeURIComponent(m[1]);
+    if (docId === 'bulk' || docId === 'search') return null;
+    const doc = store.docById(docId);
+    if (!doc) return null;
+    const data = synthDocData(doc, store.docPages(docId), template, store.workspaceId());
+    if (!data) return null;
+    return { handler: 'docSingle', body: data };
+  };
+}
+
+/** GET /docs/v1/page/{pageId}/lastViewed -> harmless ack so the chain proceeds. */
+export const docLastViewedHandler: Handler = (ctx) => {
+  if (ctx.method !== 'GET' || !/\/docs\/v1\/page\/[^/]+\/lastViewed$/.test(ctx.pathname)) return null;
+  return { handler: 'docLastViewed', body: { ok: true } };
+};
+
+/**
+ * GET /viz/v1/view/{docId} where {docId} is an OWNED doc -> a doc-type view so
+ * the doc deep-link route proceeds into the doc body load instead of 404ing into
+ * "This Doc is unavailable". Must be registered BEFORE the generic vizViewHandler
+ * so an owned doc id is answered as a doc, not via the (catalog) view synth.
+ * GATED: returns null unless the id matches an owned doc, so list/board/etc.
+ * viz ids fall through to the generic handler exactly as before.
+ */
+export function makeDocVizViewHandler(docViewTemplate: Record<string, unknown> | null): Handler {
+  return (ctx, store) => {
+    if (ctx.method !== 'GET') return null;
+    const m = ctx.pathname.match(/\/viz\/v1\/view\/([^/]+)$/);
+    if (!m) return null;
+    const id = decodeURIComponent(m[1]);
+    const doc = store.docById(id);
+    if (!doc) return null;
+    const body = synthDocVizView(doc, docViewTemplate, store.workspaceId());
+    if (!body) return null;
+    return { handler: 'docVizView', body };
+  };
+}
+
 /** Ordered handler chain. List-render handlers first (highest value). */
 export const HANDLERS: Handler[] = [
   subcategoryHandler,
@@ -383,4 +480,6 @@ export const HANDLERS: Handler[] = [
   lineupHandler,
   inboxSearchHandler,
   inboxStatsHandler,
+  docPagesHandler,
+  docLastViewedHandler,
 ];

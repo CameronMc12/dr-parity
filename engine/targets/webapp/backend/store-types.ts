@@ -38,6 +38,20 @@ export type StoreCustomFieldSet = {
   fields: unknown[];
 };
 
+/** A doc's metadata row (export `docs.json` shape: id/name/parent/type/...). */
+export type StoreDoc = Record<string, unknown> & {
+  id: string;
+  name?: string;
+  parent?: { id?: string; type?: number | string };
+};
+
+/** A doc's pages with content (export `doc-pages.json` shape). */
+export type StoreDocPages = {
+  docId: string;
+  name?: string;
+  pages: Array<Record<string, unknown> & { id: string; content?: string }>;
+};
+
 /** Read surface the request handlers query. Mapping to internal shapes happens
  *  in the handlers via the reused bridge mappers — never here. */
 export interface BackendStore {
@@ -55,6 +69,12 @@ export interface BackendStore {
   customFieldsForList(listId: string): unknown[];
   /** Raw export tree.json (sidebar source) if present. */
   tree(): Record<string, unknown> | null;
+  /** All doc metadata rows (export docs.json). */
+  docs(): StoreDoc[];
+  /** One doc's metadata row by id. */
+  docById(docId: string): StoreDoc | undefined;
+  /** One doc's pages (with content) by doc id. */
+  docPages(docId: string): StoreDocPages | undefined;
 }
 
 /** Seeded snapshot the JSON store holds in memory (and SQLite would persist). */
@@ -69,4 +89,6 @@ export type StoreSnapshot = {
   tasks: ExportTask[];
   customFields: StoreCustomFieldSet[];
   tree: Record<string, unknown> | null;
+  docs: StoreDoc[];
+  docPages: StoreDocPages[];
 };

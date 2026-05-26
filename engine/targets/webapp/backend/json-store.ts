@@ -22,7 +22,13 @@ import type {
   ExportSpace,
   ExportTask,
 } from '../replay/bridge/load-export';
-import type { BackendStore, StoreMember, StoreSnapshot } from './store-types';
+import type {
+  BackendStore,
+  StoreDoc,
+  StoreDocPages,
+  StoreMember,
+  StoreSnapshot,
+} from './store-types';
 
 export class JsonStore implements BackendStore {
   private readonly snapshot: StoreSnapshot;
@@ -30,6 +36,8 @@ export class JsonStore implements BackendStore {
   private readonly listIndex = new Map<string, ExportList>();
   private readonly taskListIndex = new Map<string, string>();
   private readonly customFieldIndex = new Map<string, unknown[]>();
+  private readonly docIndex = new Map<string, StoreDoc>();
+  private readonly docPagesIndex = new Map<string, StoreDocPages>();
   private readonly snapshotPath: string | null;
 
   constructor(snapshot: StoreSnapshot, snapshotPath: string | null = null) {
@@ -61,6 +69,12 @@ export class JsonStore implements BackendStore {
     }
     for (const cf of this.snapshot.customFields) {
       this.customFieldIndex.set(cf.listId, cf.fields);
+    }
+    for (const doc of this.snapshot.docs ?? []) {
+      if (doc.id) this.docIndex.set(doc.id, doc);
+    }
+    for (const dp of this.snapshot.docPages ?? []) {
+      if (dp.docId) this.docPagesIndex.set(dp.docId, dp);
     }
   }
 
@@ -114,6 +128,18 @@ export class JsonStore implements BackendStore {
 
   tree(): Record<string, unknown> | null {
     return this.snapshot.tree;
+  }
+
+  docs(): StoreDoc[] {
+    return this.snapshot.docs ?? [];
+  }
+
+  docById(docId: string): StoreDoc | undefined {
+    return this.docIndex.get(docId);
+  }
+
+  docPages(docId: string): StoreDocPages | undefined {
+    return this.docPagesIndex.get(docId);
   }
 
   /** Persist the snapshot back to disk. No-op when constructed without a path. */
