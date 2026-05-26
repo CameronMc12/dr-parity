@@ -188,6 +188,28 @@ function normalizeBody(raw) {
  *   - POST /view/v1/genericView                 -> 'gv:{parent.id}'
  *   - POST /task-v3/.../tasks/bulk              -> 'bulk:{list}' via task-id index
  */
+/**
+ * Routing key for a genericView request: 'parent.id|view.type', or '' when the
+ * request is not a genericView POST or carries no parent id. The view type (1 =
+ * list, 5 = calendar, 6 = board, ...) disambiguates a single list whose list AND
+ * calendar/board views were both crawled and therefore share one parent id but
+ * need DIFFERENT captured payload shapes (list vs calendar block vs board.groups).
+ * Routing by parent+type is robust against volatile body fields (cache vectors,
+ * timestamps) that defeat an exact body-key match.
+ */
+function genericViewParentId(method, pathname, bodyKey) {
+  if (method !== 'POST' || !/\\/view\\/v1\\/genericView/.test(pathname)) return '';
+  try {
+    const parsed = JSON.parse(bodyKey);
+    const id = parsed && parsed.parent && parsed.parent.id;
+    if (!id) return '';
+    const type = parsed && parsed.type != null ? String(parsed.type) : '';
+    return String(id) + '|' + type;
+  } catch (err) {
+    return '';
+  }
+}
+
 function bridgeMatchKey(method, pathname, bodyKey) {
   const subcat = pathname.match(/\\/hierarchy\\/v1\\/subcategory\\/(\\d+)\\b/);
   if (method === 'GET' && subcat) return 'subcat:' + subcat[1];
@@ -244,13 +266,20 @@ function chooseFromCandidates(candidates, bodyKey, wantKey) {
   if (empty) return empty;
   // Prefer a 2xx payload over a non-2xx sibling so a wrong-list 404 / 401 never
   // beats a real 200 body when both wildcard-match the same path. Among 2xx,
-  // prefer a non-empty body; fall back to any candidate so GETs still resolve.
+  // prefer the RICHEST (largest) body: a degenerate status-probe stub (e.g. the
+  // 52-byte {"statuses":[],"fields":[]} sibling of a tasks/bulk recording) must
+  // never outrank the real multi-KB task payload when no exact body-key match
+  // exists. Picking the largest 2xx body is additive — it only changes which
+  // bodied sibling wins on a body-key near-miss; exact matches and GETs are
+  // unaffected, so nothing that previously worked is stripped.
   const ok = pool.filter((r) => r.status >= 200 && r.status < 300);
-  const okWithBody = ok.find((r) => r.body && r.body.length > 2);
-  if (okWithBody) return okWithBody;
+  const richest = (list) =>
+    list.reduce((best, r) => ((r.body || '').length > (best?.body || '').length ? r : best), null);
+  const okWithBody = ok.filter((r) => r.body && r.body.length > 2);
+  if (okWithBody.length > 0) return richest(okWithBody);
   if (ok.length > 0) return ok[0];
-  const withBody = pool.find((r) => r.body && r.body.length > 2);
-  if (withBody) return withBody;
+  const anyWithBody = pool.filter((r) => r.body && r.body.length > 2);
+  if (anyWithBody.length > 0) return richest(anyWithBody);
   return pool[0];
 }
 
@@ -464,13 +493,41 @@ async function handleApi(request, url) {
     }
   }
 
-  // 0. ADDITIVE: forward to the OWNED local backend first (live dynamic reads).
+  // 0a. CAPTURED-VIEW GUARD (additive, no-regression). A genericView request for
+  // a parent that HAS a captured view-shaped payload is served from that capture,
+  // NOT the backend. The backend's genericView handler is list-shaped (no
+  // board.groups / no calendar block); a board or calendar view needs its own
+  // captured shape, which the backend cannot synthesize. We route by parent id —
+  // robust against volatile body fields (cache vectors, timestamps) that defeat
+  // an exact body-key match. Lists the backend serves have NO captured genericView
+  // for their dynamic body, so they fall through to the backend exactly as before.
+  const rec = pickRecording(method, url.pathname, bodyKey);
+  const reqParent = genericViewParentId(method, url.pathname, bodyKey);
+  if (reqParent) {
+    const byParent = RECORDINGS.filter(
+      (r) =>
+        r.method === method &&
+        pathMatches(url.pathname, r.pathPattern) &&
+        r.body &&
+        r.body.length > 2 &&
+        genericViewParentId(method, url.pathname, r.requestBodyKey) === reqParent,
+    );
+    if (byParent.length > 0) {
+      const exact = byParent.find((r) => r.requestBodyKey === bodyKey);
+      return recordedResponse(exact || byParent[0]);
+    }
+  }
+  // An exact body-key capture for any other view-data request is authoritative.
+  if (rec && bodyKey && rec.requestBodyKey === bodyKey && rec.body && rec.body.length > 2) {
+    return recordedResponse(rec);
+  }
+
+  // 0b. ADDITIVE: forward to the OWNED local backend first (live dynamic reads).
   // A backend MISS or error returns null and we fall through to recordings, so
   // without BACKEND_URL set this is inert and behaviour is unchanged.
   const live = await tryBackend(request, url, method, rawBody);
   if (live) return live;
 
-  const rec = pickRecording(method, url.pathname, bodyKey);
   if (rec) return recordedResponse(rec);
 
   const fallback = unrecordedApiResponse(method);

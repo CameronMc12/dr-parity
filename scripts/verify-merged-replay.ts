@@ -13,8 +13,8 @@ const BASE = process.env.REPLAY_BASE ?? 'http://localhost:8910';
 const ROUTES: { section: string; path: string }[] = [
   { section: 'dashboard', path: '/90152566819/home' },
   { section: 'docs-hub', path: '/90152566819/docs' },
-  { section: 'calendar', path: '/90152566819/v/c/901523543274' },
-  { section: 'board', path: '/90152566819/v/b/901523543266' },
+  { section: 'calendar', path: '/90152566819/v/c/2kyr6013-375' },
+  { section: 'board', path: '/90152566819/v/b/2kyr6013-835' },
   { section: 'list', path: '/90152566819/v/li/901523543274' },
   { section: 'task-detail', path: '/t/86c9yhmww' },
 ];
