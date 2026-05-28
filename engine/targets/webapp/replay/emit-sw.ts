@@ -39,7 +39,7 @@ export type FuzzyBodyMatchConfig = {
   endpointPatterns?: ReadonlyArray<EndpointPattern>;
 };
 
-const LOCAL_ASSET_PREFIXES = ['/_ext/', '/_external/', '/media/', '/assets/'];
+const LOCAL_ASSET_PREFIXES = ['/_ext/', '/_external/', '/media/', '/assets/', '/replay/'];
 
 /**
  * Build the replay Service Worker source.
