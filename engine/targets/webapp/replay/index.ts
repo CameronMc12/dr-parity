@@ -37,7 +37,7 @@ import { mergeRecordings, mergeAssets } from './merge-crawls';
 import { backfillFromCdn } from './cdn-backfill';
 import { rewriteBootstrapHtml } from './rewrite-bootstrap';
 import { buildBootShim } from './emit-boot-shim';
-import { buildServiceWorker } from './emit-sw';
+import { buildServiceWorker, type FuzzyBodyMatchConfig } from './emit-sw';
 import { generateBridgeRecordings } from './bridge';
 import { resolveProfile } from '../profiles/index';
 import { expandBootstrapCorpus } from '../crawler/discovery/api-hierarchy-traverser';
@@ -237,12 +237,37 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
       }
     }
   }
+  // 4c. Additive: fuzzy POST-body match config. Resolves the profile from the
+  // bootstrap host, checks fuzzyBodyMatch.enabled, and threads the config
+  // (thresholds + endpointPatterns) through to the SW emitter. The SW inlines
+  // the matcher source and wires the POST fall-through. No-op for every other
+  // profile / when the flag is false.
+  let fuzzyConfig: FuzzyBodyMatchConfig | null = null;
+  {
+    let fuzzyHost = '';
+    try {
+      fuzzyHost = new URL(bootstrap.url).host;
+    } catch {
+      fuzzyHost = '';
+    }
+    if (fuzzyHost) {
+      const profile = resolveProfile(fuzzyHost);
+      if (profile.fuzzyBodyMatch?.enabled) {
+        fuzzyConfig = {
+          enabled: true,
+          ...(profile.fuzzyBodyMatch.thresholds ? { thresholds: profile.fuzzyBodyMatch.thresholds } : {}),
+          ...(profile.fuzzyBodyMatch.endpointPatterns ? { endpointPatterns: profile.fuzzyBodyMatch.endpointPatterns } : {}),
+        };
+        warnings.push(`[fuzzy-body-match] enabled (${profile.fuzzyBodyMatch.endpointPatterns?.length ?? 0} extra patterns)`);
+      }
+    }
+  }
   const bootShimJs = buildBootShim({
     seeded,
     wsConnections: ws.connections,
     ...(extraShimJs ? { extraShimJs } : {}),
   });
-  const serviceWorker = buildServiceWorker(unrecordedMode, options.backendUrl ?? '', enableViewSynth, enableDocFreeze);
+  const serviceWorker = buildServiceWorker(unrecordedMode, options.backendUrl ?? '', enableViewSynth, enableDocFreeze, fuzzyConfig);
 
   const { html } = rewriteBootstrapHtml({
     html: bootstrap.html,

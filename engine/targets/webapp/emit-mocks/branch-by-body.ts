@@ -2,6 +2,14 @@
  * Emit an MSW handler snippet for a single endpoint group. If a single
  * response was captured, emit a flat handler. If multiple distinct
  * responses share the endpoint, branch on the request body.
+ *
+ * NOTE: this is the COMPILE-TIME exact-match branching for the WEBAPP
+ * target's MSW handlers. The REPLAY target's runtime fuzzy-body fallback
+ * lives in `engine/targets/webapp/replay/match/*` and is wired into the
+ * generated sw.js via `emit-sw.ts` (gated by `profile.fuzzyBodyMatch`).
+ * The two paths intentionally do NOT share code: webapp handlers are
+ * deterministic per-recording branches; the replay SW is a single fetch
+ * interceptor that runs structural similarity at request time.
  */
 
 import type { EndpointGroup } from './types';

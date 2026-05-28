@@ -39,4 +39,16 @@ export const clickupProfile: WebappProfile = {
     enabled: true,
     pagesIndexPath: 'docs/research/clickup-export/2026-05-25T16-21-00-615Z/doc-pages.json',
   },
+  // Additive. Fuzzy POST-body matching. The genericView task-grid POST varies
+  // its body by date-window filters and dynamic request fields, so an exact
+  // match misses for every uncaptured viewId. Fuzzy with the search threshold
+  // (0.85) lets a captured sibling answer when its structure is close enough.
+  fuzzyBodyMatch: {
+    enabled: true,
+    endpointPatterns: [
+      { pattern: '/viz/v1/view/', class: 'search' },
+      { pattern: '/view/v1/genericview', class: 'search' },
+      { pattern: '/task-v3/experience/', class: 'bulk' },
+    ],
+  },
 };

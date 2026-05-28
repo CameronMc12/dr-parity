@@ -79,4 +79,36 @@ export type WebappProfile = {
     /** Absolute or repo-relative path to the captured doc-pages.json export. */
     pagesIndexPath?: string;
   };
+  /**
+   * Additive. Fuzzy POST-body matching for the replay target.
+   *
+   * When `enabled` is true, the generated sw.js falls through to a structural
+   * similarity match for POST requests whose body never exact-matches any
+   * captured recording. Dynamic fields (timestamps, request_ids, nonces) are
+   * stripped before scoring, so two POSTs with identical structure but
+   * different timestamps score 1.0 instead of failing exact-match and getting
+   * an empty-200.
+   *
+   * Strict matches still win first; fuzzy only fires as the fallback before
+   * the empty-200 default. Absent / `enabled: false` => behaviour unchanged.
+   */
+  fuzzyBodyMatch?: {
+    enabled: boolean;
+    /**
+     * Override the per-class similarity thresholds. Any class omitted uses
+     * the default (search/filter 0.85, bulk 0.90, crud 0.95, telemetry 0.70,
+     * default 0.90). Values are clamped to [0, 1] by the matcher.
+     */
+    thresholds?: Partial<
+      Record<'search' | 'filter' | 'bulk' | 'crud' | 'telemetry' | 'default', number>
+    >;
+    /**
+     * Extra endpoint patterns to classify. First substring match against the
+     * lowercased path wins; appended to the built-in defaults.
+     */
+    endpointPatterns?: ReadonlyArray<{
+      pattern: string;
+      class: 'search' | 'filter' | 'bulk' | 'crud' | 'telemetry' | 'default';
+    }>;
+  };
 };
