@@ -15,6 +15,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { runCrawler } from '../engine/targets/webapp/crawler';
 import type { CrawlOptions } from '../engine/targets/webapp/crawler';
+import { resolveProfile } from '../engine/targets/webapp/profiles';
 
 type CliArgs = {
   startUrl?: string;
@@ -30,6 +31,7 @@ type CliArgs = {
   proxyServer?: string;
   bypassServiceWorker: boolean;
   blocklistPath?: string;
+  profile?: string;
   help: boolean;
 };
 
@@ -55,6 +57,10 @@ Options:
                           proxy (e.g. mitmdump) and disable QUIC. Opt-in; the
                           proxy CA must be trusted by the profile for TLS.
   --bypass-sw             Explicitly enforce service-worker bypass on capture.
+  --profile=<name>        Webapp profile to apply (additive route discoverers).
+                          Default: auto-resolve by host (falls back to "default"
+                          which is bytewise-identical to pre-profile behaviour).
+                          Known profiles: default, clickup.
   -h, --help              Show this help
 `.trim();
 
@@ -137,6 +143,10 @@ function parseArgs(argv: string[]): CliArgs {
       out.blocklistPath = raw.slice('--blocklist='.length);
       continue;
     }
+    if (raw.startsWith('--profile=')) {
+      out.profile = raw.slice('--profile='.length);
+      continue;
+    }
     if (raw.startsWith('--')) {
       throw new Error(`Unknown flag: ${raw}`);
     }
@@ -183,6 +193,8 @@ async function main(): Promise<void> {
 
   const extraBlocklist = loadBlocklist(args.blocklistPath);
 
+  const profile = resolveProfile(url.host, args.profile);
+
   const opts: CrawlOptions = {
     startUrl: url.toString(),
     outDir,
@@ -197,6 +209,7 @@ async function main(): Promise<void> {
     captureJs: args.captureJs,
     proxyServer: args.proxyServer,
     bypassServiceWorker: args.bypassServiceWorker,
+    profile,
   };
 
   console.log(`[crawl] startUrl    : ${opts.startUrl}`);
@@ -212,6 +225,7 @@ async function main(): Promise<void> {
   console.log(`[crawl] proxy       : ${opts.proxyServer ?? 'none'}`);
   console.log(`[crawl] bypass-sw   : ${opts.bypassServiceWorker ?? false}`);
   console.log(`[crawl] blocklist   : ${extraBlocklist.length} extra phrases`);
+  console.log(`[crawl] profile     : ${profile.name} (discoverers=${profile.discoverers?.length ?? 0})`);
 
   const summary = await runCrawler(opts);
 

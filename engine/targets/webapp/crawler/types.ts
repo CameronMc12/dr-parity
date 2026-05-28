@@ -142,6 +142,38 @@ export type CrawlOptions = {
    * default behaviour untouched.
    */
   bypassServiceWorker?: boolean;
+  /**
+   * Additive, opt-in. App profile that may supply route discoverers run once
+   * at crawler init. Absent / empty discoverers => behaviour is byte-identical
+   * to before profiles existed (the DOM-only frontier).
+   */
+  profile?: WebappProfileLike;
+};
+
+/**
+ * Structural sub-type the crawler needs from a profile. Defined here to avoid
+ * a circular import; the real `WebappProfile` in `../profiles/types` is
+ * assignable to this shape.
+ */
+export type WebappProfileLike = {
+  name: string;
+  discoverers?: ReadonlyArray<{
+    name: string;
+    discover(ctx: {
+      host: string;
+      origin: string;
+      startUrl: string;
+      networkLogPaths: readonly string[];
+    }): Promise<
+      Array<{
+        url: string;
+        priority?: number;
+        sourceTag?: string;
+        viewId?: string;
+        viewType?: string;
+      }>
+    >;
+  }>;
 };
 
 export type RecorderHandles = {

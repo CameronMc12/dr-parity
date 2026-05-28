@@ -41,6 +41,7 @@ import {
   type StateNode,
   type StateSourceKind,
 } from './types';
+import { mergeProfileDiscovererSeeds } from './discovery/merge-seeds';
 
 const ROUTE_INTERACTION_LIMIT = 60;
 
@@ -329,6 +330,13 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
   ]);
   enqueuedRoutes.add(normalizeRouteUrl(opts.startUrl));
   let reachedLimit: CrawlSummary['reachedLimit'] = 'queue-empty';
+
+  // Profile-driven route discoverers (additive). When the resolved profile
+  // exposes one or more discoverers, run them ONCE here and merge their seeds
+  // into the frontier. No discoverers / empty array => bytewise-identical
+  // legacy behaviour. Each discoverer is independent and any thrown error is
+  // logged + swallowed, so a discoverer fault never blocks the crawl.
+  await mergeProfileDiscovererSeeds(opts.startUrl, opts.profile, queue, enqueuedRoutes);
 
   // Interaction kinds already exercised per route (#7) — used to prioritise
   // routes that still have an un-exercised interaction type.

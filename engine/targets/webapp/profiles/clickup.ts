@@ -1,0 +1,26 @@
+/**
+ * ClickUp webapp profile.
+ *
+ * Activates the hybrid route discoverer for any ClickUp host. The hybrid
+ * discoverer reads previously-captured `network.jsonl` files (passed in via
+ * `DiscoveryContext.networkLogPaths`) and synthesises `/v/<typeCode>/<viewId>`
+ * URLs from the workspace's view-enumeration API responses.
+ *
+ * Background: see `docs/V2.0/08-clickup-failure-attribution.md` for the
+ * diagnostic that justifies this profile (≥85% of in-app views are gated
+ * behind API responses the crawler never parsed).
+ */
+
+import { createHybridRouteDiscoverer } from '../crawler/discovery/hybrid-route-discoverer';
+import type { WebappProfile } from './types';
+
+export const clickupProfile: WebappProfile = {
+  name: 'clickup',
+  hostMatchers: [/app\.clickup\.com$/, /clickup\.com$/],
+  discoverers: [createHybridRouteDiscoverer()],
+  // Previously-captured ClickUp network logs. The crawler expands the glob
+  // once at init and hands the concrete file list to the hybrid discoverer so
+  // it has a real corpus to mine before the in-flight crawl has produced any
+  // bytes of its own.
+  bootstrapCorpus: ['docs/research/crawl/app.clickup.com/*/network.jsonl'],
+};
