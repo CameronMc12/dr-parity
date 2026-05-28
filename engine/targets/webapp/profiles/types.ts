@@ -62,4 +62,21 @@ export type WebappProfile = {
      */
     templatePaths?: ReadonlyArray<string>;
   };
+  /**
+   * Additive. Doc-freeze config for the replay target.
+   *
+   * When `enabled` is true, the replay build reads `pagesIndexPath` (the
+   * captured doc-pages export), emits a compact lookup index at
+   * `replay/doc-pages.json`, and inlines the doc-freezer shim into the boot
+   * shim. The shim watches for the Quill editor mount on `/v/dc/<id>`
+   * routes and injects the captured markdown as static read-only HTML, so
+   * the SPA does not hang waiting for the Codox WS to deliver content.
+   *
+   * Absent / `enabled: false` => default profile behaviour unchanged.
+   */
+  docFreeze?: {
+    enabled: boolean;
+    /** Absolute or repo-relative path to the captured doc-pages.json export. */
+    pagesIndexPath?: string;
+  };
 };

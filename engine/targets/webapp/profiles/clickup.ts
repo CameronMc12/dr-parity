@@ -31,4 +31,12 @@ export const clickupProfile: WebappProfile = {
     enabled: true,
     templatePaths: ['docs/research/crawl/app.clickup.com/*/network.jsonl'],
   },
+  // Additive. The captured doc-pages export carries plain Markdown content
+  // per (docId, pageId). The replay build emits a compact lookup index and
+  // inlines the doc-freezer shim so /v/dc/<id> routes paint the editor with
+  // real content instead of hanging on the Codox WebSocket.
+  docFreeze: {
+    enabled: true,
+    pagesIndexPath: 'docs/research/clickup-export/2026-05-25T16-21-00-615Z/doc-pages.json',
+  },
 };

@@ -43,6 +43,9 @@ import { resolveProfile } from '../profiles/index';
 import { expandBootstrapCorpus } from '../crawler/discovery/api-hierarchy-traverser';
 import { inferViewTemplates } from './synth/view-template-inference';
 import { emitViewTemplates } from './synth/view-template-emitter';
+import { loadDocPages, emitDocPages } from './freeze/doc-pages-loader';
+import { buildDocFreezerShim } from './freeze/doc-freezer-shim';
+import { isAbsolute, resolve as resolvePath } from 'node:path';
 import type {
   ReplayBuildOptions,
   ReplayBuildResult,
@@ -176,7 +179,6 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
 
   // 4. Emit boot shim + SW, rewrite bootstrap HTML.
   const seeded = loadSeededState(crawlDir);
-  const bootShimJs = buildBootShim({ seeded, wsConnections: ws.connections });
   // 4a. Additive: view-synth template inference (ClickUp profile only).
   // Resolves the profile from the bootstrap host, checks viewSynth.enabled,
   // expands the templatePaths glob, infers one template per viewType, and
@@ -206,7 +208,41 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
       }
     }
   }
-  const serviceWorker = buildServiceWorker(unrecordedMode, options.backendUrl ?? '', enableViewSynth);
+  // 4b. Additive: doc-freeze. Loads the captured doc-pages export, emits
+  // replay/doc-pages.json, and inlines the doc-freezer shim into the boot
+  // shim so /v/dc/<id> routes render with captured markdown content.
+  let enableDocFreeze = false;
+  let extraShimJs = '';
+  {
+    let docHost = '';
+    try {
+      docHost = new URL(bootstrap.url).host;
+    } catch {
+      docHost = '';
+    }
+    if (docHost) {
+      const profile = resolveProfile(docHost);
+      if (profile.docFreeze?.enabled && profile.docFreeze.pagesIndexPath) {
+        const src = profile.docFreeze.pagesIndexPath;
+        const absPath = isAbsolute(src) ? src : resolvePath(process.cwd(), src);
+        const loaded = loadDocPages(absPath);
+        if (loaded.docCount > 0) {
+          emitDocPages(loaded.index, outDir);
+          extraShimJs = buildDocFreezerShim();
+          enableDocFreeze = true;
+          warnings.push(
+            `[doc-freeze] loaded ${loaded.docCount} doc(s), ${loaded.pageCount} page(s), ${loaded.totalContentBytes} content bytes`,
+          );
+        }
+      }
+    }
+  }
+  const bootShimJs = buildBootShim({
+    seeded,
+    wsConnections: ws.connections,
+    ...(extraShimJs ? { extraShimJs } : {}),
+  });
+  const serviceWorker = buildServiceWorker(unrecordedMode, options.backendUrl ?? '', enableViewSynth, enableDocFreeze);
 
   const { html } = rewriteBootstrapHtml({
     html: bootstrap.html,

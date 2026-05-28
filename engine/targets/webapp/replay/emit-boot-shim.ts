@@ -31,10 +31,16 @@ import type { ReplayWsConnection, SeededState } from './types';
 type BootShimArgs = {
   seeded: SeededState | null;
   wsConnections: ReplayWsConnection[];
+  /**
+   * Additive. Extra shim source appended verbatim AFTER the core boot shim
+   * (storage seed + WS patch + SW register). Used by docFreeze-enabled
+   * profiles to inline the doc-freezer shim. Empty/undefined => unchanged.
+   */
+  extraShimJs?: string;
 };
 
 export function buildBootShim(args: BootShimArgs): string {
-  const { seeded, wsConnections } = args;
+  const { seeded, wsConnections, extraShimJs } = args;
   const seedJson = JSON.stringify(
     seeded ?? { localStorage: {}, sessionStorage: {}, cookies: [], indexedDB: [] },
   );
@@ -388,5 +394,6 @@ export function buildBootShim(args: BootShimArgs): string {
     try { await seedIndexedDb(); } catch (e) { /* seeding best-effort */ }
     await registerServiceWorker();
   })();
-})();`;
+})();
+${extraShimJs ?? ''}`;
 }
