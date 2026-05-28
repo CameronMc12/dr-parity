@@ -42,4 +42,24 @@ export type WebappProfile = {
    * behaviour is byte-identical for every other host.
    */
   bootstrapCorpus?: ReadonlyArray<string>;
+  /**
+   * Additive. View-synthesis config for the replay target.
+   *
+   * When `enabled` is true, the replay build infers one canonical
+   * `ViewTemplate` per viewType from the network.jsonl files matched by
+   * `templatePaths` and emits `replay/view-templates.json`. The generated
+   * sw.js then uses those templates to synthesise `GET /viz/v1/view/<id>`
+   * responses for viewIds the crawl never captured (FALLBACK — captured
+   * responses always win).
+   *
+   * Absent / `enabled: false` => default profile behaviour unchanged.
+   */
+  viewSynth?: {
+    enabled: boolean;
+    /**
+     * Glob patterns (relative to repo root) for network.jsonl files to mine
+     * for view templates. Supports a single `*` per segment; no `**`.
+     */
+    templatePaths?: ReadonlyArray<string>;
+  };
 };

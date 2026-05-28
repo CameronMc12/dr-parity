@@ -39,6 +39,10 @@ import { rewriteBootstrapHtml } from './rewrite-bootstrap';
 import { buildBootShim } from './emit-boot-shim';
 import { buildServiceWorker } from './emit-sw';
 import { generateBridgeRecordings } from './bridge';
+import { resolveProfile } from '../profiles/index';
+import { expandBootstrapCorpus } from '../crawler/discovery/api-hierarchy-traverser';
+import { inferViewTemplates } from './synth/view-template-inference';
+import { emitViewTemplates } from './synth/view-template-emitter';
 import type {
   ReplayBuildOptions,
   ReplayBuildResult,
@@ -173,7 +177,36 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
   // 4. Emit boot shim + SW, rewrite bootstrap HTML.
   const seeded = loadSeededState(crawlDir);
   const bootShimJs = buildBootShim({ seeded, wsConnections: ws.connections });
-  const serviceWorker = buildServiceWorker(unrecordedMode, options.backendUrl ?? '');
+  // 4a. Additive: view-synth template inference (ClickUp profile only).
+  // Resolves the profile from the bootstrap host, checks viewSynth.enabled,
+  // expands the templatePaths glob, infers one template per viewType, and
+  // emits replay/view-templates.json. No-op for every other profile.
+  let enableViewSynth = false;
+  {
+    let synthHost = '';
+    try {
+      synthHost = new URL(bootstrap.url).host;
+    } catch {
+      synthHost = '';
+    }
+    if (synthHost) {
+      const profile = resolveProfile(synthHost);
+      if (profile.viewSynth?.enabled) {
+        const templateFiles = expandBootstrapCorpus(profile.viewSynth.templatePaths ?? []);
+        if (templateFiles.length > 0) {
+          const templates = await inferViewTemplates(templateFiles);
+          if (templates.size > 0) {
+            emitViewTemplates(templates, outDir);
+            enableViewSynth = true;
+            warnings.push(
+              `[view-synth] inferred ${templates.size} view template(s) from ${templateFiles.length} log file(s)`,
+            );
+          }
+        }
+      }
+    }
+  }
+  const serviceWorker = buildServiceWorker(unrecordedMode, options.backendUrl ?? '', enableViewSynth);
 
   const { html } = rewriteBootstrapHtml({
     html: bootstrap.html,

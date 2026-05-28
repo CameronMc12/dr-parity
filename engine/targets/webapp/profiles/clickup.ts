@@ -23,4 +23,12 @@ export const clickupProfile: WebappProfile = {
   // it has a real corpus to mine before the in-flight crawl has produced any
   // bytes of its own.
   bootstrapCorpus: ['docs/research/crawl/app.clickup.com/*/network.jsonl'],
+  // Additive. When replay is built for a ClickUp crawl, infer one view
+  // template per viewType from the previously-captured network logs and emit
+  // replay/view-templates.json. The SW uses these to synthesise
+  // GET /viz/v1/view/<id> responses for uncaptured views at runtime.
+  viewSynth: {
+    enabled: true,
+    templatePaths: ['docs/research/crawl/app.clickup.com/*/network.jsonl'],
+  },
 };
