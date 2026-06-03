@@ -1,0 +1,183 @@
+{
+  "spaces": [
+    {
+      "id": "901511060743",
+      "name": "Team Space",
+      "color": "#03A2FD",
+      "folderlessLists": [
+        {
+          "id": "901523542898",
+          "name": "Project 1",
+          "count": 3
+        },
+        {
+          "id": "901523542899",
+          "name": "Project 2",
+          "count": 3
+        },
+        {
+          "id": "901523542902",
+          "name": "Get Started with ClickUp",
+          "count": 6
+        },
+        {
+          "id": "901523546362",
+          "name": "TEST",
+          "count": 0
+        }
+      ],
+      "folders": []
+    },
+    {
+      "id": "901511060890",
+      "name": "Software Development",
+      "color": "#248f7d",
+      "folderlessLists": [
+        {
+          "id": "901523546368",
+          "name": "DEMO",
+          "count": 0
+        }
+      ],
+      "folders": [
+        {
+          "id": "901516144636",
+          "name": "Kanban Team",
+          "lists": [
+            {
+              "id": "901523543265",
+              "name": "Projects",
+              "count": 3
+            },
+            {
+              "id": "901523543266",
+              "name": "Kanban",
+              "count": 10
+            },
+            {
+              "id": "901523543272",
+              "name": "Backlog",
+              "count": 3
+            },
+            {
+              "id": "901523543268",
+              "name": "Bugs",
+              "count": 2
+            }
+          ]
+        },
+        {
+          "id": "901516144663",
+          "name": "Sprint Team",
+          "lists": [
+            {
+              "id": "901523547043",
+              "name": "AB Content Management",
+              "count": 9
+            },
+            {
+              "id": "901523543309",
+              "name": "Projects",
+              "count": 0
+            },
+            {
+              "id": "901523543310",
+              "name": "Backlog",
+              "count": 9
+            },
+            {
+              "id": "901523543324",
+              "name": "Bugs",
+              "count": 0
+            },
+            {
+              "id": "901523543329",
+              "name": "Sprint 1 (10/6/25 - 10/19/25)",
+              "count": 0
+            }
+          ]
+        },
+        {
+          "id": "901516144641",
+          "name": "Roadmap & Backlog",
+          "lists": [
+            {
+              "id": "901523543273",
+              "name": "Product Roadmap",
+              "count": 10
+            },
+            {
+              "id": "901523543285",
+              "name": "Weekly Execution",
+              "count": 12
+            },
+            {
+              "id": "901523543274",
+              "name": "Product Master Backlog",
+              "count": 21
+            },
+            {
+              "id": "901523543290",
+              "name": "Defects Master List",
+              "count": 6
+            }
+          ]
+        },
+        {
+          "id": "901516144635",
+          "name": "Design",
+          "lists": [
+            {
+              "id": "901523543264",
+              "name": "Design Tasks",
+              "count": 5
+            }
+          ]
+        },
+        {
+          "id": "901516144648",
+          "name": "QA",
+          "lists": [
+            {
+              "id": "901523543283",
+              "name": "Test Scenarios & Cases",
+              "count": 20
+            },
+            {
+              "id": "901523543284",
+              "name": "Test Runs",
+              "count": 58
+            }
+          ]
+        },
+        {
+          "id": "901516144677",
+          "name": "Technical Support",
+          "lists": [
+            {
+              "id": "901523543333",
+              "name": "Reported Bugs",
+              "count": 9
+            },
+            {
+              "id": "901523543334",
+              "name": "Limitations & Workarounds",
+              "count": 9
+            }
+          ]
+        },
+        {
+          "id": "901516148047",
+          "name": "folder test",
+          "lists": [
+            {
+              "id": "901523547862",
+              "name": "List",
+              "count": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

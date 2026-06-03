@@ -1,0 +1,21 @@
+{
+  "name": "@parity/design-system",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css",
+    "./clickup-globals.css": "./src/clickup-globals.css",
+    "./assets/*": "./assets/*"
+  },
+  "files": ["src", "assets"],
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}

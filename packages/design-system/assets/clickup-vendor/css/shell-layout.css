@@ -1,0 +1,406 @@
+/*
+ * Shell layout CSS — defines the structural layout rules for ClickUp's
+ * shell components. These rules exist in ClickUp's Angular component bundles
+ * (ViewEncapsulation.None) and are not present in styles-MKJ24DPC.css.
+ * Measured from live computed styles at localhost:7050 on 2026-05-28.
+ *
+ * SCOPE-STRIPPED for React adoption — see apps/clickup-react/scripts/import-clickup-css.ts
+ */
+
+/* ── CSS Variables (from Angular component bundle, oracle: body.cu-black) ── */
+body.cu-black {
+  --cu-simple-bar-v4-background: rgb(0, 0, 0);
+  --cu-white-20: rgba(255, 255, 255, 0.2);
+  --cu-white-10: rgba(255, 255, 255, 0.1);
+}
+
+.cu-simple-bar {
+  --sidebar-item-background-selected: rgb(255, 255, 255);
+  --sidebar-item-background-hover: rgba(255, 255, 255, 0.134);
+  --sidebar-item-label-color-selected: rgb(255, 255, 255);
+  --cu-simple-bar-v4-background: rgb(0, 0, 0);
+}
+
+/* ── Top-level app container ──────────────────────────────────── */
+.cu-manager2__container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.cu-manager2__container-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Top bar row (sits above the icon-bar + body row) ─────────── */
+.cu-manager2__topbar-row {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  height: 44px;
+  border-bottom: 1px solid var(--cu-background-overlay, rgb(232, 232, 232));
+}
+
+/* ── Icon bar + body row ─────────────────────────────────────── */
+.cu-manager2__router-outlet {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Icon bar (cu-simple-bar) ────────────────────────────────── */
+.cu-simple-bar {
+  width: 64px;
+  min-width: 64px;
+  max-width: 256px;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.cu-simple-bar__container {
+  display: grid;
+  grid-template-rows: 1fr;
+  width: 64px;
+  height: 100%;
+  position: relative;
+  background: transparent;
+}
+
+.cu-simple-bar__container-inner {
+  display: flex;
+  flex-direction: column;
+  width: 52px;
+  height: 100%;
+  overflow: hidden;
+  margin: 0 6px;
+  border-radius: 8px;
+  background: var(--cu-simple-bar-v4-background, var(--cu-black, #000));
+  box-shadow: rgba(0, 0, 0, 0.106) 0px 4px 6px -1px, rgba(0, 0, 0, 0.106) 0px 2px 4px -2px;
+}
+
+.cu-simple-bar__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  overflow: hidden;
+  align-items: center;
+  padding: 0 0 6px;
+  gap: 2px;
+  width: 52px;
+}
+
+.cu-simple-bar__body-items {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  width: 52px;
+}
+
+.cu-simple-bar__bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.cu-simple-bar__bottom-buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Icon bar items — measured from oracle: 52×62px per item */
+.cu-simple-bar__item-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+}
+
+/* Anchor element — the clickable item */
+.cu-simple-bar__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 62px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+  color: rgba(255, 255, 255, 0.55);
+  text-decoration: none;
+  position: relative;
+  padding: 0;
+  gap: 3px;
+}
+
+.cu-simple-bar__item:hover {
+  background-color: rgba(255, 255, 255, 0.10);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.cu-simple-bar__item.active {
+  color: #fff;
+}
+
+.cu-simple-bar__item-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+}
+
+.cu-simple-bar__item-icon-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cu-simple-bar__item-label-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.cu-simple-bar__item-label-inner {
+  display: flex;
+  align-items: center;
+}
+
+.cu-simple-bar__item-label {
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 44px;
+  text-align: center;
+  color: inherit;
+}
+
+.cu-simple-bar__item.active .cu-simple-bar__item-label {
+  font-weight: 500;
+}
+
+/* cu-simple-bar-item (home-switch nav items) */
+/* Oracle measures (getComputedStyle at localhost:7050):
+ *   .cu-simple-bar-home-switch__item: x=16, w=32, h=62  (centered in 64px bar)
+ *   .cu-simple-bar-item__link inside: w=32, h=32         (icon area only)
+ *   label below the link: w≈29px
+ */
+.cu-simple-bar-home-switch__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 62px;
+  margin: 0 auto;  /* centers in the 64px body */
+}
+
+.cu-simple-bar-item__link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  transition: color 120ms ease;
+  /* oracle measured: inactive icon fill = rgb(204) ≈ 80% white on black bg */
+  color: rgba(255, 255, 255, 0.80) !important;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.cu-simple-bar-item__link:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.cu-simple-bar-item__link.active {
+  color: #fff !important;
+}
+
+.cu-simple-bar-item__inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  position: relative;
+}
+
+/* Hover: subtle white tint */
+.cu-simple-bar-item__link:hover .cu-simple-bar-item__inner:not(.active) {
+  background: rgba(255, 255, 255, 0.134);
+}
+
+.cu-simple-bar-item__icon,
+.cu-simple-bar-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Label is a sibling of the link (below it), both inside cu-simple-bar-home-switch__item */
+.cu-simple-bar-item__label-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 32px;
+}
+
+.cu-simple-bar-item__label-inner {
+  display: flex;
+  align-items: center;
+}
+
+.cu-simple-bar-item__label-divider {
+  display: block;
+  width: 5px;
+  flex-shrink: 0;
+}
+
+.cu-simple-bar-item__label {
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 29px;
+  text-align: center;
+  color: rgb(255, 255, 255);
+  letter-spacing: -0.25px;
+}
+
+.cu-simple-bar-home-switch__item.active .cu-simple-bar-item__label {
+  color: rgb(255, 255, 255);
+  font-weight: 700;
+}
+
+/* (duplicate removed — see primary rule above) */
+
+/* Icon SVG */
+.cu-simple-bar .svg,
+.cu-simple-bar svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+/* More item */
+.cu-simple-bar__item_more .cu-simple-bar__item {
+  /* same as normal item */
+}
+
+/* ── Manager2 body ───────────────────────────────────────────── */
+.cu-manager2__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+}
+
+.cu-manager2__body_v4 {
+  background: var(--cu-background-primary-subtle, rgb(249, 249, 249));
+}
+
+.cu-manager2__body-container {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.cu-manager2__body-inner-wrapper {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cu-manager2__body-inner {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: clip;
+  position: relative;
+  background: var(--cu-background-primary-subtle, rgb(249, 249, 249));
+}
+
+/* ── Global sidebar ──────────────────────────────────────────── */
+.cu-global-sidebar__container {
+  display: grid;
+  grid-template-columns: 1fr;
+  width: 256px;
+  min-width: 256px;
+  height: 100%;
+  flex-shrink: 0;
+  position: relative;
+  border-right: 1px solid var(--cu-background-overlay, rgb(232, 232, 232));
+  overflow: hidden;
+}
+
+.cu-global-sidebar__container-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── Main content area ───────────────────────────────────────── */
+.cu-manager2__main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Home top bar ────────────────────────────────────────────── */
+.cu-home-top-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  height: 44px;
+  padding: 0 16px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--cu-background-overlay, rgb(232, 232, 232));
+}
+
+/* ── cu3-icon SVG base ───────────────────────────────────────── */
+.cu3-icon,
+cu3-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.cu3-icon svg,
+cu3-icon svg {
+  display: block;
+}

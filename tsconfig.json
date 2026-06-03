@@ -20,5 +20,13 @@
     "**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "clones", "docs/research/captures"]
+  "exclude": [
+    "node_modules",
+    "apps",
+    "packages",
+    "clones",
+    "docs/research/captures",
+    "docs/research/crawl",
+    "react-target-test"
+  ]
 }

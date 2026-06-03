@@ -1,0 +1,191 @@
+/*
+ * ClickUp design tokens — extracted from live replay clone (localhost:7050)
+ * Measured via Playwright getComputedStyle on 2026-05-28.
+ *
+ * Layout measurements (from live DOM extraction):
+ *   Top bar:    full width, y=0,  h=40px  (light theme, white background)
+ *   Icon bar:   x=0, y=40, w=64, h=860   (dark: rgb(0,0,0) inner bg)
+ *   Sidebar:    x=64, y=40, w=255, h=852  (light: rgb(249,249,249))
+ *
+ * Theme: LIGHT (white/off-white main bg, black icon bar)
+ *
+ * Icon bar items (order from live clone):
+ *   1. Home          (active)
+ *   2. Spaces
+ *   3. Chat          (badge: 2)
+ *   4. Planner
+ *   5. AI
+ *   6. Docs
+ *   7. Dashboards
+ *   8. Whiteboards
+ *   9. Timesheets
+ *  10. More
+ *  11. Invite (bottom)
+ *  12. (Avatar bottom)
+ */
+
+:root {
+  /* ── Accent (ClickUp teal/green workspace avatar) ─────────── */
+  --cu-accent:          #4ecdc4;
+  --cu-accent-dark:     #3db8b0;
+  --cu-accent-light:    #d4f5f3;
+  --cu-accent-subtle:   rgba(78, 205, 196, 0.16);
+
+  /* ── Light theme: main grey scale ──────────────────────────── */
+  --cu-grey-50:   rgb(255, 255, 255);   /* white */
+  --cu-grey-100:  rgb(249, 249, 249);   /* topbar + sidebar bg */
+  --cu-grey-200:  rgb(244, 244, 244);   /* hover on light bg */
+  --cu-grey-300:  rgb(232, 232, 232);   /* sidebar border-right */
+  --cu-grey-400:  rgb(210, 210, 210);   /* disabled borders */
+  --cu-grey-500:  rgb(180, 180, 180);   /* muted borders */
+  --cu-grey-600:  rgb(130, 130, 130);   /* muted text */
+  --cu-grey-700:  rgb(80, 80, 80);      /* secondary text */
+  --cu-grey-800:  rgb(50, 50, 50);      /* primary text */
+  --cu-grey-900:  rgb(32, 32, 32);      /* darkest text (measured) */
+
+  /* ── Icon bar dark palette (measured from live clone) ───────── */
+  --cu-iconbar-bg:       rgb(0, 0, 0);
+  --cu-iconbar-text:     rgb(255, 255, 255);
+  --cu-iconbar-muted:    rgba(255, 255, 255, 0.55);
+  --cu-iconbar-hover:    rgba(255, 255, 255, 0.10);
+  --cu-iconbar-active:   rgba(255, 255, 255, 0.18);
+
+  /* ── Semantic backgrounds ─────────────────────────────────── */
+  --cu-bg-app:        var(--cu-grey-50);     /* main content area: white */
+  --cu-bg-topbar:     var(--cu-grey-50);     /* topbar: white */
+  --cu-bg-sidebar:    var(--cu-grey-100);    /* sidebar: rgb(249,249,249) */
+  --cu-bg-menu:       var(--cu-grey-50);     /* dropdowns */
+  --cu-bg-hover:      var(--cu-grey-200);    /* hover on light surfaces */
+  --cu-bg-active:     var(--cu-grey-200);    /* active on light surfaces */
+  --cu-bg-strong:     var(--cu-grey-200);    /* elevated surfaces */
+  --cu-bg-tooltip:    var(--cu-grey-800);    /* tooltip background */
+  --cu-bg-input:      var(--cu-grey-50);     /* input background */
+
+  /* ── Semantic text (light theme) ─────────────────────────── */
+  --cu-text-primary:   var(--cu-grey-900);   /* rgb(32,32,32) - main text */
+  --cu-text-secondary: var(--cu-grey-700);   /* secondary */
+  --cu-text-muted:     var(--cu-grey-600);   /* muted/placeholder */
+  --cu-text-disabled:  var(--cu-grey-500);   /* disabled */
+
+  /* ── Borders (light theme) ────────────────────────────────── */
+  --cu-border:         var(--cu-grey-300);   /* sidebar border: rgb(232,232,232) */
+  --cu-border-subtle:  var(--cu-grey-400);
+  --cu-border-strong:  var(--cu-grey-500);
+  --cu-border-divider: var(--cu-grey-300);   /* dividers: rgb(232,232,232) */
+
+  /* ── Layout ───────────────────────────────────────────────── */
+  --cu-icon-bar-width: 64px;
+  --cu-sidebar-width:  256px;
+  --cu-topbar-height:  40px;
+
+  /* ── Typography ───────────────────────────────────────────── */
+  --cu-font: -apple-system, "system-ui", "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --cu-font-size-xs:   10px;
+  --cu-font-size-sm:   11px;
+  --cu-font-size-base: 13px;
+  --cu-font-size-md:   14px;
+  --cu-font-size-lg:   16px;
+  --cu-font-size-xl:   18px;
+  --cu-font-size-2xl:  22px;
+
+  /* ── Radius ───────────────────────────────────────────────── */
+  --cu-radius-sm:  4px;
+  --cu-radius-md:  6px;
+  --cu-radius-lg:  8px;
+  --cu-radius-xl:  12px;
+  --cu-radius-full: 9999px;
+
+  /* ── Shadows ──────────────────────────────────────────────── */
+  --cu-shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.1);
+  --cu-shadow-md:  0 4px 12px rgba(0, 0, 0, 0.12);
+  --cu-shadow-lg:  0 8px 24px rgba(0, 0, 0, 0.16);
+
+  /* ── Status colours ───────────────────────────────────────── */
+  --cu-status-red:    rgb(210, 30, 36);
+  --cu-status-green:  rgb(44, 140, 94);
+  --cu-status-yellow: rgb(255, 203, 71);
+  --cu-status-blue:   rgb(18, 118, 226);
+  --cu-status-purple: rgb(92, 71, 205);
+}
+
+/*
+ * ── DARK THEME ─────────────────────────────────────────────────────
+ * Sampled from docs/research/clickup-dark/oracle-dark-listview-project1.png
+ * (real ClickUp dark mode, 3022×1644 retina capture, 2026-06-01).
+ *
+ * Measured surface colours:
+ *   main content / panel bg : rgb(17,17,17)  #111111
+ *   sidebar + icon-bar bg   : rgb(25,25,25)  #191919
+ *   top bar bg              : rgb(42,42,42)  #2a2a2a
+ *   hover / row hover       : rgb(42,42,42)  #2a2a2a
+ *   primary text            : rgb(238,238,238) #eeeeee (Add Task pill / titles)
+ *   muted text              : rgb(123,123,123) #7b7b7b
+ *   accent indigo pill bg   : rgb(50,36,129)  #322481 ("Group: Status")
+ *   accent indigo subtle    : rgb(33,27,80)   #211b50
+ *   accent indigo text      : rgb(167,160,249) #a7a0f9
+ *   TO DO grey pill (dark)  : rgb(42,42,42)  #2a2a2a
+ *
+ * Overrides the same --cu-* variable names so any component already wired
+ * to tokens flips automatically. Light values above remain the default,
+ * preserving a future light/dark toggle.
+ */
+:root[data-theme="dark"],
+.dark {
+  /* ── Accent (kept teal for workspace avatar, indigo for grouping pill) ── */
+  --cu-accent:          #4ecdc4;
+  --cu-accent-dark:     #3db8b0;
+  --cu-accent-light:    rgba(78, 205, 196, 0.22);
+  --cu-accent-subtle:   rgba(78, 205, 196, 0.20);
+
+  /* ── Dark grey scale (inverted, sampled) ──────────────────── */
+  --cu-grey-50:   rgb(17, 17, 17);    /* main content bg (darkest surface) */
+  --cu-grey-100:  rgb(25, 25, 25);    /* sidebar + icon-bar bg */
+  --cu-grey-200:  rgb(42, 42, 42);    /* hover / row hover / elevated */
+  --cu-grey-300:  rgb(54, 54, 54);    /* borders / dividers */
+  --cu-grey-400:  rgb(70, 70, 70);    /* subtle borders */
+  --cu-grey-500:  rgb(95, 95, 95);    /* muted borders */
+  --cu-grey-600:  rgb(123, 123, 123); /* muted / placeholder text */
+  --cu-grey-700:  rgb(170, 170, 170); /* secondary text */
+  --cu-grey-800:  rgb(210, 210, 210); /* near-primary text */
+  --cu-grey-900:  rgb(238, 238, 238); /* primary text (lightest) */
+
+  /* ── Icon bar (stays dark; nudged to match the #191919 bar) ── */
+  --cu-iconbar-bg:       rgb(25, 25, 25);
+  --cu-iconbar-text:     rgb(238, 238, 238);
+  --cu-iconbar-muted:    rgba(255, 255, 255, 0.55);
+  --cu-iconbar-hover:    rgba(255, 255, 255, 0.10);
+  --cu-iconbar-active:   rgba(255, 255, 255, 0.18);
+
+  /* ── Semantic backgrounds ─────────────────────────────────── */
+  --cu-bg-app:        var(--cu-grey-50);    /* #111111 */
+  --cu-bg-topbar:     rgb(42, 42, 42);      /* #2a2a2a */
+  --cu-bg-sidebar:    var(--cu-grey-100);   /* #191919 */
+  --cu-bg-menu:       rgb(34, 34, 34);      /* dropdown surface, slightly raised */
+  --cu-bg-hover:      var(--cu-grey-200);   /* #2a2a2a */
+  --cu-bg-active:     var(--cu-grey-200);
+  --cu-bg-strong:     var(--cu-grey-200);   /* elevated surfaces */
+  --cu-bg-tooltip:    rgb(58, 58, 58);
+  --cu-bg-input:      rgb(34, 34, 34);
+
+  /* ── Semantic text ─────────────────────────────────────────── */
+  --cu-text-primary:   var(--cu-grey-900);  /* #eeeeee */
+  --cu-text-secondary: var(--cu-grey-700);  /* #aaaaaa */
+  --cu-text-muted:     var(--cu-grey-600);  /* #7b7b7b */
+  --cu-text-disabled:  var(--cu-grey-500);
+
+  /* ── Borders ───────────────────────────────────────────────── */
+  --cu-border:         var(--cu-grey-300);
+  --cu-border-subtle:  var(--cu-grey-400);
+  --cu-border-strong:  var(--cu-grey-500);
+  --cu-border-divider: var(--cu-grey-300);
+
+  /* ── Shadows (deepen for dark surfaces) ────────────────────── */
+  --cu-shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.5);
+  --cu-shadow-md:  0 4px 12px rgba(0, 0, 0, 0.55);
+  --cu-shadow-lg:  0 8px 24px rgba(0, 0, 0, 0.6);
+
+  /* ── Indigo grouping accent (sampled from "Group: Status" pill) ── */
+  --cu-indigo:         rgb(50, 36, 129);    /* #322481 pill bg */
+  --cu-indigo-subtle:  rgb(33, 27, 80);     /* #211b50 */
+  --cu-indigo-text:    rgb(167, 160, 249);  /* #a7a0f9 */
+}
