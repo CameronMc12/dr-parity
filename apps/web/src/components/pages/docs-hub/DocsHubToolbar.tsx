@@ -7,6 +7,8 @@ const TEXT = 'var(--cu-text-primary, rgb(32,32,32))';
 const SECONDARY = 'var(--cu-text-secondary, rgb(90,90,90))';
 const BORDER = 'var(--cu-border-divider, rgb(232,232,232))';
 const HOVER = 'var(--cu-bg-hover, rgb(244,244,244))';
+const SOLID_BTN_BG = 'var(--cu-text-primary, rgb(48,48,48))';
+const SOLID_BTN_FG = 'var(--cu-bg-app, #fff)';
 
 function ImportButton() {
   return (
@@ -51,11 +53,11 @@ function NewDocButton({ onNewDoc }: { onNewDoc?: () => void }) {
         gap: 6,
         height: 32,
         padding: '0 8px 0 12px',
-        background: 'rgb(48,48,48)',
+        background: SOLID_BTN_BG,
         border: 'none',
         borderRadius: 6,
         cursor: 'pointer',
-        color: '#fff',
+        color: SOLID_BTN_FG,
         fontSize: 13,
         fontWeight: 600,
         fontFamily: 'inherit',

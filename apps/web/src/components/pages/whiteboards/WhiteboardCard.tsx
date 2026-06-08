@@ -5,9 +5,9 @@ import { BORDER, TEXT_PRIMARY, TEXT_MUTED } from '../page-primitives';
 import { WhiteboardThumbnail } from './WhiteboardThumbnail';
 import type { Whiteboard } from '@/data/whiteboards-seed';
 
-const CARD_BG = 'rgb(255, 255, 255)';
+const CARD_BG = 'var(--cu-bg-menu)';
 const REST_SHADOW = 'none';
-const HOVER_SHADOW = '0 6px 18px rgba(20, 24, 40, 0.10)';
+const HOVER_SHADOW = '0 6px 18px rgba(0, 0, 0, 0.30)';
 
 export function WhiteboardCard({ board }: { board: Whiteboard }) {
   const [hovered, setHovered] = useState(false);
@@ -21,7 +21,7 @@ export function WhiteboardCard({ board }: { board: Whiteboard }) {
         display: 'flex',
         flexDirection: 'column',
         borderRadius: 10,
-        border: `1px solid ${hovered ? 'rgb(214, 214, 218)' : BORDER}`,
+        border: `1px solid ${hovered ? 'var(--cu-border-strong)' : BORDER}`,
         background: CARD_BG,
         cursor: 'pointer',
         overflow: 'hidden',

@@ -13,8 +13,8 @@ import type { StatusSlice, AssigneeSlice } from '../dashboard/dashboard-data';
 import type { Task } from '@/store/workspace/types';
 import type { WidgetKind } from '@/data/dashboards-seed';
 
-const CARD_BG = 'rgb(255, 255, 255)';
-const TRACK = 'rgb(238, 240, 243)';
+const CARD_BG = 'var(--cu-bg-menu, rgb(255, 255, 255))';
+const TRACK = 'var(--cu-bg-hover, rgb(238, 240, 243))';
 
 function WidgetCard({
   title,

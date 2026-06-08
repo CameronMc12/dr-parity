@@ -17,7 +17,7 @@ import {
 } from './whiteboard-icons';
 import { WHITEBOARDS } from '@/data/whiteboards-seed';
 
-const CTA_BG = 'rgb(36, 36, 36)';
+const CTA_BG = 'var(--cu-text-primary)';
 
 const TEMPLATES = [
   { illo: <OrgChartIllo />, title: 'Organizational Chart', description: 'Visualize your team structure' },
@@ -56,7 +56,7 @@ export function WhiteboardsPage() {
                 border: 'none',
                 borderRadius: 7,
                 cursor: 'pointer',
-                color: 'white',
+                color: 'var(--cu-bg-app)',
                 fontSize: 13,
                 fontWeight: 600,
               }}
@@ -153,7 +153,7 @@ function toggleBtn(active: boolean): CSSProperties {
     justifyContent: 'center',
     width: 34,
     height: '100%',
-    background: active ? 'rgb(240, 240, 242)' : 'transparent',
+    background: active ? 'var(--cu-bg-active)' : 'transparent',
     border: 'none',
     cursor: 'pointer',
     color: active ? TEXT_PRIMARY : TEXT_MUTED,

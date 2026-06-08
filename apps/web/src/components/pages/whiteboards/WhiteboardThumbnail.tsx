@@ -1,7 +1,7 @@
 import { WhiteboardGlyph } from './whiteboard-icons';
 
-const PANEL_BG = 'rgb(250, 250, 250)';
-const PLACEHOLDER = 'rgb(208, 210, 214)';
+const PANEL_BG = 'var(--cu-bg-hover)';
+const PLACEHOLDER = 'var(--cu-border-strong)';
 
 /**
  * Empty whiteboard thumbnail. Matches real ClickUp: a flat light panel with a

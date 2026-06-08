@@ -92,7 +92,7 @@ export function DashboardDetail({
         />
       </header>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20, background: 'rgb(249, 250, 251)' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20, background: 'var(--cu-bg-app, rgb(249, 250, 251))' }}>
         {filterActive && (
           <div style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 14 }}>
             Showing {metrics.total} filtered {metrics.total === 1 ? 'task' : 'tasks'}.

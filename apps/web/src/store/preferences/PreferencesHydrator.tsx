@@ -29,7 +29,11 @@ function applyAppearance(): void {
   if (typeof document === 'undefined') return;
   const { appearance } = usePreferencesStore.getState();
   const root = document.documentElement;
-  root.setAttribute('data-parity-theme', resolveTheme(appearance.theme));
+  const resolved = resolveTheme(appearance.theme);
+  root.setAttribute('data-parity-theme', resolved);
+  // tokens.css keys the dark palette on [data-theme="dark"]; keep both in sync.
+  root.setAttribute('data-theme', resolved);
+  root.style.colorScheme = resolved;
   root.setAttribute('data-parity-density', appearance.sidebarDensity);
 }
 

@@ -16,11 +16,16 @@ import {
 } from './ai-icons';
 import { AI_SUGGESTION_CARDS } from '@/data/ai-seed';
 
-const TEXT_PRIMARY = 'rgb(29, 31, 38)';
-const TEXT_MUTED = 'rgb(110, 116, 128)';
-const PLACEHOLDER = 'rgb(140, 146, 158)';
-const CARD_BORDER = 'rgb(229, 231, 235)';
-const ICON_BTN_HOVER = 'rgb(240, 241, 244)';
+const TEXT_PRIMARY = 'var(--cu-text-primary)';
+const TEXT_MUTED = 'var(--cu-text-muted)';
+const PLACEHOLDER = 'var(--cu-text-muted)';
+const CARD_BORDER = 'var(--cu-border-divider)';
+const ICON_BTN_HOVER = 'var(--cu-bg-hover)';
+const SURFACE = 'var(--cu-bg-menu)';
+const TAB_TRACK_BG = 'var(--cu-bg-input)';
+const SEND_DISABLED_BG = 'var(--cu-bg-strong)';
+const SEND_DISABLED_FG = 'var(--cu-text-disabled)';
+const CARD_BORDER_HOVER = 'var(--cu-border-subtle)';
 
 type Tab = 'ask' | 'agents';
 
@@ -122,7 +127,7 @@ function TabToggle({ tab, onSelect }: { tab: Tab; onSelect: (t: Tab) => void }) 
         gap: 2,
         padding: 3,
         marginBottom: 14,
-        background: 'rgb(238, 240, 243)',
+        background: TAB_TRACK_BG,
         borderRadius: 12,
       }}
     >
@@ -161,10 +166,10 @@ function TabButton({
         gap: 6,
         height: 28,
         padding: '0 14px',
-        background: selected ? '#fff' : 'transparent',
+        background: selected ? SURFACE : 'transparent',
         border: 'none',
         borderRadius: 9,
-        boxShadow: selected ? '0 1px 2px rgba(0,0,0,0.10)' : 'none',
+        boxShadow: selected ? '0 1px 2px rgba(0,0,0,0.35)' : 'none',
         cursor: 'pointer',
         color: selected ? TEXT_PRIMARY : TEXT_MUTED,
         fontSize: 13,
@@ -194,7 +199,7 @@ function PromptBox({
       style={{
         position: 'relative',
         width: '100%',
-        background: '#fff',
+        background: SURFACE,
         border: `1px solid ${CARD_BORDER}`,
         borderRadius: 18,
         boxShadow:
@@ -285,8 +290,8 @@ function PromptBox({
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
-            background: canSend ? TEXT_PRIMARY : 'rgb(228, 230, 234)',
-            color: canSend ? '#fff' : 'rgb(150, 155, 165)',
+            background: canSend ? TEXT_PRIMARY : SEND_DISABLED_BG,
+            color: canSend ? 'var(--cu-bg-app)' : SEND_DISABLED_FG,
             border: 'none',
             borderRadius: '50%',
             cursor: canSend ? 'pointer' : 'default',
@@ -310,10 +315,10 @@ function ModelMenu({ onClose }: { onClose: () => void }) {
         bottom: 'calc(100% + 6px)',
         left: 0,
         minWidth: 160,
-        background: '#fff',
+        background: SURFACE,
         border: `1px solid ${CARD_BORDER}`,
         borderRadius: 10,
-        boxShadow: '0 8px 28px rgba(0,0,0,0.14)',
+        boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
         padding: 4,
         zIndex: 10,
       }}
@@ -394,7 +399,7 @@ function SuggestionCard({
     flexDirection: 'column',
     gap: 14,
     padding: '12px 13px',
-    background: '#fff',
+    background: SURFACE,
     border: `1px solid ${CARD_BORDER}`,
     borderRadius: 10,
     cursor: 'pointer',
@@ -409,8 +414,8 @@ function SuggestionCard({
       style={base}
       onMouseEnter={(e) => {
         const el = e.currentTarget as HTMLButtonElement;
-        el.style.borderColor = 'rgb(205, 208, 214)';
-        el.style.boxShadow = '0 2px 10px rgba(0,0,0,0.05)';
+        el.style.borderColor = CARD_BORDER_HOVER;
+        el.style.boxShadow = '0 2px 10px rgba(0,0,0,0.35)';
       }}
       onMouseLeave={(e) => {
         const el = e.currentTarget as HTMLButtonElement;

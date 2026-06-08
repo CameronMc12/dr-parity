@@ -9,10 +9,9 @@
  * (+ · globe · scope chip · send). Sending a message switches the body to a
  * lightweight local chat transcript with a canned reply. No backend.
  *
- * Theme: built against the clone's LIGHT surface tokens so it sits coherently
- * as a docked column. The reference screenshot is dark only because the user
- * runs ClickUp in dark mode. All colours are centralised in `panelTokens` below
- * so a dark flip is a one-line change later.
+ * Theme: every surface colour is centralised in `panelTokens` below and points
+ * at a design-system `var(--cu-*)` token, so the panel follows the active theme
+ * automatically (dark now under [data-theme="dark"], light if flipped back).
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -37,15 +36,17 @@ import {
 } from './icons';
 
 const panelTokens = {
-  PANEL_BG: 'var(--cu-bg-app, #ffffff)',
-  SURFACE: 'var(--cu-bg-menu, #ffffff)',
-  BORDER: 'var(--cu-border-divider, rgb(232,232,232))',
-  TEXT_PRIMARY: 'var(--cu-text-primary, rgb(32,32,32))',
-  TEXT_MUTED: 'var(--cu-text-muted, rgb(130,130,130))',
-  TEXT_FAINT: 'var(--cu-text-placeholder, rgb(160,160,160))',
-  HOVER_BG: 'var(--cu-bg-hover, rgb(244,244,244))',
-  INPUT_BG: 'var(--cu-bg-input, #f7f7f7)',
-  ACCENT: 'var(--cu-accent, #4ecdc4)',
+  PANEL_BG: 'var(--cu-bg-app)',
+  SURFACE: 'var(--cu-bg-menu)',
+  BORDER: 'var(--cu-border-divider)',
+  TEXT_PRIMARY: 'var(--cu-text-primary)',
+  TEXT_MUTED: 'var(--cu-text-muted)',
+  TEXT_FAINT: 'var(--cu-text-disabled)',
+  HOVER_BG: 'var(--cu-bg-hover)',
+  INPUT_BG: 'var(--cu-bg-input)',
+  ACCENT: 'var(--cu-accent)',
+  ON_ACCENT: 'var(--cu-bg-app)',
+  SEND_DISABLED: 'var(--cu-border-strong)',
 };
 
 const {
@@ -58,6 +59,8 @@ const {
   HOVER_BG,
   INPUT_BG,
   ACCENT,
+  ON_ACCENT,
+  SEND_DISABLED,
 } = panelTokens;
 
 const PANEL_WIDTH = 360;
@@ -493,7 +496,7 @@ function FeatureCard({ feature, onClick }: { feature: Feature; onClick: () => vo
               letterSpacing: 0.2,
               padding: '1px 6px',
               borderRadius: 999,
-              background: 'var(--cu-bg-input, #f0f0f0)',
+              background: INPUT_BG,
               color: TEXT_MUTED,
             }}
           >
@@ -545,7 +548,7 @@ function Bubble({ msg }: { msg: ChatMessage }) {
           fontSize: 13,
           lineHeight: 1.45,
           background: isUser ? ACCENT : INPUT_BG,
-          color: isUser ? '#fff' : TEXT_PRIMARY,
+          color: isUser ? ON_ACCENT : TEXT_PRIMARY,
           borderBottomRightRadius: isUser ? 4 : 12,
           borderBottomLeftRadius: isUser ? 12 : 4,
         }}
@@ -664,8 +667,8 @@ function Composer({
               justifyContent: 'center',
               borderRadius: '50%',
               border: 'none',
-              background: canSend ? ACCENT : 'var(--cu-border-strong, #d8d8d8)',
-              color: '#fff',
+              background: canSend ? ACCENT : SEND_DISABLED,
+              color: ON_ACCENT,
               cursor: canSend ? 'pointer' : 'default',
               flexShrink: 0,
               marginLeft: 2,

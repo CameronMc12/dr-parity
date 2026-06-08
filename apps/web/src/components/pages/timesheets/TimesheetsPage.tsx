@@ -773,7 +773,7 @@ function TimeCell({
             fontSize: 13,
             fontVariantNumeric: 'tabular-nums',
             color: TEXT_PRIMARY,
-            background: APP_BG,
+            background: 'var(--cu-bg-input, rgb(255,255,255))',
             border: `1.5px solid ${error ? 'rgb(199,67,67)' : 'rgb(34,113,177)'}`,
             borderRadius: 5,
             outline: 'none',
