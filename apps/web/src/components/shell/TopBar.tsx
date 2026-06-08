@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { SearchIcon, ChevronDownIcon } from '@/components/ui/Icons';
 import { useUiStore } from '@/store/ui-store';
-import { SearchCommandPalette } from '@/components/shell/sidebars/SearchSidebar';
+import { CommandPalette } from '@/lib/search';
 import { UserMenu } from '@/components/shell/UserMenu';
 
 /**
@@ -399,7 +399,7 @@ export function TopBar() {
         </div>
       </div>
 
-      <SearchCommandPalette />
+      <CommandPalette />
     </header>
   );
 }
