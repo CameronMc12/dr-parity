@@ -43,6 +43,13 @@ interface UiState {
   openSearch: (query?: string) => void;
   closeSearch: () => void;
   setSearchQuery: (query: string) => void;
+
+  /** Whether the right-docked Brain / Max AI assistant panel is open. */
+  aiPanelOpen: boolean;
+  /** Context label for the AI panel (a space/project name), or null when generic. */
+  aiPanelScope: string | null;
+  openAiPanel: (scope?: string) => void;
+  closeAiPanel: () => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -89,4 +96,9 @@ export const useUiStore = create<UiState>((set) => ({
   openSearch: (query) => set({ searchOpen: true, searchQuery: query ?? '' }),
   closeSearch: () => set({ searchOpen: false, searchQuery: '' }),
   setSearchQuery: (query) => set({ searchQuery: query }),
+
+  aiPanelOpen: false,
+  aiPanelScope: null,
+  openAiPanel: (scope) => set({ aiPanelOpen: true, aiPanelScope: scope ?? null }),
+  closeAiPanel: () => set({ aiPanelOpen: false }),
 }));

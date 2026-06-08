@@ -57,7 +57,7 @@ export function ProjectActions({
       <span style={{ width: 1, height: 18, background: 'var(--cu-border-divider, #e8e8e8)', margin: '0 4px' }} />
       <CallPopover />
       <AutomationsPanel viewId={viewId} />
-      <AskPanel viewId={viewId} projectName={projectName} />
+      <AskPanel projectName={projectName} />
       <SharePanel projectName={projectName} />
       <span style={{ width: 1, height: 18, background: 'var(--cu-border-divider, #e8e8e8)', margin: '0 2px 0 4px' }} />
       <PresencePopover />

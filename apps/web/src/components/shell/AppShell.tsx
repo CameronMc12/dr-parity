@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { AiAssistantPanel } from '@/components/ai-panel/AiAssistantPanel';
 import { CreateTaskModal } from '@/components/create/CreateTaskModal';
 import { InviteModal } from '@/components/invite/InviteModal';
 import { SettingsModal } from '@/components/pages/settings/SettingsModal';
@@ -153,6 +154,9 @@ export function AppShell({
                       <NotificationsBanner />
                       {children}
                     </main>
+
+                    {/* Right-docked Brain / Max AI panel — shrinks main when open */}
+                    <AiAssistantPanel />
                   </div>
                 </div>
               </div>

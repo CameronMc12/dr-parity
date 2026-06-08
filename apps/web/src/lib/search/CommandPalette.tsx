@@ -120,6 +120,7 @@ export function CommandPalette() {
   const openSearch = useUiStore((s) => s.openSearch);
   const closeSearch = useUiStore((s) => s.closeSearch);
   const openTask = useUiStore((s) => s.openTask);
+  const openAiPanel = useUiStore((s) => s.openAiPanel);
 
   const router = useRouter();
   const pathname = usePathname();
@@ -243,8 +244,8 @@ export function CommandPalette() {
 
   const askAi = useCallback(() => {
     closeSearch();
-    router.push(`/${wsId}/ai`);
-  }, [closeSearch, router, wsId]);
+    openAiPanel();
+  }, [closeSearch, openAiPanel]);
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
