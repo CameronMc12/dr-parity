@@ -1,144 +1,109 @@
 'use client';
 
 import { useState, type CSSProperties, type FormEvent } from 'react';
-import { PageSurface, TEXT_PRIMARY, TEXT_MUTED, TEXT_SECONDARY, BORDER, HOVER_BG } from '../page-primitives';
+import { PageSurface } from '../page-primitives';
 import {
-  AI_ACCENT,
-  SparkleIcon,
-  ArrowUpIcon,
-  QuickActionGlyph,
-  SuggestionGlyph,
+  STROKE,
+  BrainFlower,
+  BrainWordmark,
+  PlusIcon,
+  ChevronDown,
+  GlobeIcon,
+  SendIcon,
+  AgentIcon,
+  HistoryIcon,
+  SuggestionCardGlyph,
 } from './ai-icons';
-import {
-  AI_GREETING,
-  AI_QUICK_ACTIONS,
-  AI_SUGGESTIONS,
-  AI_THREADS,
-  type AiThread,
-} from '@/data/ai-seed';
+import { AI_SUGGESTION_CARDS } from '@/data/ai-seed';
 
-const ACCENT_SOFT = 'rgba(124, 77, 255, 0.08)';
+const TEXT_PRIMARY = 'rgb(29, 31, 38)';
+const TEXT_MUTED = 'rgb(110, 116, 128)';
+const PLACEHOLDER = 'rgb(140, 146, 158)';
+const CARD_BORDER = 'rgb(229, 231, 235)';
+const ICON_BTN_HOVER = 'rgb(240, 241, 244)';
 
-/** A locally-created thread from typing a prompt. Newest first in Recent. */
-type LocalThread = Pick<AiThread, 'id' | 'title' | 'snippet' | 'timestamp'>;
+type Tab = 'ask' | 'agents';
 
 /**
- * AI hub: /<wsId>/ai. ClickUp Brain landing — centered greeting, "Ask or find
- * anything" prompt, quick-action chips, suggestion cards, and a live Recent
- * list that grows as the user submits prompts (purely local state).
+ * ClickUp Brain hub: /<wsId>/ai/brain. A centered "Brain™" hero over a large
+ * rounded prompt box (Ask | Agents toggle, + / model selector / globe / send),
+ * with four suggestion cards beneath. Mirrors the real Brain landing 1:1.
  */
 export function AiHub() {
   const [prompt, setPrompt] = useState('');
-  const [threads, setThreads] = useState<LocalThread[]>([]);
-
-  const submit = (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    setThreads((prev) => [
-      {
-        id: `local-${Date.now()}`,
-        title: trimmed.length > 48 ? `${trimmed.slice(0, 48)}…` : trimmed,
-        snippet: 'Drafting a response…',
-        timestamp: 'Just now',
-      },
-      ...prev,
-    ]);
-    setPrompt('');
-  };
+  const [tab, setTab] = useState<Tab>('ask');
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    submit(prompt);
+    setPrompt('');
   };
-
-  const recents: LocalThread[] = [
-    ...threads,
-    ...AI_THREADS.filter((t) => t.group !== 'pinned').map((t) => ({
-      id: t.id,
-      title: t.title,
-      snippet: t.snippet,
-      timestamp: t.timestamp,
-    })),
-  ];
 
   return (
     <PageSurface>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+      <div style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'auto' }}>
+        {/* Soft top gradient band */}
         <div
           style={{
-            maxWidth: 760,
+            position: 'absolute',
+            inset: '0 0 auto 0',
+            height: 140,
+            background:
+              'linear-gradient(180deg, rgba(255, 214, 165, 0.45) 0%, rgba(255, 196, 222, 0.34) 22%, rgba(206, 200, 255, 0.30) 44%, rgba(189, 224, 255, 0.22) 64%, rgba(255, 255, 255, 0) 100%)',
+            pointerEvents: 'none',
+          }}
+        />
+
+        {/* History button, top-right */}
+        <div style={{ position: 'absolute', top: 14, right: 18, zIndex: 2 }}>
+          <IconButton ariaLabel="Chat history">
+            <HistoryIcon size={18} />
+          </IconButton>
+        </div>
+
+        <div
+          style={{
+            position: 'relative',
+            zIndex: 1,
+            maxWidth: 640,
             margin: '0 auto',
-            padding: '56px 24px 64px',
+            padding: '150px 24px 64px',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
           }}
         >
-          {/* Hero */}
-          <span style={{ display: 'flex' }}>
-            <SparkleIcon size={34} />
-          </span>
-          <h1 style={{ fontSize: 28, fontWeight: 600, color: TEXT_PRIMARY, margin: '14px 0 0', textAlign: 'center' }}>
-            {AI_GREETING}
-          </h1>
-          <p style={{ fontSize: 15, color: TEXT_MUTED, margin: '6px 0 28px', textAlign: 'center' }}>
-            Ask Brain to summarize work, draft updates, and generate tasks.
-          </p>
-
-          {/* Prompt input */}
-          <PromptInput value={prompt} onChange={setPrompt} onSubmit={onSubmit} />
-
-          {/* Quick-action chips */}
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-              gap: 8,
-              marginTop: 16,
-            }}
-          >
-            {AI_QUICK_ACTIONS.map((action) => (
-              <QuickChip key={action.id} label={action.label} onClick={() => setPrompt(`${action.label}: `)}>
-                <span style={{ color: AI_ACCENT, display: 'flex' }}>
-                  <QuickActionGlyph glyph={action.glyph} />
-                </span>
-              </QuickChip>
-            ))}
+          {/* Hero brand */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 28 }}>
+            <BrainFlower size={48} />
+            <BrainWordmark height={32} />
           </div>
+
+          {/* Ask | Agents pill toggle */}
+          <TabToggle tab={tab} onSelect={setTab} />
+
+          {/* Prompt box */}
+          <PromptBox value={prompt} onChange={setPrompt} onSubmit={onSubmit} />
 
           {/* Suggestion cards */}
           <div
             style={{
               width: '100%',
-              marginTop: 40,
+              marginTop: 22,
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(232px, 1fr))',
-              gap: 12,
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: 8,
             }}
           >
-            {AI_SUGGESTIONS.map((s) => (
+            {AI_SUGGESTION_CARDS.map((c) => (
               <SuggestionCard
-                key={s.id}
-                title={s.title}
-                description={s.description}
-                onClick={() => submit(s.title)}
+                key={c.id}
+                title={c.title}
+                description={c.description}
+                onClick={() => setPrompt(`${c.title}: `)}
               >
-                <SuggestionGlyph glyph={s.glyph} />
+                <SuggestionCardGlyph glyph={c.glyph} />
               </SuggestionCard>
             ))}
-          </div>
-
-          {/* Recent */}
-          <div style={{ width: '100%', marginTop: 44 }}>
-            <h2 style={{ fontSize: 13, fontWeight: 600, color: TEXT_MUTED, margin: '0 0 8px', letterSpacing: 0.2 }}>
-              Recent
-            </h2>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {recents.map((t) => (
-                <RecentRow key={t.id} thread={t} />
-              ))}
-            </div>
           </div>
         </div>
       </div>
@@ -146,7 +111,73 @@ export function AiHub() {
   );
 }
 
-function PromptInput({
+function TabToggle({ tab, onSelect }: { tab: Tab; onSelect: (t: Tab) => void }) {
+  return (
+    <div
+      role="tablist"
+      aria-label="AI mode selection"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 2,
+        padding: 3,
+        marginBottom: 14,
+        background: 'rgb(238, 240, 243)',
+        borderRadius: 12,
+      }}
+    >
+      <TabButton selected={tab === 'ask'} onClick={() => onSelect('ask')}>
+        <BrainFlower size={15} />
+        Ask
+      </TabButton>
+      <TabButton selected={tab === 'agents'} onClick={() => onSelect('agents')}>
+        <span style={{ color: tab === 'agents' ? TEXT_PRIMARY : TEXT_MUTED, display: 'flex' }}>
+          <AgentIcon size={15} />
+        </span>
+        Agents
+      </TabButton>
+    </div>
+  );
+}
+
+function TabButton({
+  selected,
+  onClick,
+  children,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        height: 28,
+        padding: '0 14px',
+        background: selected ? '#fff' : 'transparent',
+        border: 'none',
+        borderRadius: 9,
+        boxShadow: selected ? '0 1px 2px rgba(0,0,0,0.10)' : 'none',
+        cursor: 'pointer',
+        color: selected ? TEXT_PRIMARY : TEXT_MUTED,
+        fontSize: 13,
+        fontWeight: 600,
+        fontFamily: 'inherit',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function PromptBox({
   value,
   onChange,
   onSubmit,
@@ -155,118 +186,194 @@ function PromptInput({
   onChange: (v: string) => void;
   onSubmit: (e: FormEvent) => void;
 }) {
-  const [focused, setFocused] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
+  const canSend = value.trim().length > 0;
   return (
     <form
       onSubmit={onSubmit}
       style={{
+        position: 'relative',
         width: '100%',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        height: 56,
-        padding: '0 8px 0 16px',
-        background: 'var(--cu-bg-app, rgb(255, 255, 255))',
-        border: `1.5px solid ${focused ? AI_ACCENT : BORDER}`,
-        borderRadius: 28,
-        boxShadow: focused ? '0 0 0 4px rgba(124, 77, 255, 0.12)' : '0 1px 3px rgba(0,0,0,0.04)',
-        transition: 'border-color 120ms ease, box-shadow 120ms ease',
-        boxSizing: 'border-box',
+        background: '#fff',
+        border: `1px solid ${CARD_BORDER}`,
+        borderRadius: 18,
+        boxShadow:
+          '0 0 0 6px rgba(255, 213, 196, 0.30), 0 0 36px 10px rgba(255, 200, 224, 0.22), 0 6px 22px rgba(120, 100, 160, 0.10)',
       }}
     >
-      <span style={{ display: 'flex', flexShrink: 0 }}>
-        <SparkleIcon size={20} />
-      </span>
-      <input
+      <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        placeholder="Ask or find anything…"
-        aria-label="Ask AI"
+        placeholder="Get instant answers, insights, and ideas."
+        aria-label="Ask Brain"
+        rows={2}
         style={{
-          flex: 1,
-          minWidth: 0,
-          height: '100%',
+          width: '100%',
+          resize: 'none',
           background: 'transparent',
           border: 'none',
           outline: 'none',
+          padding: '16px 18px 4px',
           color: TEXT_PRIMARY,
           fontSize: 15,
+          lineHeight: '22px',
           fontFamily: 'inherit',
+          boxSizing: 'border-box',
         }}
       />
-      <button
-        type="submit"
-        aria-label="Submit prompt"
-        disabled={!value.trim()}
+      <style>{`textarea::placeholder { color: ${PLACEHOLDER}; }`}</style>
+
+      {/* Bottom toolbar */}
+      <div
         style={{
-          width: 40,
-          height: 40,
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          background: value.trim() ? AI_ACCENT : 'var(--cu-bg-hover, rgb(238, 238, 238))',
-          color: value.trim() ? '#fff' : TEXT_MUTED,
-          border: 'none',
-          borderRadius: '50%',
-          cursor: value.trim() ? 'pointer' : 'default',
-          transition: 'background 120ms ease, transform 120ms ease',
-        }}
-        onMouseEnter={(e) => {
-          if (value.trim()) (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.06)';
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)';
+          gap: 6,
+          padding: '8px 12px 12px',
         }}
       >
-        <ArrowUpIcon size={18} />
-      </button>
+        <IconButton ariaLabel="Add attachment">
+          <PlusIcon size={18} />
+        </IconButton>
+        <span style={{ width: 1, height: 18, background: CARD_BORDER, margin: '0 2px' }} />
+
+        {/* Model selector */}
+        <div style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setModelOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={modelOpen}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 28,
+              padding: '0 6px 0 4px',
+              background: modelOpen ? ICON_BTN_HOVER : 'transparent',
+              border: 'none',
+              borderRadius: 7,
+              cursor: 'pointer',
+              color: TEXT_PRIMARY,
+              fontSize: 13,
+              fontWeight: 600,
+              fontFamily: 'inherit',
+            }}
+          >
+            <BrainFlower size={16} />
+            Max
+            <span style={{ color: TEXT_MUTED, display: 'flex' }}>
+              <ChevronDown size={13} />
+            </span>
+          </button>
+          {modelOpen && <ModelMenu onClose={() => setModelOpen(false)} />}
+        </div>
+
+        <span style={{ flex: 1 }} />
+
+        <IconButton ariaLabel="Search Web">
+          <GlobeIcon size={18} />
+        </IconButton>
+        <button
+          type="submit"
+          aria-label="Send"
+          disabled={!canSend}
+          style={{
+            width: 30,
+            height: 30,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            background: canSend ? TEXT_PRIMARY : 'rgb(228, 230, 234)',
+            color: canSend ? '#fff' : 'rgb(150, 155, 165)',
+            border: 'none',
+            borderRadius: '50%',
+            cursor: canSend ? 'pointer' : 'default',
+            transition: 'background 120ms ease',
+          }}
+        >
+          <SendIcon size={15} />
+        </button>
+      </div>
     </form>
   );
 }
 
-function QuickChip({
-  label,
-  children,
-  onClick,
-}: {
-  label: string;
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
+function ModelMenu({ onClose }: { onClose: () => void }) {
+  const models = ['Max', 'Balanced', 'Fast'];
+  return (
+    <div
+      role="menu"
+      style={{
+        position: 'absolute',
+        bottom: 'calc(100% + 6px)',
+        left: 0,
+        minWidth: 160,
+        background: '#fff',
+        border: `1px solid ${CARD_BORDER}`,
+        borderRadius: 10,
+        boxShadow: '0 8px 28px rgba(0,0,0,0.14)',
+        padding: 4,
+        zIndex: 10,
+      }}
+    >
+      {models.map((m) => (
+        <button
+          key={m}
+          type="button"
+          role="menuitem"
+          onClick={onClose}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            height: 32,
+            padding: '0 8px',
+            background: 'transparent',
+            border: 'none',
+            borderRadius: 6,
+            cursor: 'pointer',
+            color: TEXT_PRIMARY,
+            fontSize: 13,
+            fontFamily: 'inherit',
+            textAlign: 'left',
+          }}
+          onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = ICON_BTN_HOVER)}
+          onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = 'transparent')}
+        >
+          <BrainFlower size={15} />
+          {m}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function IconButton({ children, ariaLabel }: { children: React.ReactNode; ariaLabel: string }) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      aria-label={ariaLabel}
       style={{
-        display: 'inline-flex',
+        width: 30,
+        height: 30,
+        display: 'flex',
         alignItems: 'center',
-        gap: 6,
-        height: 34,
-        padding: '0 14px',
-        background: 'var(--cu-bg-app, rgb(255, 255, 255))',
-        border: `1px solid ${BORDER}`,
-        borderRadius: 18,
+        justifyContent: 'center',
+        flexShrink: 0,
+        background: 'transparent',
+        border: 'none',
+        borderRadius: '50%',
         cursor: 'pointer',
-        color: TEXT_SECONDARY,
-        fontSize: 13,
-        fontWeight: 500,
-        whiteSpace: 'nowrap',
-        transition: 'background 100ms ease, border-color 100ms ease',
+        color: STROKE,
+        transition: 'background 100ms ease',
       }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = ACCENT_SOFT;
-        (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(124, 77, 255, 0.35)';
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = 'var(--cu-bg-app, rgb(255, 255, 255))';
-        (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--cu-border-divider, rgb(232, 232, 232))';
-      }}
+      onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = ICON_BTN_HOVER)}
+      onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = 'transparent')}
     >
       {children}
-      {label}
     </button>
   );
 }
@@ -285,15 +392,15 @@ function SuggestionCard({
   const base: CSSProperties = {
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'flex-start',
-    gap: 10,
-    padding: 16,
-    background: 'var(--cu-bg-app, rgb(255, 255, 255))',
-    border: `1px solid ${BORDER}`,
-    borderRadius: 12,
+    gap: 14,
+    padding: '12px 13px',
+    background: '#fff',
+    border: `1px solid ${CARD_BORDER}`,
+    borderRadius: 10,
     cursor: 'pointer',
     textAlign: 'left',
-    transition: 'transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease',
+    minWidth: 0,
+    transition: 'border-color 120ms ease, box-shadow 120ms ease',
   };
   return (
     <button
@@ -302,98 +409,41 @@ function SuggestionCard({
       style={base}
       onMouseEnter={(e) => {
         const el = e.currentTarget as HTMLButtonElement;
-        el.style.transform = 'translateY(-2px)';
-        el.style.boxShadow = '0 6px 18px rgba(0,0,0,0.08)';
-        el.style.borderColor = 'rgba(124, 77, 255, 0.35)';
+        el.style.borderColor = 'rgb(205, 208, 214)';
+        el.style.boxShadow = '0 2px 10px rgba(0,0,0,0.05)';
       }}
       onMouseLeave={(e) => {
         const el = e.currentTarget as HTMLButtonElement;
-        el.style.transform = 'translateY(0)';
+        el.style.borderColor = CARD_BORDER;
         el.style.boxShadow = 'none';
-        el.style.borderColor = 'var(--cu-border-divider, rgb(232, 232, 232))';
       }}
     >
-      <span
-        style={{
-          width: 34,
-          height: 34,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: 8,
-          background: ACCENT_SOFT,
-          color: AI_ACCENT,
-          flexShrink: 0,
-        }}
-      >
-        {children}
-      </span>
-      <span style={{ fontSize: 14, fontWeight: 600, color: TEXT_PRIMARY }}>{title}</span>
-      <span style={{ fontSize: 12.5, lineHeight: '17px', color: TEXT_MUTED }}>{description}</span>
-    </button>
-  );
-}
-
-function RecentRow({ thread }: { thread: LocalThread }) {
-  return (
-    <button
-      type="button"
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        width: '100%',
-        padding: '10px 12px',
-        background: 'transparent',
-        border: 'none',
-        borderRadius: 8,
-        cursor: 'pointer',
-        textAlign: 'left',
-        transition: 'background 100ms ease',
-      }}
-      onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = HOVER_BG)}
-      onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = 'transparent')}
-    >
-      <span
-        style={{
-          width: 28,
-          height: 28,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: '50%',
-          background: ACCENT_SOFT,
-          flexShrink: 0,
-        }}
-      >
-        <SparkleIcon size={15} />
-      </span>
-      <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <span style={{ color: STROKE, display: 'flex' }}>{children}</span>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
         <span
           style={{
-            fontSize: 13.5,
-            fontWeight: 500,
+            fontSize: 13,
+            fontWeight: 600,
             color: TEXT_PRIMARY,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
         >
-          {thread.title}
+          {title}
         </span>
         <span
           style={{
-            fontSize: 12.5,
+            fontSize: 12,
             color: TEXT_MUTED,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
         >
-          {thread.snippet}
+          {description}
         </span>
       </span>
-      <span style={{ fontSize: 12, color: TEXT_MUTED, flexShrink: 0 }}>{thread.timestamp}</span>
     </button>
   );
 }

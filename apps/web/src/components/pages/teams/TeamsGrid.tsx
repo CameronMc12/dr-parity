@@ -1,137 +1,159 @@
 'use client';
 
-import { MemberAvatar } from '@/components/pages/team/MemberAvatar';
-import { TEAM_SEED, teamMembers, type TeamSeed } from '@/data/teams-seed';
-import { T } from './teams-tokens';
-import { ChevronRightIcon } from './teams-icons';
+import { TEAM_SEED, type TeamSeed } from '@/data/teams-seed';
+import { T, CARD } from './teams-tokens';
 
-const MAX_STACK = 4;
-
-/** Teams tab: responsive grid of team cards with an avatar stack + count. */
+/** "All Teams" gallery: virtualization-style auto-fill grid of team cards. */
 export function TeamsGrid() {
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-        gap: 16,
-        padding: 24,
+        gridTemplateColumns: `repeat(auto-fill, minmax(${CARD.minWidth}px, 1fr))`,
+        gap: 12,
+        padding: 12,
+        alignContent: 'start',
       }}
     >
       {TEAM_SEED.map((team) => (
-        <TeamCard key={team.id} team={team} />
+        <TeamGalleryCard key={team.id} team={team} />
       ))}
     </div>
   );
 }
 
-function TeamCard({ team }: { team: TeamSeed }) {
-  const members = teamMembers(team);
-  const overflow = members.length - MAX_STACK;
+function TeamGalleryCard({ team }: { team: TeamSeed }) {
   return (
     <div
+      tabIndex={0}
       style={{
+        maxWidth: CARD.maxWidth,
+        height: CARD.height,
         display: 'flex',
         flexDirection: 'column',
-        gap: 14,
-        padding: 18,
         background: T.appBg,
         border: `1px solid ${T.border}`,
-        borderRadius: 12,
+        borderRadius: CARD.radius,
+        overflow: 'hidden',
+        cursor: 'pointer',
+        outline: 'none',
         transition: 'box-shadow 120ms ease, border-color 120ms ease',
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLDivElement).style.boxShadow = '0 4px 16px rgba(0,0,0,0.08)';
-        (e.currentTarget as HTMLDivElement).style.borderColor = 'rgba(0,0,0,0.16)';
+        e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.08)';
+        e.currentTarget.style.borderColor = 'rgba(0,0,0,0.14)';
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLDivElement).style.boxShadow = 'none';
-        (e.currentTarget as HTMLDivElement).style.borderColor = T.border;
+        e.currentTarget.style.boxShadow = 'none';
+        e.currentTarget.style.borderColor = T.border;
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-        <span
+      <Cover team={team} />
+      <Content team={team} />
+    </div>
+  );
+}
+
+/** Faint preview header with two skeleton lines + overlapping square avatar. */
+function Cover({ team }: { team: TeamSeed }) {
+  return (
+    <div
+      style={{
+        position: 'relative',
+        height: CARD.coverHeight,
+        background: team.coverBg,
+        flexShrink: 0,
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          top: 26,
+          left: 24,
+          right: 28,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 9,
+        }}
+      >
+        <span style={{ height: 9, width: '46%', borderRadius: 4, background: T.skeleton }} />
+        <span style={{ height: 9, width: '78%', borderRadius: 4, background: T.skeleton }} />
+      </div>
+
+      <span
+        style={{
+          position: 'absolute',
+          left: 14,
+          bottom: -16,
+          width: 32,
+          height: 32,
+          borderRadius: 8,
+          background: team.avatarBg,
+          border: `2px solid ${T.appBg}`,
+          color: '#fff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 14,
+          fontWeight: 600,
+          boxSizing: 'border-box',
+        }}
+      >
+        {team.glyph}
+      </span>
+    </div>
+  );
+}
+
+/** Name + member count on the left, owner avatar on the right. */
+function Content({ team }: { team: TeamSeed }) {
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'flex-end',
+        justifyContent: 'space-between',
+        gap: 8,
+        padding: '0 14px 14px',
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div
           style={{
-            width: 38,
-            height: 38,
-            borderRadius: 9,
-            background: team.color,
-            color: '#fff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 15,
-            fontWeight: 700,
-            flexShrink: 0,
+            fontSize: 13.5,
+            fontWeight: 600,
+            color: T.textPrimary,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
           }}
         >
-          {team.name.slice(0, 1)}
-        </span>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 14.5, fontWeight: 600, color: T.textPrimary }}>{team.name}</div>
-          <div style={{ fontSize: 12.5, color: T.textMuted }}>
-            {members.length} {members.length === 1 ? 'member' : 'members'}
-          </div>
+          {team.name}
+        </div>
+        <div style={{ fontSize: 12, color: T.textMuted, marginTop: 3 }}>
+          {team.memberCount} members
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center' }}>
-        {members.slice(0, MAX_STACK).map((m, i) => (
-          <span
-            key={m.id}
-            style={{
-              marginLeft: i === 0 ? 0 : -8,
-              borderRadius: '50%',
-              border: `2px solid ${T.appBg}`,
-              display: 'inline-flex',
-            }}
-          >
-            <MemberAvatar initials={m.initials} color={m.color} size={28} />
-          </span>
-        ))}
-        {overflow > 0 && (
-          <span
-            style={{
-              marginLeft: -8,
-              width: 28,
-              height: 28,
-              borderRadius: '50%',
-              border: `2px solid ${T.appBg}`,
-              background: T.hoverBg,
-              color: T.textSecondary,
-              fontSize: 11,
-              fontWeight: 600,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            +{overflow}
-          </span>
-        )}
-      </div>
-
-      <button
-        type="button"
+      <span
+        aria-label={team.owner.name}
         style={{
-          display: 'inline-flex',
+          width: 24,
+          height: 24,
+          borderRadius: '50%',
+          background: team.owner.color,
+          color: '#fff',
+          display: 'flex',
           alignItems: 'center',
-          gap: 3,
-          alignSelf: 'flex-start',
-          padding: 0,
-          background: 'transparent',
-          border: 'none',
-          cursor: 'pointer',
-          color: T.textSecondary,
-          fontSize: 13,
+          justifyContent: 'center',
+          fontSize: 10.5,
           fontWeight: 600,
+          flexShrink: 0,
         }}
-        onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = T.textPrimary)}
-        onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = T.textSecondary)}
       >
-        View team
-        <ChevronRightIcon size={13} />
-      </button>
+        {team.owner.initials}
+      </span>
     </div>
   );
 }

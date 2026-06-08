@@ -6,9 +6,19 @@ export const T = {
   textMuted: 'var(--cu-text-muted, rgb(130,130,130))',
   border: 'var(--cu-border-divider, rgb(232,232,232))',
   hoverBg: 'var(--cu-bg-hover, rgb(248,248,248))',
-  menuBg: 'var(--cu-bg-menu, rgb(255,255,255))',
+  activeBg: 'var(--cu-bg-active, rgb(240,240,240))',
   appBg: 'var(--cu-bg-app, rgb(255,255,255))',
-  green: 'rgb(46,182,125)',
+  /** Faint skeleton-bar fill on the card cover. */
+  skeleton: 'rgba(0,0,0,0.07)',
+  /** Solid near-black CTA. */
+  dark: 'var(--cu-text-primary, rgb(24,24,24))',
 } as const;
 
-export const ROW_HEIGHT = 52;
+/** Gallery card geometry, sampled 1:1 from the oracle. */
+export const CARD = {
+  minWidth: 230,
+  maxWidth: 292,
+  height: 224,
+  radius: 12,
+  coverHeight: 130,
+} as const;

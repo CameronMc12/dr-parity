@@ -1,60 +1,39 @@
-import type { WhiteboardPreview } from '@/data/whiteboards-seed';
+import { WhiteboardGlyph } from './whiteboard-icons';
 
-const CONNECTOR = 'rgb(176, 182, 196)';
-const SHADOW = 'rgba(20, 24, 40, 0.12)';
+const PANEL_BG = 'rgb(250, 250, 250)';
+const PLACEHOLDER = 'rgb(208, 210, 214)';
 
 /**
- * Faux mini-whiteboard rendered from a preview spec: connector lines beneath a
- * scatter of coloured sticky notes. All coordinates are percentages so the
- * preview scales to whatever box the card gives it.
+ * Empty whiteboard thumbnail. Matches real ClickUp: a flat light panel with a
+ * single faint grey whiteboard glyph centred inside a soft rounded outline.
+ * No sticky notes, no connector scatter.
  */
-export function WhiteboardThumbnail({ preview }: { preview: WhiteboardPreview }) {
+export function WhiteboardThumbnail() {
   return (
     <div
       style={{
         position: 'absolute',
         inset: 0,
-        background: preview.bg,
-        backgroundImage:
-          'radial-gradient(rgba(120,128,150,0.16) 1px, transparent 1px)',
-        backgroundSize: '14px 14px',
-        overflow: 'hidden',
+        background: PANEL_BG,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
       }}
     >
-      <svg
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-        aria-hidden="true"
+      <div
+        style={{
+          width: 54,
+          height: 54,
+          borderRadius: 12,
+          border: `1.5px solid ${PLACEHOLDER}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: PLACEHOLDER,
+        }}
       >
-        {preview.lines.map((line, i) => (
-          <line
-            key={i}
-            x1={line.x1}
-            y1={line.y1}
-            x2={line.x2}
-            y2={line.y2}
-            stroke={CONNECTOR}
-            strokeWidth={0.9}
-            strokeLinecap="round"
-          />
-        ))}
-      </svg>
-      {preview.notes.map((note, i) => (
-        <span
-          key={i}
-          style={{
-            position: 'absolute',
-            left: `${note.x}%`,
-            top: `${note.y}%`,
-            width: `${note.w}%`,
-            height: `${note.h}%`,
-            background: note.fill,
-            borderRadius: 3,
-            boxShadow: `0 1px 3px ${SHADOW}`,
-          }}
-        />
-      ))}
+        <WhiteboardGlyph size={30} color={PLACEHOLDER} />
+      </div>
     </div>
   );
 }

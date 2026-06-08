@@ -1,15 +1,19 @@
 /**
- * Dashboards hub seed. Self-contained fixtures for the Dashboards gallery and
- * the per-dashboard widget grids. The numbers inside each dashboard are derived
- * live from the workspace tasks store at render time; this seed only describes
- * each dashboard's identity (name, owner, sharing, last viewed) and which
- * widget types it composes (for the card preview + the detail grid).
+ * Dashboards hub seed.
  *
- * Owner colours/initials mirror the members seed so the avatars line up with
- * the real workspace people.
+ * Two halves:
+ *  1. The "All Dashboards" table list — the real ClickUp landing. A dense list
+ *     of dashboard rows (name, location, viewed/updated dates, owner, sharing,
+ *     private flag) plus the three template tiles shown above the table.
+ *  2. The per-dashboard widget composition (`widgets`) consumed by the detail
+ *     view. Numbers inside each dashboard are derived live from the workspace
+ *     tasks store at render time; this seed only describes identity + layout.
+ *
+ * Owner colours/initials mirror the members seed so avatars line up with the
+ * real workspace people.
  */
 
-/** Widget kinds the hub knows how to render and preview. */
+/** Widget kinds the detail grid knows how to render. */
 export type WidgetKind =
   | 'statusBar'
   | 'priorityBreakdown'
@@ -27,97 +31,126 @@ export interface DashboardOwner {
   color: string;
 }
 
+/** Where a dashboard lives. `null` renders as an em-dash in the Location cell. */
+export type DashboardLocation =
+  | { kind: 'space'; label: string }
+  | { kind: 'project'; label: string }
+  | null;
+
 export interface DashboardEntry {
   id: string;
   name: string;
   description: string;
   owner: DashboardOwner;
-  /** Pre-formatted relative timestamp shown on the card. */
-  updatedLabel: string;
   sharing: 'private' | 'shared';
-  /** Widget composition — drives the card preview and the detail grid order. */
+  /** True for rows that show a lock glyph next to the name (private items). */
+  locked: boolean;
+  location: DashboardLocation;
+  /** Pre-formatted relative label for the "Date viewed" column. */
+  viewedLabel: string;
+  /** Pre-formatted short date for the "Date updated" column. */
+  updatedLabel: string;
+  /** Widget composition — drives the detail grid order. */
   widgets: WidgetKind[];
 }
+
+export type TemplateAccent = 'blue' | 'violet' | 'sky';
 
 export interface DashboardTemplate {
   id: string;
   name: string;
   description: string;
+  accent: TemplateAccent;
   /** Widget set this template would scaffold. */
   widgets: WidgetKind[];
-  accent: string;
 }
 
-const CAMERON: DashboardOwner = { initials: 'CM', name: 'Cameron Mc', color: '#595d66' };
-const TEAM: DashboardOwner = { initials: 'T', name: 'Test Team', color: '#a18072' };
+const CAMERON: DashboardOwner = { initials: 'CM', name: 'Cameron Mc', color: '#1a1a1a' };
 
-export const DASHBOARDS: DashboardEntry[] = [
-  {
-    id: 'dash-overview',
-    name: 'Workspace Overview',
-    description: 'High-level health across every list. Totals, status split, and what is due.',
-    owner: CAMERON,
-    updatedLabel: 'Viewed 2h ago',
-    sharing: 'private',
-    widgets: ['statTotal', 'statCompleted', 'statOverdue', 'statusDonut', 'assigneeBar', 'dueSoon'],
-  },
-  {
-    id: 'dash-sprint',
-    name: 'Current Sprint',
-    description: 'Burndown signals for the active sprint. Status, priority, and recent movement.',
-    owner: CAMERON,
-    updatedLabel: 'Viewed yesterday',
-    sharing: 'private',
-    widgets: ['statusBar', 'priorityBreakdown', 'statCompleted', 'recentActivity'],
-  },
-  {
-    id: 'dash-team',
-    name: 'Team Workload',
-    description: 'Who is carrying what. Open work per assignee with overdue flags.',
-    owner: TEAM,
-    updatedLabel: 'Viewed 3d ago',
-    sharing: 'shared',
-    widgets: ['assigneeBar', 'statOverdue', 'statTotal', 'statusBar'],
-  },
-  {
-    id: 'dash-priorities',
-    name: 'Priorities & Risk',
-    description: 'Where attention is needed. Priority breakdown with the soonest deadlines.',
-    owner: CAMERON,
-    updatedLabel: 'Viewed last week',
-    sharing: 'shared',
-    widgets: ['priorityBreakdown', 'statOverdue', 'dueSoon', 'statusDonut'],
-  },
+const TEAM_SPACE: DashboardLocation = { kind: 'space', label: 'Team Space' };
+const PROJECT_1: DashboardLocation = { kind: 'project', label: 'Project 1' };
+
+/** Widget recipes reused across rows so the detail grid always has content. */
+const OVERVIEW: WidgetKind[] = [
+  'statTotal',
+  'statCompleted',
+  'statOverdue',
+  'statusDonut',
+  'assigneeBar',
+  'dueSoon',
 ];
+const SPRINT: WidgetKind[] = ['statusBar', 'priorityBreakdown', 'statCompleted', 'recentActivity'];
+const WORKLOAD: WidgetKind[] = ['assigneeBar', 'statOverdue', 'statTotal', 'statusBar'];
+
+/**
+ * The "All Dashboards" list. Mirrors the real account: a long run of identically
+ * named "Dashboard" rows, mostly private (locked), nearly all owned by CM, with
+ * a sprinkle of locations and a descending spread of viewed/updated dates.
+ */
+export const DASHBOARDS: DashboardEntry[] = [
+  row('dash-01', { location: TEAM_SPACE, locked: false, viewed: '20 mins ago', updated: 'Jun 2', widgets: OVERVIEW, sharing: 'shared' }),
+  row('dash-02', { viewed: 'Jun 5', updated: 'Jun 5', widgets: SPRINT }),
+  row('dash-03', { viewed: 'Jun 5', updated: 'Jun 5', widgets: WORKLOAD }),
+  row('dash-04', { viewed: 'Jun 4', updated: 'Jun 4', widgets: OVERVIEW }),
+  row('dash-05', { location: PROJECT_1, viewed: 'Jun 2', updated: 'Jun 2', widgets: SPRINT }),
+  row('dash-06', { viewed: 'May 26', updated: 'May 26', widgets: WORKLOAD }),
+  row('dash-07', { viewed: 'May 25', updated: 'May 25', widgets: OVERVIEW }),
+  row('dash-08', { viewed: 'May 25', updated: 'May 25', widgets: SPRINT }),
+  row('dash-09', { viewed: 'May 25', updated: 'May 25', widgets: WORKLOAD }),
+  row('dash-10', { viewed: 'May 25', updated: 'May 25', widgets: OVERVIEW }),
+  row('dash-11', { viewed: 'May 25', updated: 'May 25', widgets: SPRINT }),
+  row('dash-12', { viewed: 'May 25', updated: 'May 25', widgets: WORKLOAD }),
+  row('dash-13', { viewed: 'May 25', updated: 'May 25', widgets: OVERVIEW }),
+  row('dash-14', { viewed: 'May 26', updated: 'May 25', widgets: SPRINT }),
+  row('dash-15', { viewed: 'May 24', updated: 'May 24', widgets: WORKLOAD }),
+  row('dash-16', { viewed: 'May 22', updated: 'May 22', widgets: OVERVIEW }),
+];
+
+interface RowOpts {
+  location?: DashboardLocation;
+  locked?: boolean;
+  sharing?: DashboardEntry['sharing'];
+  viewed: string;
+  updated: string;
+  widgets: WidgetKind[];
+}
+
+function row(id: string, opts: RowOpts): DashboardEntry {
+  return {
+    id,
+    name: 'Dashboard',
+    description: 'Workspace metrics derived live from the tasks store.',
+    owner: CAMERON,
+    sharing: opts.sharing ?? 'private',
+    locked: opts.locked ?? true,
+    location: opts.location ?? null,
+    viewedLabel: opts.viewed,
+    updatedLabel: opts.updated,
+    widgets: opts.widgets,
+  };
+}
 
 export const DASHBOARD_TEMPLATES: DashboardTemplate[] = [
   {
-    id: 'tpl-sprint',
-    name: 'Sprint',
-    description: 'Track an active sprint end to end.',
-    widgets: ['statusBar', 'priorityBreakdown', 'statCompleted', 'recentActivity'],
-    accent: '#4ecdc4',
+    id: 'tpl-simple',
+    name: 'Simple Dashboard',
+    description: 'Manage & prioritize tasks',
+    accent: 'blue',
+    widgets: ['statTotal', 'statCompleted', 'statOverdue', 'statusBar'],
   },
   {
-    id: 'tpl-team',
-    name: 'Team',
-    description: 'Balance workload across the team.',
-    widgets: ['assigneeBar', 'statTotal', 'statOverdue', 'statusBar'],
-    accent: '#7d6ef0',
+    id: 'tpl-ai-team',
+    name: 'AI Team Center',
+    description: 'View team activity with AI',
+    accent: 'violet',
+    widgets: ['assigneeBar', 'recentActivity', 'statTotal', 'statusDonut'],
   },
   {
-    id: 'tpl-time',
-    name: 'Time tracking',
-    description: 'Completed work over the week.',
-    widgets: ['statCompleted', 'statTotal', 'statusDonut', 'recentActivity'],
-    accent: '#f6a609',
-  },
-  {
-    id: 'tpl-priorities',
-    name: 'Priorities',
-    description: 'Surface the most urgent work first.',
-    widgets: ['priorityBreakdown', 'statOverdue', 'dueSoon', 'statusDonut'],
-    accent: '#e85d75',
+    id: 'tpl-project',
+    name: 'Project Management',
+    description: 'Analyze project progress and metrics',
+    accent: 'sky',
+    widgets: ['statusBar', 'priorityBreakdown', 'statOverdue', 'dueSoon'],
   },
 ];
 

@@ -1,34 +1,86 @@
 /**
- * Inline SVG glyphs local to the AI hub. Kept here so the shared Icons.tsx
- * is never touched. ClickUp's AI accent is a violet sparkle (rgb(124,77,255)).
+ * Inline SVG glyphs local to ClickUp Brain (the AI hub). Kept here so the
+ * shared Icons.tsx is never touched. The Brain mark is a multi-color flower;
+ * the "Brain" wordmark is a warm orange→pink→violet gradient.
  */
 
-import type { AiQuickAction, AiSuggestion } from '@/data/ai-seed';
+import type { AiSuggestionCard, AiSuperAgentLink } from '@/data/ai-seed';
 
-export const AI_ACCENT = 'rgb(124, 77, 255)';
+export const STROKE = 'rgb(99, 110, 130)';
 
-/** Multi-tone "Brain" sparkle used on the prompt input and brand mark. */
-export function SparkleIcon({ size = 20 }: { size?: number }) {
+/* ---- Brand: flower icon + rainbow wordmark ---- */
+
+/**
+ * ClickUp Brain flower: six overlapping translucent petals around a white
+ * center, cycling through the brand rainbow. Used at 48px in the hero, 16px in
+ * the sidebar / tabs / model selector.
+ */
+export function BrainFlower({ size = 48 }: { size?: number }) {
+  const petals = [
+    { c: 'rgb(253, 176, 34)', a: 0 },
+    { c: 'rgb(249, 115, 22)', a: 60 },
+    { c: 'rgb(236, 72, 153)', a: 120 },
+    { c: 'rgb(168, 85, 247)', a: 180 },
+    { c: 'rgb(99, 102, 241)', a: 240 },
+    { c: 'rgb(56, 189, 248)', a: 300 },
+  ];
+  const r = 24;
+  const petalR = 9.2;
+  const dist = 8.6;
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M12 3l1.7 4.1a4 4 0 0 0 2.2 2.2L20 11l-4.1 1.7a4 4 0 0 0-2.2 2.2L12 19l-1.7-4.1a4 4 0 0 0-2.2-2.2L4 11l4.1-1.7a4 4 0 0 0 2.2-2.2L12 3Z"
-        fill={AI_ACCENT}
-      />
-      <path d="M19 4l.7 1.7L21.4 6.4 19.7 7l-.7 1.7L18.3 7l-1.7-.6L18.3 5.7 19 4Z" fill="rgb(255, 138, 76)" />
+    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <g style={{ mixBlendMode: 'multiply' }}>
+        {petals.map((p) => {
+          const rad = (p.a * Math.PI) / 180;
+          const cx = r + Math.cos(rad) * dist;
+          const cy = r + Math.sin(rad) * dist;
+          return <circle key={p.a} cx={cx} cy={cy} r={petalR} fill={p.c} fillOpacity={0.82} />;
+        })}
+      </g>
+      <circle cx={r} cy={r} r={4.4} fill="#fff" />
     </svg>
   );
 }
 
-export function ArrowUpIcon({ size = 16 }: { size?: number }) {
+/** Warm-to-cool "Brain" wordmark with a small superscript TM. */
+export function BrainWordmark({ height = 30 }: { height?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M12 19V6M6 12l6-6 6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <span style={{ display: 'inline-flex', alignItems: 'flex-start' }}>
+      <span
+        style={{
+          fontSize: height,
+          fontWeight: 700,
+          lineHeight: 1,
+          letterSpacing: '-0.5px',
+          backgroundImage:
+            'linear-gradient(90deg, rgb(249, 137, 38) 0%, rgb(236, 72, 153) 45%, rgb(147, 51, 234) 100%)',
+          WebkitBackgroundClip: 'text',
+          backgroundClip: 'text',
+          color: 'transparent',
+          WebkitTextFillColor: 'transparent',
+        }}
+      >
+        Brain
+      </span>
+      <span
+        style={{
+          fontSize: height * 0.3,
+          fontWeight: 600,
+          marginLeft: 2,
+          marginTop: 1,
+          color: 'rgb(147, 51, 234)',
+          lineHeight: 1,
+        }}
+      >
+        TM
+      </span>
+    </span>
   );
 }
 
-export function PlusIcon({ size = 14 }: { size?: number }) {
+/* ---- Prompt box + tabs ---- */
+
+export function PlusIcon({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -36,102 +88,215 @@ export function PlusIcon({ size = 14 }: { size?: number }) {
   );
 }
 
-function PencilGlyph({ size = 16 }: { size?: number }) {
+export function ChevronDown({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M5 19h4l9.5-9.5a2 2 0 0 0-2.8-2.8L6 16.2V19Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-      <path d="M14 7.5l2.5 2.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-function ListGlyph({ size = 16 }: { size?: number }) {
+export function GlobeIcon({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M9 6h11M9 12h11M9 18h11" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <circle cx="4.5" cy="6" r="1.3" fill="currentColor" />
-      <circle cx="4.5" cy="12" r="1.3" fill="currentColor" />
-      <circle cx="4.5" cy="18" r="1.3" fill="currentColor" />
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M3.5 12h17M12 3.5c2.4 2.3 3.7 5.3 3.7 8.5s-1.3 6.2-3.7 8.5c-2.4-2.3-3.7-5.3-3.7-8.5S9.6 5.8 12 3.5Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+      />
     </svg>
   );
 }
 
-function CheckSquareGlyph({ size = 16 }: { size?: number }) {
+export function SendIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" strokeWidth="1.7" />
-      <path d="m8 12 2.5 2.5L16 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M5 12h13M12 6l6 6-6 6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
-function BulbGlyph({ size = 16 }: { size?: number }) {
+/** Agents tab glyph: a small robot/agent face. */
+export function AgentIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M9 18h6M10 21h4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M12 3a6 6 0 0 0-3.5 10.9c.5.4.8 1 .8 1.6V16h5.4v-.5c0-.6.3-1.2.8-1.6A6 6 0 0 0 12 3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      <rect x="4" y="7" width="16" height="12" rx="3.5" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="9" cy="13" r="1.3" fill="currentColor" />
+      <circle cx="15" cy="13" r="1.3" fill="currentColor" />
+      <path d="M12 4v3M9 19v1.5M15 19v1.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <circle cx="12" cy="3.4" r="1.2" fill="currentColor" />
     </svg>
   );
 }
 
-function DocGlyph({ size = 16 }: { size?: number }) {
+export function HistoryIcon({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M6 3h8l4 4v14H6V3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-      <path d="M14 3v4h4M9 13h6M9 16h4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M3 4v4h4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 8v4.3l2.8 1.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-function CalendarGlyph({ size = 16 }: { size?: number }) {
+/* ---- Suggestion card glyphs ---- */
+
+function MeetingGlyph({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="4" y="5" width="16" height="15" rx="2.5" stroke="currentColor" strokeWidth="1.7" />
-      <path d="M4 9h16M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <rect x="3.5" y="5" width="17" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M7 9h10M7 12.5h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M9 17v2.5M15 17v2.5M7.5 20h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   );
 }
 
-function StatusGlyph({ size = 16 }: { size?: number }) {
+function DocGlyph({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M4 19V5M4 6l5-1.5L15 6l5-1.5v9L15 14l-6-1.5L4 14" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6 3.5h7.5L18.5 8v12.5H6V3.5Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M13.5 3.5V8h5" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M8.5 12.5h7M8.5 15.5h5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   );
 }
 
-function BlockerGlyph({ size = 16 }: { size?: number }) {
+function BrainstormGlyph({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.7" />
-      <path d="m6.5 6.5 11 11" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M12 4v2.5M12 17.5V20M4 12h2.5M17.5 12H20M6.3 6.3l1.8 1.8M15.9 15.9l1.8 1.8M17.7 6.3l-1.8 1.8M8.1 15.9l-1.8 1.8"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
 
-const QUICK_GLYPHS: Record<AiQuickAction['glyph'], (p: { size?: number }) => React.JSX.Element> = {
-  write: PencilGlyph,
-  summarize: ListGlyph,
-  tasks: CheckSquareGlyph,
-  brainstorm: BulbGlyph,
-  docs: DocGlyph,
+function FindGlyph({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.7" />
+      <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+const CARD_GLYPHS: Record<AiSuggestionCard['glyph'], (p: { size?: number }) => React.JSX.Element> = {
+  meeting: MeetingGlyph,
+  doc: DocGlyph,
+  brainstorm: BrainstormGlyph,
+  find: FindGlyph,
 };
 
-export function QuickActionGlyph({ glyph, size = 15 }: { glyph: AiQuickAction['glyph']; size?: number }) {
-  const Glyph = QUICK_GLYPHS[glyph];
+export function SuggestionCardGlyph({ glyph, size = 18 }: { glyph: AiSuggestionCard['glyph']; size?: number }) {
+  const Glyph = CARD_GLYPHS[glyph];
   return <Glyph size={size} />;
 }
 
-const SUGGESTION_GLYPHS: Record<AiSuggestion['glyph'], (p: { size?: number }) => React.JSX.Element> = {
-  brief: DocGlyph,
-  summarize: ListGlyph,
-  sprint: CalendarGlyph,
-  status: StatusGlyph,
-  blockers: BlockerGlyph,
-  standup: CheckSquareGlyph,
+/* ---- Sidebar glyphs ---- */
+
+/** Compose / new chat pencil-in-square (sidebar header button). */
+export function ComposeIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 14.5V20h5.5L19 10.5 13.5 5 4 14.5Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M12.5 6 18 11.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Create Agent: outlined goggle / agent face on a tile. */
+function CreateAgentGlyph({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="3" y="6.5" width="18" height="11" rx="3" fill="rgb(59, 130, 246)" />
+      <circle cx="9" cy="12" r="2" fill="#fff" />
+      <circle cx="15" cy="12" r="2" fill="#fff" />
+    </svg>
+  );
+}
+
+/** All Agents: two overlapping head silhouettes. */
+function AllAgentsGlyph({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="9" cy="8" r="3.2" fill="rgb(245, 158, 11)" />
+      <path d="M3.5 18c0-3 2.5-5 5.5-5s5.5 2 5.5 5" fill="rgb(245, 158, 11)" />
+      <circle cx="16" cy="8.5" r="2.8" fill="rgb(168, 85, 247)" />
+      <path d="M11.5 18c0-2.6 2-4.4 4.5-4.4s4.5 1.8 4.5 4.4" fill="rgb(168, 85, 247)" />
+    </svg>
+  );
+}
+
+/** Activity: history clock. */
+function ActivityGlyph({ size = 16 }: { size?: number }) {
+  return <HistoryIcon size={size} />;
+}
+
+const SUPER_AGENT_GLYPHS: Partial<
+  Record<AiSuperAgentLink['glyph'], (p: { size?: number }) => React.JSX.Element>
+> = {
+  createAgent: CreateAgentGlyph,
+  allAgents: AllAgentsGlyph,
+  activity: ActivityGlyph,
 };
 
-export function SuggestionGlyph({ glyph, size = 18 }: { glyph: AiSuggestion['glyph']; size?: number }) {
-  const Glyph = SUGGESTION_GLYPHS[glyph];
-  return <Glyph size={size} />;
+/** Returns a glyph for super-agent rows that use icons (not avatars). */
+export function SuperAgentGlyph({ glyph, size = 18 }: { glyph: AiSuperAgentLink['glyph']; size?: number }) {
+  const Glyph = SUPER_AGENT_GLYPHS[glyph];
+  return Glyph ? <Glyph size={size} /> : null;
+}
+
+/** Connections: grid of app tiles. */
+export function ConnectionsIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.8" fill="rgb(59, 130, 246)" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.8" fill="rgb(245, 158, 11)" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.8" fill="rgb(34, 197, 94)" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.8" fill="rgb(236, 72, 153)" />
+    </svg>
+  );
+}
+
+export function NewTabIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M14 4h6v6M20 4l-8.5 8.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M18 13.5V19a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Round progress ring with centered value, used in the sidebar footer. */
+export function CreditRing({ size = 20, progress }: { size?: number; progress: number }) {
+  const r = 7;
+  const circ = 2 * Math.PI * r;
+  const filled = Math.max(0, Math.min(1, progress)) * circ;
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="10" r={r} fill="none" stroke="rgb(228, 230, 234)" strokeWidth="3" />
+      <circle
+        cx="10"
+        cy="10"
+        r={r}
+        fill="none"
+        stroke="rgb(34, 161, 96)"
+        strokeWidth="3"
+        strokeLinecap="butt"
+        strokeDasharray={`${filled} ${circ}`}
+        transform="rotate(-90 10 10)"
+      />
+    </svg>
+  );
 }

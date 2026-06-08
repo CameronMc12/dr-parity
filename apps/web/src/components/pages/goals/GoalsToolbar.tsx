@@ -1,25 +1,25 @@
 'use client';
 
-import { BORDER, TEXT_PRIMARY, PillButton, PlusIcon } from '../page-primitives';
-import { SortIcon, FolderIcon } from './goals-icons';
+import type { ReactNode } from 'react';
+import { TEXT_PRIMARY } from '../page-primitives';
+import { SortIcon, FolderIcon, ArchivedIcon } from './goals-icons';
 import { useGoalsStore } from './goals-ui-store';
 
+const BTN_TEXT = 'rgb(74, 77, 84)';
+const ACTIVE_BG = 'rgb(238, 239, 241)';
+const DARK_BG = 'rgb(58, 61, 67)';
+
 /**
- * Goals header toolbar: title + active folder label, a sort/folder filter pair,
- * and the primary "+ New Goal" CTA which prepends a goal to the active folder.
+ * Goals landing toolbar: "Goals" heading on the left; "Sort by: Updated", a
+ * "Folders: Hide" toggle (highlighted when active), an "Archived: Hide" toggle,
+ * and the primary "+ NEW GOAL" dark button on the right.
  */
 export function GoalsToolbar() {
-  const folders = useGoalsStore((s) => s.folders);
-  const selectedFolderId = useGoalsStore((s) => s.selectedFolderId);
+  const showFolders = useGoalsStore((s) => s.showFolders);
+  const showArchived = useGoalsStore((s) => s.showArchived);
+  const toggleFolders = useGoalsStore((s) => s.toggleFolders);
+  const toggleArchived = useGoalsStore((s) => s.toggleArchived);
   const addGoal = useGoalsStore((s) => s.addGoal);
-
-  const activeFolder = folders.find((f) => f.id === selectedFolderId);
-  const filterLabel = activeFolder ? activeFolder.name : 'All folders';
-
-  const handleNew = () => {
-    const targetFolder = selectedFolderId ?? folders[0]?.id;
-    if (targetFolder) addGoal(targetFolder);
-  };
 
   return (
     <div
@@ -30,40 +30,81 @@ export function GoalsToolbar() {
         height: 52,
         paddingLeft: 24,
         paddingRight: 16,
-        borderBottom: `1px solid ${BORDER}`,
       }}
     >
-      <h1 style={{ fontSize: 18, fontWeight: 600, color: TEXT_PRIMARY, margin: 0 }}>
-        {activeFolder ? activeFolder.name : 'Goals'}
-      </h1>
+      <h1 style={{ fontSize: 18, fontWeight: 600, color: TEXT_PRIMARY, margin: 0 }}>Goals</h1>
       <span style={{ flex: 1 }} />
-      <PillButton icon={<SortIcon />}>Sort: Due date</PillButton>
-      <PillButton icon={<FolderIcon />} caret>
-        {filterLabel}
-      </PillButton>
+
+      <ToolbarBtn icon={<SortIcon />}>Sort by: Updated</ToolbarBtn>
+      <ToolbarBtn icon={<FolderIcon />} active={!showFolders} onClick={toggleFolders}>
+        Folders: {showFolders ? 'Show' : 'Hide'}
+      </ToolbarBtn>
+      <ToolbarBtn icon={<ArchivedIcon />} onClick={toggleArchived}>
+        Archived: {showArchived ? 'Show' : 'Hide'}
+      </ToolbarBtn>
+
       <button
-        onClick={handleNew}
+        type="button"
+        onClick={addGoal}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
           gap: 6,
           height: 30,
+          marginLeft: 4,
           paddingLeft: 12,
           paddingRight: 14,
-          background: 'rgb(36, 174, 100)',
+          background: DARK_BG,
           border: 'none',
           borderRadius: 6,
           cursor: 'pointer',
           color: 'white',
           fontSize: 12,
           fontWeight: 600,
-          letterSpacing: '0.2px',
+          letterSpacing: '0.3px',
           textTransform: 'uppercase',
         }}
       >
-        <PlusIcon size={14} />
-        New Goal
+        + New Goal
       </button>
     </div>
+  );
+}
+
+function ToolbarBtn({
+  icon,
+  children,
+  active = false,
+  onClick,
+}: {
+  icon: ReactNode;
+  children: ReactNode;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        height: 30,
+        paddingLeft: 10,
+        paddingRight: 10,
+        background: active ? ACTIVE_BG : 'transparent',
+        border: 'none',
+        borderRadius: 6,
+        cursor: 'pointer',
+        color: BTN_TEXT,
+        fontSize: 13,
+        fontWeight: 400,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span style={{ display: 'flex', color: 'rgb(120, 123, 130)', lineHeight: 0 }}>{icon}</span>
+      {children}
+    </button>
   );
 }

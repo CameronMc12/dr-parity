@@ -13,6 +13,8 @@ const BORDER = 'var(--cu-border-divider, rgb(232,232,232))';
 const HOVER = 'var(--cu-bg-hover, rgb(248,248,248))';
 
 const COLS = '1fr 200px 110px 150px 150px 72px';
+/** Oracle owner-avatar green (sampled from the real Docs hub). */
+const OWNER_GREEN = 'rgb(64,188,134)';
 
 function HeaderCell({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
   return (
@@ -181,8 +183,8 @@ export function DocsTable({
     [members, currentId],
   );
 
-  const ownerInitials = owner?.initials ?? 'C';
-  const ownerColor = owner?.color ?? '#595d66';
+  const ownerInitials = owner?.initials?.slice(0, 1) ?? 'C';
+  const ownerColor = OWNER_GREEN;
 
   return (
     <div style={{ padding: '0 24px 24px' }}>

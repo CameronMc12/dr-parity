@@ -1,123 +1,84 @@
 /**
- * Self-contained seed data for the ClickUp Brain / AI Hub.
- * Mirrors ClickUp's AI landing: quick-action chips, suggestion prompt cards,
- * and recent AI threads grouped for the sidebar.
+ * Self-contained seed data for ClickUp Brain (the AI hub).
+ * Sampled 1:1 from the real ClickUp Brain landing: sidebar Super Agents nav,
+ * the centered prompt suggestion cards, and the sidebar footer credit widgets.
  */
 
-export type AiQuickAction = {
-  id: string;
-  label: string;
-  /** Icon key resolved by ai-icons. */
-  glyph: 'write' | 'summarize' | 'tasks' | 'brainstorm' | 'docs';
-};
-
-export type AiSuggestion = {
+export type AiSuggestionCard = {
   id: string;
   title: string;
   description: string;
-  glyph: 'brief' | 'summarize' | 'sprint' | 'status' | 'blockers' | 'standup';
+  glyph: 'meeting' | 'doc' | 'brainstorm' | 'find';
 };
 
-export type AiThread = {
+export type AiSuperAgentLink = {
   id: string;
-  title: string;
-  snippet: string;
-  /** Human-readable relative timestamp. */
-  timestamp: string;
-  /** Sidebar grouping bucket. */
-  group: 'pinned' | 'today' | 'previous7';
+  label: string;
+  /** Icon key resolved by ai-icons. */
+  glyph: 'createAgent' | 'allAgents' | 'myAgents' | 'activity';
+  /** Optional trailing count badge. */
+  count?: number;
 };
 
-export const AI_GREETING = 'Good afternoon';
+export type AiRecentAgent = {
+  id: string;
+  label: string;
+  /** Hex/letters for the round avatar fallback. */
+  initial: string;
+  avatarBg: string;
+};
 
-export const AI_QUICK_ACTIONS: AiQuickAction[] = [
-  { id: 'write', label: 'Write', glyph: 'write' },
-  { id: 'summarize', label: 'Summarize', glyph: 'summarize' },
-  { id: 'create-tasks', label: 'Create tasks', glyph: 'tasks' },
-  { id: 'brainstorm', label: 'Brainstorm', glyph: 'brainstorm' },
-  { id: 'ask-docs', label: 'Ask docs', glyph: 'docs' },
-];
+export type AiCreditWidget = {
+  id: string;
+  value: string;
+  label: string;
+  /** 0..1 fraction of the ring that is filled. */
+  progress: number;
+};
 
-export const AI_SUGGESTIONS: AiSuggestion[] = [
+/** The four prompt suggestion cards under the Brain prompt box. */
+export const AI_SUGGESTION_CARDS: AiSuggestionCard[] = [
   {
-    id: 'project-brief',
-    title: 'Write a project brief',
-    description: 'Draft scope, goals, and success metrics for a new initiative.',
-    glyph: 'brief',
+    id: 'meeting-summary',
+    title: 'Meeting Summary',
+    description: 'Summarize recent activity',
+    glyph: 'meeting',
   },
   {
-    id: 'summarize-tasks',
-    title: 'Summarize my tasks',
-    description: 'Get a quick rollup of what is due across your assigned work.',
-    glyph: 'summarize',
+    id: 'draft-doc',
+    title: 'Draft Doc',
+    description: 'Create project brief',
+    glyph: 'doc',
   },
   {
-    id: 'sprint-plan',
-    title: 'Generate a sprint plan',
-    description: 'Turn a backlog into a two-week plan with owners and estimates.',
-    glyph: 'sprint',
+    id: 'brainstorm-ideas',
+    title: 'Brainstorm Ideas',
+    description: 'Generate team activities',
+    glyph: 'brainstorm',
   },
   {
-    id: 'status-update',
-    title: 'Draft a status update',
-    description: 'Compose a stakeholder update from this week of activity.',
-    glyph: 'status',
-  },
-  {
-    id: 'find-blockers',
-    title: 'Find blockers',
-    description: 'Surface overdue, stalled, and dependency-blocked tasks.',
-    glyph: 'blockers',
-  },
-  {
-    id: 'standup-notes',
-    title: 'Write standup notes',
-    description: 'Summarize yesterday, today, and any blockers for the team.',
-    glyph: 'standup',
+    id: 'find-tasks',
+    title: 'Find Tasks',
+    description: 'Search open tasks',
+    glyph: 'find',
   },
 ];
 
-export const AI_THREADS: AiThread[] = [
-  {
-    id: 'thread-roadmap',
-    title: 'Q3 roadmap brief',
-    snippet: 'Drafted scope and milestones for the platform workstream.',
-    timestamp: 'Pinned',
-    group: 'pinned',
-  },
-  {
-    id: 'thread-launch',
-    title: 'Launch checklist',
-    snippet: 'Generated a go-live checklist across marketing and eng.',
-    timestamp: 'Pinned',
-    group: 'pinned',
-  },
-  {
-    id: 'thread-standup',
-    title: 'Standup summary',
-    snippet: 'Summarized 14 updates into a three-line standup.',
-    timestamp: '2h ago',
-    group: 'today',
-  },
-  {
-    id: 'thread-blockers',
-    title: 'Sprint blockers',
-    snippet: 'Found 5 tasks blocked by an upstream dependency.',
-    timestamp: '4h ago',
-    group: 'today',
-  },
-  {
-    id: 'thread-retro',
-    title: 'Retro themes',
-    snippet: 'Clustered retro notes into 4 actionable themes.',
-    timestamp: 'Mon',
-    group: 'previous7',
-  },
-  {
-    id: 'thread-onboarding',
-    title: 'Onboarding doc draft',
-    snippet: 'Outlined a new-hire onboarding doc from existing tasks.',
-    timestamp: 'Sun',
-    group: 'previous7',
-  },
+/** Sidebar "Super Agents" section rows. */
+export const AI_SUPER_AGENTS: AiSuperAgentLink[] = [
+  { id: 'create-agent', label: 'Create Agent', glyph: 'createAgent' },
+  { id: 'all-agents', label: 'All Agents', glyph: 'allAgents', count: 1 },
+  { id: 'my-agents', label: 'My Agents', glyph: 'myAgents', count: 1 },
+  { id: 'activity', label: 'Activity', glyph: 'activity' },
+];
+
+/** Sidebar "Recent Super Agents" rows. */
+export const AI_RECENT_AGENTS: AiRecentAgent[] = [
+  { id: 'onboarding-assistant', label: 'Onboarding Assistant', initial: 'O', avatarBg: 'rgb(124, 58, 237)' },
+];
+
+/** Sidebar footer credit ring widgets. */
+export const AI_CREDIT_WIDGETS: AiCreditWidget[] = [
+  { id: 'brain-uses', value: '48', label: 'Brain AI uses', progress: 0.92 },
+  { id: 'credits-left', value: '2.4k', label: 'Credits left', progress: 0.88 },
 ];
