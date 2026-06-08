@@ -413,8 +413,8 @@ function CollapsedRail({
         alignItems: 'center',
         height: '100%',
         minHeight: 0,
-        padding: '10px 0',
-        gap: 14,
+        padding: '12px 0',
+        gap: 22,
         borderLeft: `1px solid ${CAL.gridBorder}`,
         background: CAL.bg,
       }}
@@ -422,7 +422,6 @@ function CollapsedRail({
       <RailButton aria-label="Expand sidebar" onClick={onExpand}>
         <ListLinesIcon />
       </RailButton>
-      <div style={{ width: 18, height: 1, background: CAL.gridBorder, flexShrink: 0 }} />
       <RailCount label="Unscheduled" count={unscheduledCount} onClick={onExpand} />
       <RailCount label="Overdue" count={overdueCount} accent onClick={onExpand} />
     </div>
@@ -453,6 +452,10 @@ function RailCount({
   accent?: boolean;
   onClick: () => void;
 }) {
+  // Reference: the counter pill uses the theme/brand colour at full opacity for
+  // the digits over a 0.2-opacity fill of the same colour (min-width 14, height
+  // 14, radius 7, 11px/600). The label is 14px/500 in --cu-content-secondary.
+  const counterColor = accent ? CAL.overdue : CAL.accent;
   return (
     <button
       type="button"
@@ -465,26 +468,41 @@ function RailCount({
         transform: 'rotate(180deg)',
         border: 'none',
         background: 'transparent',
-        color: accent ? CAL.overdue : CAL.textSecondary,
-        fontSize: 12,
+        color: CAL.textSecondary,
+        fontSize: 14,
         fontWeight: 500,
+        lineHeight: 1,
         cursor: 'pointer',
         padding: 0,
       }}
     >
       <span
         style={{
-          minWidth: 18,
-          padding: '1px 5px',
-          borderRadius: 9,
-          background: CAL.hoverBg,
-          color: accent ? CAL.overdue : CAL.textSecondary,
+          position: 'relative',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minWidth: 14,
+          height: 14,
+          padding: '0 2px',
+          borderRadius: 7,
+          overflow: 'hidden',
+          color: counterColor,
           fontSize: 11,
           fontWeight: 600,
-          textAlign: 'center',
+          lineHeight: 1,
         }}
       >
-        {count}
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: counterColor,
+            opacity: 0.2,
+          }}
+        />
+        <span style={{ position: 'relative' }}>{count}</span>
       </span>
       {label}
     </button>
