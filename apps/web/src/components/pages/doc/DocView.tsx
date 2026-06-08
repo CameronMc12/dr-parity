@@ -14,11 +14,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ViewScope } from '@/lib/view-scope';
 import { DOCS_TREE } from '@/data/docs-tree';
 import { getDocPage, getDocPages, type DocPage } from '@/lib/view-data';
 import { useMembers, useCurrentMemberId } from '@/store/workspace/hooks';
 import { appendBlock, buildBlock, type BlockType } from './block-insert';
-import { DocSidebar, type ExtraPage } from './DocSidebar';
+import { type ExtraPage } from './DocSidebar';
+import { DocPageTree } from './DocPageTree';
 import { DocHeader } from './DocHeader';
 import { DocEditor, type DocEditorHandle } from './DocEditor';
 import { DocToolbar, type DocWidth } from './DocToolbar';
@@ -39,16 +41,22 @@ const WIDTH_PX: Record<DocWidth, number> = {
 export function DocView({
   docId = '',
   pageId,
+  // A Doc is page-content, not list-task content, so it renders identically for
+  // any scope. The prop is accepted so a space/folder route can mount a Doc view
+  // through ScopeViewRoute without diverging from the list-route DocView.
+  scope: _scope,
 }: {
   docId?: string;
   pageId?: string;
+  scope?: ViewScope;
 }) {
   const [activeDocId, setActiveDocId] = useState(docId);
   const [activePageId, setActivePageId] = useState<string | undefined>(pageId);
   const [editing, setEditing] = useState(false);
   const [edits, setEdits] = useState<Record<string, PageEdit>>({});
-  // ClickUp opens a doc with the page-tree rail collapsed; the "pages" pill toggles it.
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // ClickUp opens a doc with the page-tree rail expanded (oracle: seed-view-doc);
+  // the "pages" pill toggles it.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [favorites, setFavorites] = useState<Record<string, boolean>>({});
   const [width, setWidth] = useState<DocWidth>('default');
   const [serif, setSerif] = useState(false);
@@ -154,6 +162,19 @@ export function DocView({
     setEditing(true);
     requestAnimationFrame(() => editorRef.current?.focus());
   }, []);
+
+  // Page-tree "Add page": mint a fresh in-session subpage and switch to it.
+  const addPage = useCallback(() => {
+    subpageSeq.current += 1;
+    const id = `extra-${activeDocId}-${subpageSeq.current}`;
+    const name = `Untitled page ${subpageSeq.current}`;
+    setExtraPages((prev) => {
+      const list = prev[activeDocId] ?? [];
+      return { ...prev, [activeDocId]: [...list, { id, name, content: '' }] };
+    });
+    setActivePageId(id);
+    setEditing(false);
+  }, [activeDocId]);
 
   const blankWiki = useCallback(() => {
     sideEffectForBlock('subpage');
@@ -272,11 +293,12 @@ export function DocView({
       style={{ display: 'flex', height: '100%', overflow: 'hidden', background: DOC.bg }}
     >
       {sidebarOpen && (
-        <DocSidebar
+        <DocPageTree
           docId={activeDocId}
           pageId={activePageId}
-          extraPages={extraPages}
+          extraPages={docExtras}
           onSelect={select}
+          onAddPage={addPage}
         />
       )}
 

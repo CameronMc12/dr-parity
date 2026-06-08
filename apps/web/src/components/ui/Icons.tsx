@@ -149,6 +149,16 @@ export const TeamsIcon = makeIcon(
   </>
 );
 
+// Goals: trophy, matches the Goals rail item in the oracle.
+export const GoalsIcon = makeIcon(
+  <path
+    fillRule="evenodd"
+    d="M6 3a1 1 0 0 0-1 1v1H3.5A1.5 1.5 0 0 0 2 6.5C2 9.06 3.7 11.2 6.02 11.83A6.01 6.01 0 0 0 11 14.93V17H8a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2h-3v-2.07a6.01 6.01 0 0 0 4.98-3.1C20.3 11.2 22 9.06 22 6.5A1.5 1.5 0 0 0 20.5 5H19V4a1 1 0 0 0-1-1H6Zm-1 4H4c.04 1.2.7 2.25 1.66 2.85A6.04 6.04 0 0 1 5 7Zm14 0c0 1.01-.25 1.97-.66 2.81A3.5 3.5 0 0 0 20 7h-1Z"
+    clipRule="evenodd"
+    style={{ color: 'inherit' }}
+  />
+);
+
 // Upgrade: filled up-arrow, matches oracle (purple in the rail).
 export const UpgradeIcon = makeIcon(
   <path d="M11.29 4.3a1 1 0 0 1 1.42 0l5 5a1 1 0 0 1-1.42 1.4L13 7.42V19a1 1 0 1 1-2 0V7.41l-3.29 3.3A1 1 0 1 1 6.3 9.3l5-5Z" style={{ color: 'inherit' }} />

@@ -24,14 +24,17 @@
 
 import { useState } from 'react';
 import { resolveViewListId } from '@/lib/view-data';
+import type { ViewScope } from '@/lib/view-scope';
+import { useScopeListToken } from '@/lib/view-scope';
 import { ViewShell } from '@/components/views/ViewShell';
 import { ViewToolbar } from '@/components/views/ViewToolbar';
 import { EmbedEmptyState } from './EmbedEmptyState';
 import { EmbedFrame } from './EmbedFrame';
 import type { EmbedSource } from './EmbedSourceConfig';
 
-export function EmbedView({ viewId }: { viewId: string }) {
-  const listId = resolveViewListId(viewId);
+export function EmbedView({ viewId, scope }: { viewId: string; scope?: ViewScope }) {
+  const effectiveScope: ViewScope = scope ?? { kind: 'list', listId: resolveViewListId(viewId) };
+  const listId = resolveViewListId(useScopeListToken(effectiveScope, viewId));
 
   // The connected source (null = empty state). `editing` reopens the empty
   // state (and its source-config popover) while keeping the last source prefilled.
@@ -41,7 +44,7 @@ export function EmbedView({ viewId }: { viewId: string }) {
   const showFrame = source != null && !editing;
 
   return (
-    <ViewShell code="embed" viewId={viewId}>
+    <ViewShell code="embed" viewId={viewId} scope={scope}>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
         <ViewToolbar listId={listId} viewId={viewId} controls={['customize']} />
 

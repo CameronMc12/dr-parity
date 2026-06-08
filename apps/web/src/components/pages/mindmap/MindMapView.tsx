@@ -13,6 +13,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { resolveViewListId } from '@/lib/view-data';
+import type { ViewScope } from '@/lib/view-scope';
+import { useScopeListToken } from '@/lib/view-scope';
 import { useTaskContextMenu } from '@/components/menus/useTaskContextMenu';
 import { ViewShell } from '@/components/views/ViewShell';
 import { ViewToolbar } from '@/components/views/ViewToolbar';
@@ -33,8 +35,9 @@ import { useStructureChoice } from './use-structure';
 const CANVAS_BG = 'var(--cu-bg-app, rgb(20,20,20))';
 const TEXT_MUTED = 'var(--cu-text-muted, rgb(120,120,120))';
 
-export function MindMapView({ viewId }: { viewId: string }) {
-  const listId = resolveViewListId(viewId);
+export function MindMapView({ viewId, scope }: { viewId: string; scope?: ViewScope }) {
+  const effectiveScope: ViewScope = scope ?? { kind: 'list', listId: resolveViewListId(viewId) };
+  const listId = resolveViewListId(useScopeListToken(effectiveScope, viewId));
   const listName = useListName(listId);
   const { structure, choose, reset } = useStructureChoice(viewId);
 
@@ -136,7 +139,7 @@ export function MindMapView({ viewId }: { viewId: string }) {
 
   if (showChooser) {
     return (
-      <ViewShell code="mm" viewId={viewId}>
+      <ViewShell code="mm" viewId={viewId} scope={scope}>
         <div style={{ position: 'relative', height: '100%', minHeight: 0 }}>
           <StructureChooser onChoose={choose} />
         </div>
@@ -146,7 +149,7 @@ export function MindMapView({ viewId }: { viewId: string }) {
 
   if (activeStructure === 'freeform') {
     return (
-      <ViewShell code="mm" viewId={viewId}>
+      <ViewShell code="mm" viewId={viewId} scope={scope}>
         <div
           style={{
             position: 'relative',
@@ -164,7 +167,7 @@ export function MindMapView({ viewId }: { viewId: string }) {
   }
 
   return (
-    <ViewShell code="mm" viewId={viewId}>
+    <ViewShell code="mm" viewId={viewId} scope={scope}>
       <div
         style={{
           display: 'flex',

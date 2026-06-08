@@ -27,6 +27,50 @@ interface WorkspaceTree {
 export const WORKSPACE_TREE = treeJson as WorkspaceTree;
 
 /**
+ * The seed space that ships with real, populated lists. Used to resolve the
+ * app's default landing list so the first view a user sees is never empty.
+ */
+const SEED_SPACE_MATCH = /DR-PARITY-SEED/i;
+
+/**
+ * Resolve the default list the app should open on launch: the first non-empty
+ * list under the DR-PARITY-SEED space (folder lists first, then folderless),
+ * falling back to the first non-empty list anywhere, then the very first list.
+ *
+ * Data-driven so the default tracks the seed data instead of a brittle hardcode.
+ */
+export function getDefaultListId(): string | null {
+  const allLists = (space: SpaceNode): ListNode[] => [
+    ...space.folders.flatMap((f) => f.lists),
+    ...space.folderlessLists,
+  ];
+
+  const seedSpace = WORKSPACE_TREE.spaces.find((s) => SEED_SPACE_MATCH.test(s.name));
+  const seedNonEmpty = seedSpace && allLists(seedSpace).find((l) => l.count > 0);
+  if (seedNonEmpty) return seedNonEmpty.id;
+
+  for (const space of WORKSPACE_TREE.spaces) {
+    const nonEmpty = allLists(space).find((l) => l.count > 0);
+    if (nonEmpty) return nonEmpty.id;
+  }
+
+  const firstSpace = WORKSPACE_TREE.spaces[0];
+  return firstSpace ? (allLists(firstSpace)[0]?.id ?? null) : null;
+}
+
+/** The workspace id used to build absolute view URLs. */
+export const WORKSPACE_ID = '90152566819';
+
+/**
+ * Absolute List-view URL for the app's default landing list, e.g.
+ * `/90152566819/v/l/901523751540`. Falls back to `/home` if no list resolves.
+ */
+export function getDefaultListUrl(): string {
+  const listId = getDefaultListId();
+  return listId ? `/${WORKSPACE_ID}/v/l/${listId}` : `/${WORKSPACE_ID}/home`;
+}
+
+/**
  * View URLs use an opaque viewId (e.g. `/v/l/2kyr6013-2255`) rather than the
  * raw listId. ClickUp does not expose the view->list map in the structural
  * export, so the mappings observed in the crawl are recorded here. Add more

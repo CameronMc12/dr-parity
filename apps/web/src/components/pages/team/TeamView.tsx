@@ -17,6 +17,8 @@ import { useMemo, useState } from 'react';
 import { ViewShell } from '@/components/views/ViewShell';
 import { useTaskContextMenu } from '@/components/menus/useTaskContextMenu';
 import { resolveViewListId } from '@/lib/view-data';
+import type { ViewScope } from '@/lib/view-scope';
+import { useScopeListToken } from '@/lib/view-scope';
 import type { Task } from '@/store/workspace/types';
 import type { TeamBucket, TeamStatusGroup } from './team-data';
 import { isTaskDone, refilterBucket, useTeamBuckets } from './team-data';
@@ -38,9 +40,11 @@ const HIGH_PRIORITY = new Set(['urgent', 'high']);
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 const PRIORITY_RANK_DEFAULT = 2;
 
-export function TeamView({ viewId }: { viewId: string }) {
-  const listId = resolveViewListId(viewId);
-  const buckets = useTeamBuckets(viewId);
+export function TeamView({ viewId, scope }: { viewId: string; scope?: ViewScope }) {
+  const effectiveScope: ViewScope = scope ?? { kind: 'list', listId: resolveViewListId(viewId) };
+  const dataToken = useScopeListToken(effectiveScope, viewId);
+  const listId = resolveViewListId(dataToken);
+  const buckets = useTeamBuckets(dataToken);
   const { onContextMenu, menu } = useTaskContextMenu();
 
   const [separate, setSeparate] = useState(true);
@@ -61,7 +65,7 @@ export function TeamView({ viewId }: { viewId: string }) {
   );
 
   return (
-    <ViewShell code="team" viewId={viewId}>
+    <ViewShell code="team" viewId={viewId} scope={scope}>
       <div
         style={{
           display: 'flex',

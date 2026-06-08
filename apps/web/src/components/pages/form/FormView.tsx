@@ -19,13 +19,17 @@ import { useCallback } from 'react';
 import { ViewShell } from '@/components/views/ViewShell';
 import { ViewToolbar } from '@/components/views/ViewToolbar';
 import { resolveViewListId } from '@/lib/view-data';
+import type { ViewScope } from '@/lib/view-scope';
+import { useScopeListToken } from '@/lib/view-scope';
 import type { TemplateId } from './form-templates';
 import { useFormChoice, useFormChoiceStore } from './form-choice-store';
 import { TemplateChooser } from './TemplateChooser';
 import { FormBuilder } from './FormBuilder';
 
-export function FormView({ viewId }: { viewId: string }) {
-  const listId = resolveViewListId(viewId);
+export function FormView({ viewId, scope }: { viewId: string; scope?: ViewScope }) {
+  const effectiveScope: ViewScope = scope ?? { kind: 'list', listId: resolveViewListId(viewId) };
+  // Form submit creates a real task in a concrete list (scope's default list).
+  const listId = resolveViewListId(useScopeListToken(effectiveScope, viewId));
   const choice = useFormChoice(viewId);
   const setChoice = useFormChoiceStore((s) => s.setChoice);
   const clearChoice = useFormChoiceStore((s) => s.clearChoice);

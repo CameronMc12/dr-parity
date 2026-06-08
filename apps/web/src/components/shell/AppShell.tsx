@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { CreateTaskModal } from '@/components/create/CreateTaskModal';
+import { SettingsModal } from '@/components/pages/settings/SettingsModal';
 import { TaskModal } from '@/components/task/TaskModal';
 import { IconBar } from './IconBar';
 import { NotificationsBanner } from './NotificationsBanner';
@@ -45,6 +46,9 @@ export function AppShell({
 
       {/* Global task-detail modal — overlays the active route, list stays behind */}
       <TaskModal wsId={wsId} />
+
+      {/* Global centered Settings modal — opened via avatar menu or /settings */}
+      <SettingsModal />
 
       {/* global-actions-bar — full width, h=40, white bg */}
       <TopBar />

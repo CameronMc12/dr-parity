@@ -20,8 +20,10 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Menu } from '@/components/ui/Menu';
 import { viewTypeByCode, type ViewType } from '@/lib/view-types';
 import { VIEW_APPS, setEmbedPreset, type ViewApp } from '@/lib/view-apps';
+import { scopeKey, type ViewScope } from '@/lib/view-scope';
 import { useAddView } from '@/store/views/hooks';
 import { SearchIcon } from '@/components/pages/list-view-icons';
+import { viewRoutePath } from './view-route';
 
 const TEXT_PRIMARY = 'var(--cu-text-primary, rgb(32,32,32))';
 const TEXT_MUTED = 'var(--cu-text-muted, rgb(130,130,130))';
@@ -248,7 +250,7 @@ function Checkbox({
 
 // ── Menu ───────────────────────────────────────────────────────────────────
 
-export function AddViewMenu({ listId }: { listId: string }) {
+export function AddViewMenu({ scope }: { scope: ViewScope }) {
   const router = useRouter();
   const pathname = usePathname();
   const addView = useAddView();
@@ -256,6 +258,7 @@ export function AddViewMenu({ listId }: { listId: string }) {
   const [isPrivate, setIsPrivate] = useState(false);
   const [pinned, setPinned] = useState(false);
 
+  const key = scopeKey(scope);
   const wsId = pathname.split('/').filter(Boolean)[0] ?? '';
   const q = query.trim().toLowerCase();
 
@@ -278,14 +281,14 @@ export function AddViewMenu({ listId }: { listId: string }) {
   };
 
   const selectView = (type: ViewType) => {
-    const view = addView(listId, type.code, nameFor(type.label));
-    if (wsId) router.push(`/${wsId}/v/${type.code}/${view.id}`);
+    const view = addView(key, type.code, nameFor(type.label));
+    if (wsId) router.push(viewRoutePath(wsId, scope, type.code, view.id));
   };
 
   const selectApp = (app: ViewApp) => {
-    const view = addView(listId, 'embed', nameFor(app.label));
+    const view = addView(key, 'embed', nameFor(app.label));
     setEmbedPreset(view.id, app.url);
-    if (wsId) router.push(`/${wsId}/v/embed/${view.id}`);
+    if (wsId) router.push(viewRoutePath(wsId, scope, 'embed', view.id));
   };
 
   const empty = popular.length === 0 && more.length === 0 && apps.length === 0;

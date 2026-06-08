@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useShellStore } from '@/store/shell-store';
 import { HomeSidebar } from './sidebars/HomeSidebar';
+import { ChatSidebar } from './sidebars/ChatSidebar';
 import { DocsSidebar } from './sidebars/DocsSidebar';
 import { SpacesSidebar } from './sidebars/SpacesSidebar';
 import { SettingsSidebar } from './sidebars/SettingsSidebar';
@@ -13,7 +14,7 @@ import { WhiteboardsSidebar } from './sidebars/WhiteboardsSidebar';
 const SIDEBAR_MAP: Record<string, ReactNode> = {
   home:        <HomeSidebar />,
   spaces:      <SpacesSidebar />,
-  chat:        <HomeSidebar />, // ClickUp Chat reuses the Home nav tree (Channels / DMs / Spaces)
+  chat:        <ChatSidebar />,
   planner:     <PlannerSidebar />,
   ai:          <AiSidebar />,
   teams:       <TeamsSidebar />,

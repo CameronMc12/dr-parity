@@ -13,10 +13,11 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { WorkspaceState } from './types';
+import type { Message, WorkspaceState } from './types';
 import { createTaskSlice } from './tasks.slice';
 import { createTreeSlice } from './tree.slice';
 import { createChatSlice } from './chat.slice';
+import { createDmSlice } from './dm.slice';
 import { createFavoritesSlice } from './favorites.slice';
 import { createViewConfigSlice } from './view-config.slice';
 import { createCustomFieldsSlice } from './custom-fields';
@@ -25,6 +26,8 @@ import type { ViewConfig } from './view-config.types';
 import {
   seedChannels,
   seedCurrentMemberId,
+  seedDmMessages,
+  seedDms,
   seedDocs,
   seedExpanded,
   seedMembers,
@@ -40,7 +43,9 @@ function seededState() {
     tasks: seedTasks(),
     tree: seedTree(),
     channels: seedChannels(),
-    messages: {} as Record<string, never>,
+    messages: {} as Record<string, Message[]>,
+    dms: seedDms(),
+    dmMessages: seedDmMessages(),
     docs: seedDocs(),
     members: seedMembers(),
     recents: seedRecents(),
@@ -61,6 +66,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       ...createTaskSlice(set, get, store),
       ...createTreeSlice(set, get, store),
       ...createChatSlice(set, get, store),
+      ...createDmSlice(set, get, store),
       ...createFavoritesSlice(set, get, store),
       ...createViewConfigSlice(set, get, store),
       ...createCustomFieldsSlice(set, get, store),
@@ -68,14 +74,44 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     }),
     {
       name: WORKSPACE_STORAGE_KEY,
-      version: 1,
+      version: 2,
       skipHydration: true,
+      // v1 → v2: re-seed the chat-related slices so the corrected structure
+      // always wins (Project 1 channel first + listId on the 4 list-backed
+      // channels, Onboarding Assistant + self-DM). Other slices are preserved
+      // from the persisted payload when present, else fall back to seed.
+      migrate: (persisted) => {
+        const prev = (persisted ?? {}) as Partial<WorkspaceState>;
+        const seed = seededState();
+        return {
+          ...seed,
+          tasks: prev.tasks ?? seed.tasks,
+          tree: prev.tree ?? seed.tree,
+          docs: prev.docs ?? seed.docs,
+          members: prev.members ?? seed.members,
+          recents: prev.recents ?? seed.recents,
+          favorites: prev.favorites ?? seed.favorites,
+          expanded: prev.expanded ?? seed.expanded,
+          currentMemberId: prev.currentMemberId ?? seed.currentMemberId,
+          viewConfigs: prev.viewConfigs ?? seed.viewConfigs,
+          customFields: prev.customFields ?? seed.customFields,
+          customFieldValues: prev.customFieldValues ?? seed.customFieldValues,
+          idCounter: prev.idCounter ?? seed.idCounter,
+          // Forced re-seed: drop stale channels/dms/messages entirely.
+          channels: seed.channels,
+          messages: seed.messages,
+          dms: seed.dms,
+          dmMessages: seed.dmMessages,
+        };
+      },
       // Persist data + UI state only; actions are never serialised.
       partialize: (state) => ({
         tasks: state.tasks,
         tree: state.tree,
         channels: state.channels,
         messages: state.messages,
+        dms: state.dms,
+        dmMessages: state.dmMessages,
         docs: state.docs,
         members: state.members,
         recents: state.recents,

@@ -69,8 +69,10 @@ export function MonthGrid({ tasks, scrollTarget, actions, onChipContextMenu }: M
   // can compensate scrollTop and keep the viewport anchored.
   const pendingPrependAnchor = useRef<{ topKey: number; prevTop: number } | null>(null);
   // A month key we want to scroll to the top of (Today / prev / next request),
-  // consumed once the block is present in the DOM.
-  const pendingScrollKey = useRef<number | null>(null);
+  // consumed once the block is present in the DOM. Seeded with the initial
+  // centre month so the very first layout pass scrolls the stack to the current
+  // month instead of leaving it parked on the earliest buffered block.
+  const pendingScrollKey = useRef<number | null>(toMonthKey(scrollTarget.monthMs));
 
   const scrollToPending = useCallback(() => {
     const key = pendingScrollKey.current;

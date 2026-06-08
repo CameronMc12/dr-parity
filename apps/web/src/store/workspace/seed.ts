@@ -10,6 +10,8 @@ import { DOCS_TREE } from '@/data/docs-tree';
 import { RECENTS } from '@/data/home-dashboard';
 import type {
   Channel,
+  DirectMessage,
+  DmMessage,
   DocNode,
   Member,
   RecentItem,
@@ -17,14 +19,54 @@ import type {
   WorkspaceTree,
 } from './types';
 
-/** Seeded channel list — mirrors the hardcoded Home sidebar list. */
+/** Seeded channel list — mirrors the real ClickUp Chat sidebar order/labels. */
 export const SEED_CHANNELS: Channel[] = [
-  { id: 'ch-ab-content', name: 'AB Content Management' },
-  { id: 'ch-demo', name: 'DEMO' },
-  { id: 'ch-test', name: 'TEST' },
-  { id: 'ch-general', name: 'General' },
+  { id: 'ch-project-1', name: 'Project 1', listId: '901523542898' },
+  { id: 'ch-ab-content', name: 'AB Content Management', listId: '901523547043' },
+  { id: 'ch-demo', name: 'DEMO', listId: '901523546368' },
+  { id: 'ch-test', name: 'TEST', listId: '901523546362' },
+  { id: 'ch-general', name: "General - Cameron Mc's Workspace" },
   { id: 'ch-welcome', name: 'Welcome' },
 ];
+
+/** Channel ids that render with a workspace badge (green "C") instead of a hash. */
+export const WORKSPACE_BADGE_CHANNEL_IDS = new Set(['ch-general']);
+
+/** Channel ids that render with the plain "#" glyph (no list rows). */
+export const PLAIN_HASH_CHANNEL_IDS = new Set(['ch-welcome']);
+
+/** The workspace owner id, used to derive the self-DM and DM participant sets. */
+const OWNER_ID = (membersJson as Member[])[0]?.id ?? 'me';
+
+/** Synthetic member backing the "Onboarding Assistant" DM in the reference. */
+export const ONBOARDING_ASSISTANT: Member = {
+  id: 'm-onboarding-assistant',
+  name: 'Onboarding Assistant',
+  initials: 'OA',
+  color: '#7b68ee',
+  email: 'assistant@clickup.com',
+  roleKey: 'bot',
+};
+
+/** Seed DMs: one with the Onboarding Assistant, one self-DM (Cameron Mc — You). */
+export const SEED_DMS: DirectMessage[] = [
+  { id: 'dm-onboarding', memberIds: [OWNER_ID, ONBOARDING_ASSISTANT.id].sort() },
+  { id: 'dm-self', memberIds: [OWNER_ID] },
+];
+
+/** Seeded DM messages so the threads aren't empty on first open. */
+const SEED_DM_MESSAGES: Record<string, DmMessage[]> = {
+  'dm-onboarding': [
+    {
+      id: 'dmsg-seed-1',
+      dmId: 'dm-onboarding',
+      authorId: ONBOARDING_ASSISTANT.id,
+      text: "Welcome to ClickUp! I'm here to help you get set up. Ask me anything.",
+      createdAt: 1_716_000_000_000,
+    },
+  ],
+  'dm-self': [],
+};
 
 export function seedTree(): WorkspaceTree {
   return structuredClone(treeJson as WorkspaceTree);
@@ -46,7 +88,15 @@ export function seedTasks(): Record<string, Task> {
 }
 
 export function seedMembers(): Member[] {
-  return structuredClone(membersJson as Member[]);
+  return [...structuredClone(membersJson as Member[]), { ...ONBOARDING_ASSISTANT }];
+}
+
+export function seedDms(): DirectMessage[] {
+  return structuredClone(SEED_DMS);
+}
+
+export function seedDmMessages(): Record<string, DmMessage[]> {
+  return structuredClone(SEED_DM_MESSAGES);
 }
 
 export function seedChannels(): Channel[] {

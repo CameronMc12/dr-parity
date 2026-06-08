@@ -19,6 +19,8 @@ import { useTaskContextMenu } from '@/components/menus/useTaskContextMenu';
 import { ViewToolbar } from '@/components/views/ViewToolbar';
 import { ViewShell } from '@/components/views/ViewShell';
 import { useUiStore } from '@/store/ui-store';
+import type { ViewScope } from '@/lib/view-scope';
+import { useScopeListToken } from '@/lib/view-scope';
 import { clusterTasks, placeTask } from './geo';
 import { MapCanvas } from './MapCanvas';
 import { MapTaskList } from './MapTaskList';
@@ -27,9 +29,13 @@ import { MAP } from './tokens';
 /** SVG-space cell edge used to grid-cluster overlapping pins. */
 const CLUSTER_CELL = 26;
 
-export function MapView({ viewId }: { viewId: string }) {
-  const listId = resolveViewListId(viewId);
-  const tasks = useViewTasks(viewId);
+export function MapView({ viewId, scope }: { viewId: string; scope?: ViewScope }) {
+  // List scope (or no scope) -> the view's own list. Space/folder scope -> the
+  // scope's default list, so the map renders real tasks from a concrete list.
+  const effectiveScope: ViewScope = scope ?? { kind: 'list', listId: resolveViewListId(viewId) };
+  const dataToken = useScopeListToken(effectiveScope, viewId);
+  const listId = resolveViewListId(dataToken);
+  const tasks = useViewTasks(dataToken);
   const openTask = useUiStore((s) => s.openTask);
   const { onContextMenu, menu } = useTaskContextMenu();
 
@@ -47,7 +53,7 @@ export function MapView({ viewId }: { viewId: string }) {
   const clusters = useMemo(() => clusterTasks(placed, CLUSTER_CELL), [placed]);
 
   return (
-    <ViewShell code="map" viewId={viewId}>
+    <ViewShell code="map" viewId={viewId} scope={scope}>
       <div
         style={{
           // ViewShell wraps children in an `overflow: auto` slot. The map must

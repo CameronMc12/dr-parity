@@ -95,6 +95,20 @@ export function ChatGlyph({ size = 14, color }: GlyphProps) {
   );
 }
 
+export function ChannelGlyph({ size = 14, color }: GlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"
+        stroke={color}
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function FormGlyph({ size = 14, color }: GlyphProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">

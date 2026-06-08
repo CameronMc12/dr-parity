@@ -230,6 +230,19 @@ export function useScopeDefaultListId(scope: ViewScope): string {
   );
 }
 
+/**
+ * The data token an APP/"other" view body should feed to the per-view data hooks
+ * (`useViewTasks`, `useTeamBuckets`, `useEnsureDashboard`, …). For a list scope
+ * this is the listId — byte-identical to the body's previous `viewId`-derived
+ * listId. For a space/folder scope it is the scope's default/first listId, so the
+ * body renders real tasks from a concrete list instead of an unresolvable
+ * `space:<id>` token. Empty string when the scope covers no lists.
+ */
+export function useScopeListToken(scope: ViewScope, fallbackViewId: string): string {
+  const defaultListId = useScopeDefaultListId(scope);
+  return scope.kind === 'list' ? fallbackViewId : defaultListId;
+}
+
 /** Display name + dot colour for a scope (space colour / folder + list neutral). */
 export function useScopeMeta(scope: ViewScope): { name: string; color: string } {
   return useWorkspaceStore(

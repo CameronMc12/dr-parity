@@ -6,6 +6,7 @@
 
 import type { ViewConfig, ViewConfigActions } from './view-config.types';
 import type { CustomFieldsActions } from './custom-fields';
+import type { DmActions } from './dm.slice';
 
 export interface Assignee {
   id: string;
@@ -151,11 +152,33 @@ export interface WorkspaceTree {
 export interface Channel {
   id: string;
   name: string;
+  /**
+   * Id of the List this channel is backed by. Present on "list-backed" channels
+   * (which open the list's full view-tabs Channel view); absent on pure channels
+   * (which open a plain chat thread).
+   */
+  listId?: string;
 }
 
 export interface Message {
   id: string;
   channelId: string;
+  authorId: string;
+  text: string;
+  createdAt: number;
+}
+
+/** A direct-message conversation between the current member and others. */
+export interface DirectMessage {
+  id: string;
+  /** Member ids participating (excludes nobody; self-DM lists only the owner). */
+  memberIds: string[];
+}
+
+/** A single DM message. Bucketed in `dmMessages` by DM id. */
+export interface DmMessage {
+  id: string;
+  dmId: string;
   authorId: string;
   text: string;
   createdAt: number;
@@ -185,12 +208,14 @@ export interface RecentItem {
 
 export type { ViewConfig } from './view-config.types';
 
-export interface WorkspaceState extends ViewConfigActions, CustomFieldsActions {
+export interface WorkspaceState extends ViewConfigActions, CustomFieldsActions, DmActions {
   // entities
   tasks: Record<string, Task>;
   tree: WorkspaceTree;
   channels: Channel[];
   messages: Record<string, Message[]>; // keyed by channelId
+  dms: DirectMessage[];
+  dmMessages: Record<string, DmMessage[]>; // keyed by dmId
   docs: DocNode[];
   members: Member[];
   recents: RecentItem[];

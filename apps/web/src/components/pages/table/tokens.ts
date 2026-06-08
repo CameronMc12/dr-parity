@@ -18,7 +18,7 @@ export const TBL = {
   /** Sticky header background (sits above scrolling rows). */
   headerBg: 'var(--cu-bg-app)',
   /** Group badge pill. */
-  pillBg: 'rgb(42, 42, 42)',
+  pillBg: 'var(--cu-status-pill-bg)',
   indigoBg: 'var(--cu-indigo, rgb(50,36,129))',
   indigoText: 'var(--cu-indigo-text, rgb(167,160,249))',
   /** Menu surface for the bottom create-row task-type dropdown. */

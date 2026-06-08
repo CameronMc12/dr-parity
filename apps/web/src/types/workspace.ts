@@ -16,6 +16,7 @@ export type IconBarItemId =
   | 'dashboards'
   | 'whiteboards'
   | 'timesheets'
+  | 'goals'
   | 'settings';
 
 export interface IconBarItem {

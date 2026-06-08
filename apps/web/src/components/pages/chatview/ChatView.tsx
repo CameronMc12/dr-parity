@@ -17,6 +17,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveViewListId, useViewTasks } from '@/lib/view-data';
+import type { ViewScope } from '@/lib/view-scope';
+import { useScopeListToken } from '@/lib/view-scope';
 import { useTaskContextMenu } from '@/components/menus/useTaskContextMenu';
 import { ViewShell } from '@/components/views/ViewShell';
 import { useUiStore } from '@/store/ui-store';
@@ -85,9 +87,12 @@ function ChannelHeader({ name, count }: { name: string; count: number }) {
   );
 }
 
-export function ChatView({ viewId }: { viewId: string }) {
-  const listId = resolveViewListId(viewId);
-  const tasks = useViewTasks(viewId);
+export function ChatView({ viewId, scope }: { viewId: string; scope?: ViewScope }) {
+  const effectiveScope: ViewScope = scope ?? { kind: 'list', listId: resolveViewListId(viewId) };
+  // Messages are seeded from a concrete list's tasks (the scope's default list).
+  const dataToken = useScopeListToken(effectiveScope, viewId);
+  const listId = resolveViewListId(dataToken);
+  const tasks = useViewTasks(dataToken);
   const members = useMembers();
   const currentMemberId = useCurrentMemberId();
   const openTask = useUiStore((s) => s.openTask);
@@ -200,7 +205,7 @@ export function ChatView({ viewId }: { viewId: string }) {
   let prevTime = 0;
 
   return (
-    <ViewShell code="chat" viewId={viewId}>
+    <ViewShell code="chat" viewId={viewId} scope={scope}>
       {/*
         ViewShell wraps children in a block with `overflow: auto`. That wrapper is
         a flex child with a definite height, so `height: 100%` here resolves. We

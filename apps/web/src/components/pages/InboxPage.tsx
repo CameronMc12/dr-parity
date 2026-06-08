@@ -3,19 +3,20 @@
 import { useState } from 'react';
 import {
   BORDER,
-  EmptyState,
   FilterIcon,
   GearIcon,
   PageSurface,
   PillButton,
   TEXT_MUTED,
+  TEXT_PRIMARY,
   TabStrip,
 } from './page-primitives';
 
 /**
  * Home → Inbox. Oracle: /inbox?tab=primary
  * Full-width tab strip (Primary / Other / Later / Cleared), a Filter +
- * settings/Clear-all sub-toolbar, then the "Looking to collaborate?" zero-state.
+ * settings/Clear-all sub-toolbar, then the "Inbox Zero 🎉" zero-state with a
+ * Motivational Quote card beneath it.
  */
 
 const TABS = [
@@ -81,29 +82,74 @@ export function InboxPage() {
         </button>
       </div>
 
-      <EmptyState
-        illustration={<CollaborateIllustration />}
-        title="Looking to collaborate?"
-        subtitle="Collaboration is one invite away."
-        action={
-          <button
-            style={{
-              height: 36,
-              paddingLeft: 20,
-              paddingRight: 20,
-              background: 'var(--cu-text-primary)',
-              border: 'none',
-              borderRadius: 8,
-              color: 'var(--cu-bg-app)',
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            Invite people
-          </button>
-        }
-      />
+      {/* Inbox Zero zero-state (oracle: /inbox?tab=primary cleared). The
+          centred congratulations block fills the available space; a Motivational
+          Quote card is pinned beneath it, divided by a hairline border. */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          textAlign: 'center',
+          padding: 24,
+        }}
+      >
+        <div style={{ marginBottom: 18 }}>
+          <InboxZeroIllustration />
+        </div>
+        <div style={{ fontSize: 20, fontWeight: 600, color: TEXT_PRIMARY }}>
+          Inbox Zero
+        </div>
+        <div style={{ fontSize: 14, color: TEXT_MUTED, marginTop: 8 }}>
+          Congratulations! You cleared your important notifications 🎉
+        </div>
+      </div>
+
+      <div
+        style={{
+          flexShrink: 0,
+          borderTop: `1px solid ${BORDER}`,
+          paddingTop: 16,
+          paddingBottom: 64,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          textAlign: 'center',
+        }}
+      >
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            height: 24,
+            paddingLeft: 10,
+            paddingRight: 10,
+            border: `1px solid ${BORDER}`,
+            borderRadius: 12,
+            fontSize: 12,
+            fontWeight: 500,
+            color: TEXT_MUTED,
+          }}
+        >
+          Motivational Quote
+        </span>
+        <div
+          style={{
+            marginTop: 28,
+            fontSize: 22,
+            fontWeight: 700,
+            color: TEXT_PRIMARY,
+          }}
+        >
+          Every great dream begins with a dreamer.
+        </div>
+        <div style={{ marginTop: 12, fontSize: 14, color: TEXT_MUTED }}>
+          — Harriet Tubman
+        </div>
+      </div>
     </PageSurface>
   );
 }
@@ -144,30 +190,24 @@ function ClearedIcon() {
   );
 }
 
-function CollaborateIllustration() {
+function InboxZeroIllustration() {
+  // Light-purple inbox tray (oracle Inbox Zero glyph).
   return (
-    <span
-      style={{
-        width: 64,
-        height: 64,
-        borderRadius: 16,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'linear-gradient(135deg, rgb(124,77,255) 0%, rgb(90,67,214) 100%)',
-        color: 'white',
-      }}
-    >
-      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <circle cx="9" cy="9" r="3.2" stroke="currentColor" strokeWidth="1.8" />
-        <circle cx="16.5" cy="11" r="2.6" stroke="currentColor" strokeWidth="1.8" />
-        <path
-          d="M3.5 18c0-2.5 2.4-4.2 5.5-4.2s5.5 1.7 5.5 4.2M14.5 17.5c.2-1.9 1.9-3 4-3 1.2 0 2.3.4 3 1"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-      </svg>
-    </span>
+    <svg width="72" height="72" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <path
+        d="M8 14a4 4 0 0 1 4-4h24a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H12a4 4 0 0 1-4-4V14Z"
+        fill="rgba(124, 77, 255, 0.10)"
+        stroke="rgba(124, 77, 255, 0.55)"
+        strokeWidth="2"
+      />
+      <path
+        d="M8 28h8l3 4h10l3-4h8"
+        fill="none"
+        stroke="rgba(124, 77, 255, 0.55)"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

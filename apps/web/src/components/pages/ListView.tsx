@@ -62,7 +62,7 @@ const APP_BG = 'var(--cu-bg-app)';
 
 const INDIGO_BG = 'var(--cu-indigo, rgb(50,36,129))';
 const INDIGO_TEXT = 'var(--cu-indigo-text, rgb(167,160,249))';
-const STATUS_PILL_BG = 'rgb(42, 42, 42)';
+const STATUS_PILL_BG = 'var(--cu-status-pill-bg)';
 const ADD_TASK_BG = 'rgb(34, 34, 34)';
 
 const ROW_PAD_LEFT = 20;

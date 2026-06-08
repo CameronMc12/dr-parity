@@ -22,6 +22,14 @@ interface UiState {
   toggleTaskSelected: (taskId: string) => void;
   setTasksSelected: (taskIds: string[], selected: boolean) => void;
   clearSelection: () => void;
+
+  /** Whether the centered Settings modal overlay is open. */
+  settingsOpen: boolean;
+  /** Active settings section key (e.g. 'profile', 'notifications'). */
+  settingsSection: string;
+  openSettings: (section?: string) => void;
+  closeSettings: () => void;
+  setSettingsSection: (section: string) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -51,4 +59,11 @@ export const useUiStore = create<UiState>((set) => ({
       return { selectedTaskIds: [...next] };
     }),
   clearSelection: () => set({ selectedTaskIds: [] }),
+
+  settingsOpen: false,
+  settingsSection: 'profile',
+  openSettings: (section) =>
+    set({ settingsOpen: true, settingsSection: section ?? 'profile' }),
+  closeSettings: () => set({ settingsOpen: false }),
+  setSettingsSection: (section) => set({ settingsSection: section }),
 }));

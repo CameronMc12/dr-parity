@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { useShellStore } from '@/store/shell-store';
-import { TeamsIcon, UpgradeIcon } from '@/components/ui/Icons';
+import { TeamsIcon, UpgradeIcon, GoalsIcon } from '@/components/ui/Icons';
 import type { IconBarItemId } from '@/types/workspace';
 
 // Oracle structure (measured localhost:7050):
@@ -34,6 +35,7 @@ const NAV_ITEMS: {
   { id: 'dashboards',  label: 'Dashboards',  iconId: 'cu3-icon-v4IaSidebarDashboards',  iconIdFilled: 'cu3-icon-v4IaSidebarDashboardsFilled' },
   { id: 'whiteboards', label: 'Whiteboards', iconId: 'cu3-icon-v4IaSidebarWhiteboards', iconIdFilled: 'cu3-icon-v4IaSidebarWhiteboardsFilled' },
   { id: 'timesheets',  label: 'Timesheets',  iconId: 'cu3-icon-v4IaSidebarTimesheets',  iconIdFilled: 'cu3-icon-v4IaSidebarTimesheetsFilled' },
+  { id: 'goals',       label: 'Goals',       Glyph: GoalsIcon },
 ];
 
 // Matches ClickUp's <cu3-icon> / <svg class="svg"> pattern
@@ -79,8 +81,36 @@ function NavLabel({ label, active }: { label: string; active?: boolean }) {
   );
 }
 
+// Double-chevron-right "expand sidebar" glyph shown at the top of the rail when
+// the sidebar panel is collapsed.
+function ExpandSidebarGlyph({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M13 7l5 5-5 5M6 7l5 5-5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+const DEFAULT_WS = '90152566819';
+
 export function IconBar() {
-  const { activeIcon, setActiveIcon } = useShellStore();
+  const activeIcon = useShellStore((s) => s.activeIcon);
+  const setActiveIcon = useShellStore((s) => s.setActiveIcon);
+  const sidebarOpen = useShellStore((s) => s.sidebarOpen);
+  const setSidebarOpen = useShellStore((s) => s.setSidebarOpen);
+  const pathname = usePathname();
+  const router = useRouter();
+  const wsId = pathname.split('/').filter(Boolean)[0] ?? DEFAULT_WS;
+
+  // Clicking a nav icon sets the active shell; Chat also navigates to its home
+  // route so the main panel switches to "New Direct Message".
+  const onNavClick = (id: NavItemId) => {
+    setActiveIcon(id as IconBarItemId);
+    if (id === 'chat') router.push(`/${wsId}/chat`);
+    if (id === 'docs') router.push(`/${wsId}/docs`);
+    if (id === 'dashboards') router.push(`/${wsId}/dashboards`);
+    if (id === 'goals') router.push(`/${wsId}/goals`);
+  };
 
   return (
     // <cu-simple-bar class="cu-simple-bar v3_9 v4 ...">
@@ -104,6 +134,32 @@ export function IconBar() {
             {/* All primary nav items — cu-simple-bar-home-switch__item (oracle: w=32, h=62, centered) */}
             {/* Link is icon-only (h=32); label is a separate sibling below it */}
             <div className="cu-simple-bar__body-items">
+              {!sidebarOpen && (
+                <div className="cu-simple-bar-home-switch__item expand-sidebar">
+                  <a
+                    className="cu-simple-bar-item__link"
+                    href="#"
+                    aria-label="Expand sidebar"
+                    data-test="global-sidebar-expand"
+                    onClick={(e) => { e.preventDefault(); setSidebarOpen(true); }}
+                    title="Expand sidebar"
+                  >
+                    <span className="cu-simple-bar-item__inner">
+                      <span className="cu-simple-bar-item__icon">
+                        <ExpandSidebarGlyph size={18} />
+                      </span>
+                    </span>
+                  </a>
+                  <hr
+                    aria-hidden="true"
+                    style={{
+                      border: 'none',
+                      borderTop: '1px solid var(--cu-border-divider, rgba(255,255,255,0.12))',
+                      margin: '6px 14px 8px',
+                    }}
+                  />
+                </div>
+              )}
               {NAV_ITEMS.map(({ id, label, iconId, iconIdFilled, Glyph, dot }) => {
                 const isActive = activeIcon === id;
                 return (
@@ -117,7 +173,7 @@ export function IconBar() {
                       href="#"
                       aria-label={label}
                       data-test={`global-sidebar-item-${id}`}
-                      onClick={(e) => { e.preventDefault(); setActiveIcon(id as IconBarItemId); }}
+                      onClick={(e) => { e.preventDefault(); onNavClick(id); }}
                       title={label}
                     >
                       <span className={`cu-simple-bar-item__inner${isActive ? ' active' : ''}`}>

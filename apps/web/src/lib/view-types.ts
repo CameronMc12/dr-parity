@@ -23,6 +23,7 @@ import {
 } from '@/components/pages/list-view-icons';
 import {
   ActivityGlyph,
+  ChannelGlyph,
   ChatGlyph,
   DashboardGlyph,
   DocGlyph,
@@ -75,6 +76,7 @@ export const VIEW_TYPES: ViewType[] = [
   { code: 'mm', label: 'Mind Map', description: 'Visual brainstorming of ideas', Glyph: MindMapGlyph, color: 'rgb(170,160,250)', category: 'data', seg: 'mm' },
   { code: 'dash', label: 'Dashboard', description: 'Track metrics & insights', Glyph: DashboardGlyph, color: 'rgb(170,120,230)', category: 'data', seg: 'dash' },
   // ── Apps / other ───────────────────────────────────────────────────────
+  { code: 'channel', label: 'Channel', description: 'Chat in this list with your team', Glyph: ChannelGlyph, color: NEUTRAL, category: 'other', seg: 'channel' },
   { code: 'dc', label: 'Doc', description: 'Collaborate & document anything', Glyph: DocGlyph, color: NEUTRAL, category: 'other', seg: 'dc' },
   { code: 'chat', label: 'Chat', description: 'Discuss work in real time', Glyph: ChatGlyph, color: NEUTRAL, category: 'other', seg: 'chat' },
   { code: 'form', label: 'Form', description: 'Collect, track & report data', Glyph: FormGlyph, color: NEUTRAL, category: 'other', seg: 'form' },
@@ -104,3 +106,10 @@ export const OTHER_VIEW_TYPES: ViewType[] = VIEW_TYPES.filter((v) => v.category 
  * this set by the per-list views store.
  */
 export const DEFAULT_VIEW_CODES: readonly string[] = ['l', 'b', 'cal', 'gtt', 'tbl'];
+
+/**
+ * View codes ClickUp pins on a list-backed Channel view's tab strip: they render
+ * immediately after the Channel tab (before the unpinned views) and a thin
+ * divider separates the Channel tab from this pinned group.
+ */
+export const PINNED_CHANNEL_CODES: readonly string[] = ['team', 'wb', 'act', 'map'];

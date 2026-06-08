@@ -12,21 +12,25 @@
 import { useState } from 'react';
 import { ViewShell } from '@/components/views/ViewShell';
 import { resolveViewListId } from '@/lib/view-data';
+import type { ViewScope } from '@/lib/view-scope';
+import { useScopeListToken } from '@/lib/view-scope';
 import { useEnsureDashboard } from '@/store/dashboard/hooks';
 import { DashboardToolbar } from './DashboardToolbar';
 import { DashboardGrid } from './DashboardGrid';
 import { AddCardModal } from './AddCardModal';
 import { DASH } from './tokens';
 
-export function DashboardView({ viewId }: { viewId: string }) {
-  const listId = resolveViewListId(viewId);
+export function DashboardView({ viewId, scope }: { viewId: string; scope?: ViewScope }) {
+  const effectiveScope: ViewScope = scope ?? { kind: 'list', listId: resolveViewListId(viewId) };
+  // Card bodies read a concrete list's tasks; layout persists per route viewId.
+  const listId = resolveViewListId(useScopeListToken(effectiveScope, viewId));
   useEnsureDashboard(viewId);
 
   const [editing, setEditing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
 
   return (
-    <ViewShell code="dash" viewId={viewId}>
+    <ViewShell code="dash" viewId={viewId} scope={scope}>
       <div
         style={{
           display: 'flex',

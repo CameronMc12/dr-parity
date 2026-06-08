@@ -24,6 +24,8 @@ import {
   useViewConfigForView,
   useViewTasks,
 } from '@/lib/view-data';
+import type { ViewScope } from '@/lib/view-scope';
+import { useScopeListToken } from '@/lib/view-scope';
 import { useMembers } from '@/store/workspace/hooks';
 import { useUiStore } from '@/store/ui-store';
 import { useTaskContextMenu } from '@/components/menus/useTaskContextMenu';
@@ -44,11 +46,13 @@ const ACTIVITY_CONTROLS: ViewToolbarControl[] = [
   'addTask',
 ];
 
-export function ActivityView({ viewId }: { viewId: string }) {
-  const listId = resolveViewListId(viewId);
-  const tasks = useViewTasks(viewId);
+export function ActivityView({ viewId, scope }: { viewId: string; scope?: ViewScope }) {
+  const effectiveScope: ViewScope = scope ?? { kind: 'list', listId: resolveViewListId(viewId) };
+  const dataToken = useScopeListToken(effectiveScope, viewId);
+  const listId = resolveViewListId(dataToken);
+  const tasks = useViewTasks(dataToken);
   const members = useMembers();
-  const config = useViewConfigForView(viewId);
+  const config = useViewConfigForView(dataToken);
   const openTask = useUiStore((s) => s.openTask);
   const { onContextMenu, menu } = useTaskContextMenu();
 
@@ -68,7 +72,7 @@ export function ActivityView({ viewId }: { viewId: string }) {
   );
 
   return (
-    <ViewShell code="act" viewId={viewId}>
+    <ViewShell code="act" viewId={viewId} scope={scope}>
       <ViewToolbar
         listId={listId}
         viewId={viewId}

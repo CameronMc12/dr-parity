@@ -22,6 +22,23 @@ const ACTIVE_BG = 'var(--cu-bg-active)';
 const COUNT_TEXT = 'var(--cu-text-muted)';
 const SPACE_GREEN = 'rgb(22, 199, 132)';
 
+// ── Tree filtering ────────────────────────────────────────────────────────
+// A row is shown when it matches the (case-insensitive) filter OR one of its
+// descendants matches, so ancestors of matches stay visible.
+
+const matches = (name: string, filter: string) =>
+  name.toLowerCase().includes(filter.toLowerCase());
+
+function folderMatches(folder: FolderNode, filter: string): boolean {
+  return matches(folder.name, filter) || folder.lists.some((l) => matches(l.name, filter));
+}
+
+function spaceMatches(space: SpaceNode, filter: string): boolean {
+  if (matches(space.name, filter)) return true;
+  if (space.folderlessLists.some((l) => matches(l.name, filter))) return true;
+  return space.folders.some((f) => folderMatches(f, filter));
+}
+
 // Cu3Icon uses the sprite symbols (defined in CuIconSprite)
 export function Cu3Icon({ id, size = 16 }: { id: string; size?: number }) {
   return (
@@ -364,6 +381,93 @@ export function TreeRow({
   );
 }
 
+/**
+ * Leading icon slot that doubles as an expand/collapse toggle for rows that have
+ * children (spaces, folders). By default it shows the row's normal icon; on row
+ * hover (driven by the `.cu-row-kebab-wrap:hover` parent) it reveals a chevron
+ * toggle button overlaid on top of the icon. This matches ClickUp, where the
+ * left affordance toggles children and never collides with the right-side kebab.
+ *
+ * The toggle is a real <button> (the row itself is a role="button" div, so this
+ * is not a nested native button) and stops propagation so it never triggers the
+ * row label navigation.
+ */
+export function RowLeading({
+  icon,
+  expanded,
+  onToggle,
+}: {
+  icon: ReactNode;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <span
+      style={{
+        position: 'relative',
+        width: 18,
+        height: 18,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+      }}
+    >
+      <span
+        className="cu-row-leading-icon"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--cu-text-muted)',
+        }}
+      >
+        {icon}
+      </span>
+      <button
+        type="button"
+        className="cu-row-leading-toggle"
+        aria-label={expanded ? 'Collapse' : 'Expand'}
+        aria-expanded={expanded}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'transparent',
+          border: 'none',
+          borderRadius: 4,
+          padding: 0,
+          cursor: 'pointer',
+          color: 'var(--cu-text-primary)',
+        }}
+      >
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          aria-hidden="true"
+          style={{
+            transform: expanded ? 'none' : 'rotate(-90deg)',
+            transition: 'transform 120ms ease',
+          }}
+        >
+          <path
+            fillRule="evenodd"
+            d="M12 17a1 1 0 0 1-.707-.293l-6-6a1 1 0 0 1 1.414-1.414L12 14.586l5.293-5.293a1 1 0 1 1 1.414 1.414l-6 6A1 1 0 0 1 12 17Z"
+            clipRule="evenodd"
+          />
+        </svg>
+      </button>
+    </span>
+  );
+}
+
 export function SpaceIcon({ color }: { color: string }) {
   return (
     <span
@@ -451,12 +555,14 @@ export function FolderRow({
   activeListId,
   onOpen,
   onOpenFolder,
+  filter,
 }: {
   folder: FolderNode;
   spaceId: string;
   activeListId: string | null;
   onOpen: (listId: string) => void;
   onOpenFolder?: (folderId: string) => void;
+  filter?: string;
 }) {
   const expanded = useIsExpanded(folder.id);
   const toggleExpanded = useWorkspaceStore((s) => s.toggleExpanded);
@@ -492,26 +598,29 @@ export function FolderRow({
           <TreeRow
             label={folder.name}
             depth={1}
-            icon={<MiniFolderIcon />}
-            onClick={() => (onOpenFolder ? onOpenFolder(folder.id) : toggleExpanded(folder.id))}
-            rightContent={
-              onOpenFolder ? (
-                <FolderChevron expanded={expanded} onToggle={() => toggleExpanded(folder.id)} />
-              ) : undefined
+            icon={
+              <RowLeading
+                icon={<MiniFolderIcon />}
+                expanded={expanded}
+                onToggle={() => toggleExpanded(folder.id)}
+              />
             }
+            onClick={() => (onOpenFolder ? onOpenFolder(folder.id) : toggleExpanded(folder.id))}
           />
         </RowWithKebab>
       )}
-      {expanded &&
-        folder.lists.map((list) => (
-          <ListRow
-            key={list.id}
-            list={list}
-            depth={2}
-            activeListId={activeListId}
-            onOpen={onOpen}
-          />
-        ))}
+      {(expanded || !!filter) &&
+        folder.lists
+          .filter((list) => !filter || matches(folder.name, filter) || matches(list.name, filter))
+          .map((list) => (
+            <ListRow
+              key={list.id}
+              list={list}
+              depth={2}
+              activeListId={activeListId}
+              onOpen={onOpen}
+            />
+          ))}
     </div>
   );
 }
@@ -528,12 +637,14 @@ export function SpaceRow({
   onOpen,
   onOpenSpace,
   onOpenFolder,
+  filter,
 }: {
   space: SpaceNode;
   activeListId: string | null;
   onOpen: (listId: string) => void;
   onOpenSpace?: (spaceId: string) => void;
   onOpenFolder?: (folderId: string) => void;
+  filter?: string;
 }) {
   const expanded = useIsExpanded(space.id);
   const toggleExpanded = useWorkspaceStore((s) => s.toggleExpanded);
@@ -566,95 +677,47 @@ export function SpaceRow({
           onNewList={addList}
         >
           <SidebarItem
-            icon={<SpaceIcon color={space.color} />}
+            icon={
+              <RowLeading
+                icon={<SpaceIcon color={space.color} />}
+                expanded={expanded}
+                onToggle={() => toggleExpanded(space.id)}
+              />
+            }
             label={space.name}
             onClick={() => (onOpenSpace ? onOpenSpace(space.id) : toggleExpanded(space.id))}
-            rightContent={
-              onOpenSpace ? (
-                <FolderChevron expanded={expanded} onToggle={() => toggleExpanded(space.id)} />
-              ) : undefined
-            }
           />
         </RowWithKebab>
       )}
-      {expanded && (
+      {(expanded || !!filter) && (
         <>
-          {space.folders.map((folder) => (
-            <FolderRow
-              key={folder.id}
-              folder={folder}
-              spaceId={space.id}
-              activeListId={activeListId}
-              onOpen={onOpen}
-              onOpenFolder={onOpenFolder}
-            />
-          ))}
-          {space.folderlessLists.map((list) => (
-            <ListRow
-              key={list.id}
-              list={list}
-              depth={1}
-              activeListId={activeListId}
-              onOpen={onOpen}
-            />
-          ))}
+          {space.folders
+            .filter((folder) => !filter || matches(space.name, filter) || folderMatches(folder, filter))
+            .map((folder) => (
+              <FolderRow
+                key={folder.id}
+                folder={folder}
+                spaceId={space.id}
+                activeListId={activeListId}
+                onOpen={onOpen}
+                onOpenFolder={onOpenFolder}
+                filter={filter}
+              />
+            ))}
+          {space.folderlessLists
+            .filter((list) => !filter || matches(space.name, filter) || matches(list.name, filter))
+            .map((list) => (
+              <ListRow
+                key={list.id}
+                list={list}
+                depth={1}
+                activeListId={activeListId}
+                onOpen={onOpen}
+              />
+            ))}
         </>
       )}
     </div>
-  );
-}
-
-/**
- * Expand/collapse chevron rendered as trailing row content when the row label is
- * wired to navigate. Clicking it toggles expand without triggering the label
- * navigation (stops propagation).
- */
-function FolderChevron({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
-  return (
-    <button
-      aria-label={expanded ? 'Collapse' : 'Expand'}
-      aria-expanded={expanded}
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggle();
-      }}
-      style={{
-        width: 20,
-        height: 20,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'transparent',
-        border: 'none',
-        borderRadius: 4,
-        cursor: 'pointer',
-        color: MUTED_TEXT,
-        flexShrink: 0,
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = HOVER_BG;
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-      }}
-    >
-      <svg
-        width="10"
-        height="10"
-        viewBox="0 0 24 24"
-        fill="currentColor"
-        style={{
-          transform: expanded ? 'none' : 'rotate(-90deg)',
-          transition: 'transform 120ms ease',
-        }}
-      >
-        <path
-          fillRule="evenodd"
-          d="M12 17a1 1 0 0 1-.707-.293l-6-6a1 1 0 0 1 1.414-1.414L12 14.586l5.293-5.293a1 1 0 1 1 1.414 1.414l-6 6A1 1 0 0 1 12 17Z"
-          clipRule="evenodd"
-        />
-      </svg>
-    </button>
   );
 }
 
@@ -669,11 +732,13 @@ export function SpacesTree({
   onOpen,
   onOpenSpace,
   onOpenFolder,
+  filter,
 }: {
   activeListId: string | null;
   onOpen: (listId: string) => void;
   onOpenSpace?: (spaceId: string) => void;
   onOpenFolder?: (folderId: string) => void;
+  filter?: string;
 }) {
   const spaces = useSpaces();
   const createSpace = useWorkspaceStore((s) => s.createSpace);
@@ -683,13 +748,25 @@ export function SpacesTree({
     if (name) createSpace(name);
   };
 
+  const f = filter?.trim() ?? '';
+  const visibleSpaces = f ? spaces.filter((s) => spaceMatches(s, f)) : spaces;
+
   return (
     <>
-      <SidebarItem
-        icon={<Cu3Icon id="cu3-icon-sidebarEverything" size={16} />}
-        label="All Tasks – Cameron Mc's Wor..."
-      />
-      {spaces.map((space) => (
+      <style>{`
+        .cu-row-leading-toggle { display: none; }
+        .cu-row-kebab-wrap:hover .cu-row-leading-toggle,
+        .cu-row-leading-toggle:focus-visible { display: flex; }
+        .cu-row-kebab-wrap:hover .cu-row-leading-icon { visibility: hidden; }
+        .cu-row-leading-toggle:hover { background: var(--cu-bg-hover); }
+      `}</style>
+      {!f && (
+        <SidebarItem
+          icon={<Cu3Icon id="cu3-icon-sidebarEverything" size={16} />}
+          label="All Tasks – Cameron Mc's Wor..."
+        />
+      )}
+      {visibleSpaces.map((space) => (
         <SpaceRow
           key={space.id}
           space={space}
@@ -697,13 +774,16 @@ export function SpacesTree({
           onOpen={onOpen}
           onOpenSpace={onOpenSpace}
           onOpenFolder={onOpenFolder}
+          filter={f || undefined}
         />
       ))}
-      <SidebarItem
-        icon={<Cu3Icon id="cu3-icon-addSmall" size={14} />}
-        label="New Space"
-        onClick={addSpace}
-      />
+      {!f && (
+        <SidebarItem
+          icon={<Cu3Icon id="cu3-icon-addSmall" size={14} />}
+          label="New Space"
+          onClick={addSpace}
+        />
+      )}
     </>
   );
 }

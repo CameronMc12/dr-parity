@@ -12,7 +12,14 @@
 import { useShallow } from 'zustand/react/shallow';
 import { useWorkspaceStore } from './index';
 import * as sel from './selectors';
-import type { Channel, Message, SpaceNode, Task } from './types';
+import type {
+  Channel,
+  DirectMessage,
+  DmMessage,
+  Message,
+  SpaceNode,
+  Task,
+} from './types';
 import type { StatusDef } from '@/data/status-set';
 import { defaultViewConfig } from './view-config.slice';
 import type { ViewConfig } from './view-config.types';
@@ -90,8 +97,28 @@ export function useChannels(): Channel[] {
   return useWorkspaceStore(useShallow(sel.channels));
 }
 
+/** A single channel by id, or null. Primitive-ish (object ref is store-stable). */
+export function useChannelById(channelId: string): Channel | null {
+  return useWorkspaceStore((s) => s.channels.find((c) => c.id === channelId) ?? null);
+}
+
+/** The list-backed channel for a given listId, or null. */
+export function useChannelByListId(listId: string | null): Channel | null {
+  return useWorkspaceStore((s) =>
+    listId ? (s.channels.find((c) => c.listId === listId) ?? null) : null,
+  );
+}
+
 export function useMessagesByChannel(channelId: string): Message[] {
   return useWorkspaceStore(useShallow((s) => sel.messagesByChannel(s, channelId)));
+}
+
+export function useDms(): DirectMessage[] {
+  return useWorkspaceStore(useShallow(sel.dms));
+}
+
+export function useDmMessages(dmId: string): DmMessage[] {
+  return useWorkspaceStore(useShallow((s) => sel.dmMessages(s, dmId)));
 }
 
 export function useFavorites(): string[] {

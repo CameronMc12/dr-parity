@@ -5,6 +5,9 @@ import { useEffect } from 'react';
 import { AppShell } from '@/components/shell/AppShell';
 import { AssignedCommentsPage } from '@/components/pages/AssignedCommentsPage';
 import { ChannelPage } from '@/components/pages/ChannelPage';
+import { ChatChannelRoute } from '@/components/pages/channel-view/ChatChannelRoute';
+import { ChatDmPanel } from '@/components/pages/chat/ChatDmPanel';
+import { NewDirectMessagePanel } from '@/components/pages/chat/NewDirectMessagePanel';
 import { InboxPage } from '@/components/pages/InboxPage';
 import { ListView, MyTasksListView } from '@/components/pages/ListView';
 import { BoardView } from '@/components/pages/board/BoardView';
@@ -22,6 +25,9 @@ import { FormView } from '@/components/pages/form/FormView';
 import { WhiteboardView } from '@/components/pages/whiteboard/WhiteboardView';
 import { EmbedView } from '@/components/pages/embed/EmbedView';
 import { DashboardView } from '@/components/pages/dashboard/DashboardView';
+import { DashboardsHub } from '@/components/pages/dashboards-hub/DashboardsHub';
+import { GoalsView } from '@/components/pages/goals/GoalsView';
+import { DocsHub } from '@/components/pages/docs-hub/DocsHub';
 import { TeamView } from '@/components/pages/team/TeamView';
 import { RepliesPage } from '@/components/pages/RepliesPage';
 import { TaskRoute } from '@/components/task/TaskRoute';
@@ -29,15 +35,7 @@ import { CuIconSprite } from '@/components/ui/CuIconSprite';
 import { queryClient } from '@/lib/query-client';
 import { Home } from '@/routes/Home';
 import { ViewPlaceholder } from '@/routes/ViewPlaceholder';
-import { Account } from '@/routes/settings/Account';
-import { Billing } from '@/routes/settings/Billing';
-import { Integrations } from '@/routes/settings/Integrations';
-import { Members } from '@/routes/settings/Members';
-import { Notifications as SettingsNotifications } from '@/routes/settings/Notifications';
-import { Preferences } from '@/routes/settings/Preferences';
-import { Security } from '@/routes/settings/Security';
-import { SettingsLayout } from '@/routes/settings/SettingsLayout';
-import { SettingsPlaceholder } from '@/routes/settings/SettingsPlaceholder';
+import { SettingsRoute } from '@/components/pages/settings/SettingsRoute';
 import { useShellStore } from '@/store/shell-store';
 import { WorkspaceHydrator } from '@/store/workspace/WorkspaceHydrator';
 import { ViewsHydrator } from '@/store/views/ViewsHydrator';
@@ -49,38 +47,6 @@ import type { IconBarItemId } from '@/types/workspace';
 
 const DEFAULT_WS = '90152566819';
 
-function renderSettingsContent(section = 'account') {
-  switch (section) {
-    case 'account':
-      return <Account />;
-    case 'notifications':
-      return <SettingsNotifications />;
-    case 'members':
-    case 'people':
-      return <Members />;
-    case 'integrations':
-      return <Integrations />;
-    case 'billing':
-      return <Billing />;
-    case 'security':
-      return <Security />;
-    case 'preferences':
-      return <Preferences />;
-    case 'teams':
-      return <SettingsPlaceholder title="Teams" description="Manage workspace teams." />;
-    case 'ai-usage':
-      return <SettingsPlaceholder title="AI Usage" description="View your AI credit usage." />;
-    case 'audit-logs':
-      return <SettingsPlaceholder title="Audit Logs" description="View workspace activity logs." />;
-    case 'trash':
-      return <SettingsPlaceholder title="Trash" description="Recover recently deleted items." />;
-    case 'workspaces':
-      return <SettingsPlaceholder title="Workspaces" description="Switch or manage workspaces." />;
-    default:
-      return <SettingsPlaceholder title={section} description="Settings section placeholder." />;
-  }
-}
-
 function renderRouteContent(route: string[], wsId: string) {
   const [, section, ...rest] = route;
 
@@ -90,6 +56,23 @@ function renderRouteContent(route: string[], wsId: string) {
 
   if (section === 'inbox' || section === 'notifications') {
     return <InboxPage />;
+  }
+
+  // Goals hub: /<wsId>/goals. Icon-rail Goals navigates here.
+  if (section === 'goals') {
+    return <GoalsView />;
+  }
+
+  // Dashboards hub: /<wsId>/dashboards (distinct from the per-view dash widget
+  // emitted under /v/dash/<id>). Icon-rail Dashboards navigates here.
+  if (section === 'dashboards') {
+    return <DashboardsHub />;
+  }
+
+  // Docs hub (All Docs): /<wsId>/docs. Distinct from the single-doc reader at
+  // /v/dc/<docId>. Icon-rail Docs navigates here; rows open the single doc.
+  if (section === 'docs') {
+    return <DocsHub wsId={wsId} />;
   }
 
   // Task detail: /<wsId>/t/<taskId>. Direct navigation opens the global task
@@ -112,29 +95,44 @@ function renderRouteContent(route: string[], wsId: string) {
     if (rest[1]) return <ChannelPage channelId={rest[1]} />;
   }
 
+  // Chat section (icon-rail Chat). Home → New Direct Message; channel thread;
+  // DM thread. Keeps the legacy /chat/r/* routes above untouched.
+  if (section === 'chat') {
+    if (rest[0] === 'c' && rest[1]) return <ChatChannelRoute channelId={rest[1]} />;
+    if (rest[0] === 'dm' && rest[1]) return <ChatDmPanel dmId={rest[1]} />;
+    return <NewDirectMessagePanel wsId={wsId} />;
+  }
+
+  // Settings is a centered modal (mounted globally in AppShell). The route
+  // opens the modal over the My Tasks home behind it.
   if (section === 'settings') {
-    const activeSection = rest[0] ?? 'account';
     return (
-      <SettingsLayout wsId={wsId} activeSection={activeSection}>
-        {renderSettingsContent(activeSection)}
-      </SettingsLayout>
+      <>
+        <Home wsId={wsId} />
+        <SettingsRoute section={rest[0]} />
+      </>
     );
   }
 
-  // Space-scoped views: /<wsId>/space/<spaceId>[/v/<code>]. Aggregates every
-  // task across the space's folderless lists + all folders' lists.
+  // Space-scoped views: /<wsId>/space/<spaceId>[/v/<code>[/<viewSeg>]].
+  // Aggregates every task across the space's folderless lists + all folders'
+  // lists. With no /v/<code> the route opens the scope's first stored view.
   if (section === 'space' && rest[0]) {
     const spaceId = rest[0];
-    const code = rest[1] === 'v' ? rest[2] ?? 'l' : 'l';
-    return <ScopeViewRoute scope={{ kind: 'space', spaceId }} code={code} />;
+    const scope: ViewScope = { kind: 'space', spaceId };
+    const code = rest[1] === 'v' ? rest[2] : undefined;
+    const viewId = rest[1] === 'v' ? rest[3] : undefined;
+    return <ScopeViewRoute scope={scope} code={code} viewId={viewId} />;
   }
 
-  // Folder-scoped views: /<wsId>/folder/<folderId>[/v/<code>]. Aggregates every
-  // task across the folder's lists.
+  // Folder-scoped views: /<wsId>/folder/<folderId>[/v/<code>[/<viewSeg>]].
+  // Aggregates every task across the folder's lists.
   if (section === 'folder' && rest[0]) {
     const folderId = rest[0];
-    const code = rest[1] === 'v' ? rest[2] ?? 'l' : 'l';
-    return <ScopeViewRoute scope={{ kind: 'folder', folderId }} code={code} />;
+    const scope: ViewScope = { kind: 'folder', folderId };
+    const code = rest[1] === 'v' ? rest[2] : undefined;
+    const viewId = rest[1] === 'v' ? rest[3] : undefined;
+    return <ScopeViewRoute scope={scope} code={code} viewId={viewId} />;
   }
 
   if (section === 'v') {
@@ -147,7 +145,7 @@ function renderRouteContent(route: string[], wsId: string) {
     // Resolve the view-id segment to its list via the views registry, falling
     // back to the legacy VIEW_TO_LIST token map or treating it as a raw listId.
     const listId =
-      resolveViewSegment(viewId)?.listId ?? VIEW_TO_LIST[viewId] ?? viewId;
+      resolveViewSegment(viewId)?.scopeKey ?? VIEW_TO_LIST[viewId] ?? viewId;
     const listScope: ViewScope = { kind: 'list', listId };
     switch (viewType) {
       case 'l':
@@ -200,6 +198,12 @@ function getRouteShellIcon(route: string[]): IconBarItemId | null {
   const section = route[1];
 
   if (section === 'space' || section === 'folder') return 'spaces';
+  if (section === 'goals') return 'goals';
+  if (section === 'dashboards') return 'dashboards';
+  if (section === 'docs') return 'docs';
+  // /chat/r/* are Home-sidebar routes (Replies/Assigned); /chat and /chat/c|dm
+  // belong to the Chat sidebar.
+  if (section === 'chat' && route[2] !== 'r') return 'chat';
   if (section === 'v') return null;
   return 'home';
 }

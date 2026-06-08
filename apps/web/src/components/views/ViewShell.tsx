@@ -10,9 +10,10 @@
  *  - No `scope` (legacy / list routes): behaves EXACTLY as before — `viewId`
  *    resolves to a listId for the crumbs/tabs and the per-list ViewTabsBar is
  *    rendered. Zero regression.
- *  - `scope` provided: crumbs/actions/tabs are scope-aware. For a list scope we
- *    keep the per-list ViewTabsBar (so list routes are unchanged); for a
- *    space/folder scope we render the fixed-default ScopeTabsBar.
+ *  - `scope` provided: crumbs/actions/tabs are scope-aware. EVERY scope (list,
+ *    space, folder) renders the SAME customizable ViewTabsBar — same default
+ *    view set, +View menu (full registry), right-click rename/duplicate/delete,
+ *    and drag reorder — keyed by scopeKey so list routes stay byte-identical.
  *
  * Crumbs always come from the unified `useScopeCrumbs`, which does one store
  * read and branches on scope kind inside the selector (rules of hooks safe).
@@ -26,16 +27,19 @@ import type { ViewScope } from '@/lib/view-scope';
 import { useScopeDefaultListId } from '@/lib/view-scope';
 import { Breadcrumb } from './Breadcrumb';
 import { ViewTabsBar } from './ViewTabsBar';
-import { ScopeTabsBar } from './ScopeTabsBar';
 import { useScopeCrumbs } from './useViewCrumbs';
 import { ProjectActions } from '@/components/shell/header/ProjectActions';
 
 const APP_BG = 'var(--cu-bg-app)';
 const TEXT_PRIMARY = 'var(--cu-text-primary)';
 
-/** Resolve a URL view-id segment to its underlying listId. */
+/**
+ * Resolve a URL view-id segment to its underlying listId. Only reached on legacy
+ * list routes (scope-aware routes pass an explicit scope), where the resolved
+ * scopeKey IS the listId.
+ */
 function listIdFor(viewId: string): string {
-  return resolveViewSegment(viewId)?.listId ?? VIEW_TO_LIST[viewId] ?? viewId;
+  return resolveViewSegment(viewId)?.scopeKey ?? VIEW_TO_LIST[viewId] ?? viewId;
 }
 
 export function ViewShell({
@@ -43,6 +47,7 @@ export function ViewShell({
   viewId,
   scope: scopeProp,
   showAddChannel = true,
+  header,
   children,
 }: {
   code: string;
@@ -50,6 +55,8 @@ export function ViewShell({
   /** Optional scope. Omitted (list routes) keeps today's exact behaviour. */
   scope?: ViewScope;
   showAddChannel?: boolean;
+  /** Replaces the default Breadcrumb + ProjectActions row (e.g. Channel header). */
+  header?: ReactNode;
   children: ReactNode;
 }) {
   // Without an explicit scope, synthesise a list scope from viewId — identical
@@ -76,17 +83,15 @@ export function ViewShell({
         overflow: 'hidden',
       }}
     >
-      <Breadcrumb
-        crumbs={crumbs}
-        actions={
-          <ProjectActions listId={actionsListId} viewId={viewId} projectName={projectName} />
-        }
-      />
-      {scope.kind === 'list' ? (
-        <ViewTabsBar listId={listId} activeCode={code} showAddChannel={showAddChannel} />
-      ) : (
-        <ScopeTabsBar scope={scope} activeCode={code} />
+      {header ?? (
+        <Breadcrumb
+          crumbs={crumbs}
+          actions={
+            <ProjectActions listId={actionsListId} viewId={viewId} projectName={projectName} />
+          }
+        />
       )}
+      <ViewTabsBar scope={scope} activeCode={code} showAddChannel={showAddChannel} />
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{children}</div>
     </div>
   );

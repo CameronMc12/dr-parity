@@ -6,6 +6,8 @@
 
 import type {
   Channel,
+  DirectMessage,
+  DmMessage,
   FolderNode,
   ListNode,
   Message,
@@ -189,6 +191,16 @@ export function messagesByChannel(
   channelId: string,
 ): Message[] {
   return state.messages[channelId] ?? [];
+}
+
+// --- direct messages ----------------------------------------------------
+
+export function dms(state: WorkspaceState): DirectMessage[] {
+  return state.dms;
+}
+
+export function dmMessages(state: WorkspaceState, dmId: string): DmMessage[] {
+  return state.dmMessages[dmId] ?? [];
 }
 
 // --- favorites ----------------------------------------------------------

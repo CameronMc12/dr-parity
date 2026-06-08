@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { SearchIcon, ChevronDownIcon } from '@/components/ui/Icons';
 import { useUiStore } from '@/store/ui-store';
@@ -147,6 +148,8 @@ function ActionButton({
 
 export function TopBar() {
   const openCreateTask = useUiStore((s) => s.openCreateTask);
+  const openSettings = useUiStore((s) => s.openSettings);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   return (
     // cu-home-top-bar matches ClickUp's top bar element class (border-bottom, h=44px from computed)
     <header
@@ -320,8 +323,12 @@ export function TopBar() {
         </ActionButton>
 
         {/* Avatar with dropdown */}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
         <button
           aria-label="User menu"
+          aria-haspopup="menu"
+          aria-expanded={userMenuOpen}
+          onClick={() => setUserMenuOpen((v) => !v)}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -383,6 +390,78 @@ export function TopBar() {
           </span>
           <ChevronDownIcon size={12} style={{ color: 'var(--cu-text-muted)' }} />
         </button>
+
+        {userMenuOpen && (
+          <>
+            {/* click-away scrim */}
+            <div
+              onClick={() => setUserMenuOpen(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: 90 }}
+            />
+            <div
+              role="menu"
+              aria-label="User menu"
+              className="bg-[var(--cu-bg-app)] border border-[var(--cu-border-divider)]"
+              style={{
+                position: 'absolute',
+                top: 38,
+                right: 0,
+                minWidth: 220,
+                borderRadius: 8,
+                boxShadow: '0 10px 32px rgba(0,0,0,0.18)',
+                padding: 6,
+                zIndex: 100,
+              }}
+            >
+              <div className="flex items-center gap-2.5 px-2 py-2 mb-1">
+                <span
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: '50%',
+                    background: 'rgb(92, 71, 205)',
+                    color: 'white',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  CM
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[13px] font-medium text-[var(--cu-text-primary)] truncate">
+                    Cameron Mc
+                  </p>
+                  <p className="text-[11px] text-[var(--cu-text-muted)] truncate">
+                    cameron12mcallister@gmail.com
+                  </p>
+                </div>
+              </div>
+              <div className="h-px bg-[var(--cu-border-divider)] my-1" />
+              {[
+                { label: 'Profile', section: 'profile' },
+                { label: 'Settings', section: 'preferences' },
+                { label: 'Notifications', section: 'notifications' },
+                { label: 'Appearance', section: 'appearance' },
+              ].map((item) => (
+                <button
+                  key={item.section}
+                  role="menuitem"
+                  onClick={() => {
+                    openSettings(item.section);
+                    setUserMenuOpen(false);
+                  }}
+                  className="block w-full text-left px-2 py-1.5 rounded-md text-[13px] text-[var(--cu-text-secondary)] hover:bg-[var(--cu-bg-hover)] hover:text-[var(--cu-text-primary)] transition-colors"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        </div>
       </div>
     </header>
   );

@@ -21,6 +21,8 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { resolveViewListId, useViewTasks } from '@/lib/view-data';
+import type { ViewScope } from '@/lib/view-scope';
+import { useScopeListToken } from '@/lib/view-scope';
 import { useTaskContextMenu } from '@/components/menus/useTaskContextMenu';
 import { ViewShell } from '@/components/views/ViewShell';
 import { useWorkspaceStore, workspaceSelectors } from '@/store/workspace';
@@ -63,9 +65,12 @@ function contentBounds(elements: WhiteboardElement[]): ContentBounds | null {
   return { minX, minY, maxX, maxY };
 }
 
-export function WhiteboardView({ viewId }: { viewId: string }) {
-  const listId = resolveViewListId(viewId);
-  const tasks = useViewTasks(viewId);
+export function WhiteboardView({ viewId, scope }: { viewId: string; scope?: ViewScope }) {
+  const effectiveScope: ViewScope = scope ?? { kind: 'list', listId: resolveViewListId(viewId) };
+  // The canvas is seeded from a concrete list's tasks (the scope's default list).
+  const dataToken = useScopeListToken(effectiveScope, viewId);
+  const listId = resolveViewListId(dataToken);
+  const tasks = useViewTasks(dataToken);
   const listName = useListName(listId);
 
   const seed = useMemo(() => ({ tasks, listName }), [tasks, listName]);
@@ -126,7 +131,7 @@ export function WhiteboardView({ viewId }: { viewId: string }) {
   );
 
   return (
-    <ViewShell code="wb" viewId={viewId}>
+    <ViewShell code="wb" viewId={viewId} scope={scope}>
       <div
         ref={stageRef}
         style={{

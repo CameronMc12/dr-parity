@@ -14,8 +14,9 @@ import type {
   SpaceNode,
 } from '@/store/workspace/types';
 import { Menu, MenuDivider, MenuItem } from '@/components/ui/Menu';
-import { CreateMenu } from '@/components/menus/CreateMenu';
 import { MoreAppsMenu } from '@/components/menus/MoreAppsMenu';
+import { SidebarHeader } from './SidebarHeader';
+import { HomeFilterChips } from './HomeFilterChips';
 import {
   ChannelsMenu,
   DirectMessagesMenu,
@@ -600,6 +601,11 @@ export function HomeSidebar() {
   // pinned at the bottom.
   const isCompactRoute = isInbox || isReplies || isAssignedComments;
 
+  // Header hover-reveal + live tree filter + funnel chip-row toggle.
+  const [hovered, setHovered] = useState(false);
+  const [filter, setFilter] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+
   // Section collapse state (default expanded to match oracle).
   const [favOpen, setFavOpen] = useState(true);
   const [channelsOpen, setChannelsOpen] = useState(!isCompactRoute);
@@ -613,64 +619,20 @@ export function HomeSidebar() {
   }, [isCompactRoute]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Sidebar header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          paddingLeft: 12,
-          paddingRight: 8,
-          paddingTop: 8,
-          paddingBottom: 8,
-          gap: 4,
-          flexShrink: 0,
-          height: 40,
-          boxSizing: 'border-box',
-        }}
-      >
-        <span style={{ fontSize: 15, fontWeight: 700, color: LIGHT_TEXT, flex: 1 }}>Home</span>
-        <Menu
-          width={280}
-          align="left"
-          trigger={({ ref, onClick, open }) => (
-            <button
-              ref={ref}
-              onClick={onClick}
-              aria-label="Create"
-              aria-haspopup="menu"
-              aria-expanded={open}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 2,
-                height: 24,
-                paddingLeft: 6,
-                paddingRight: 4,
-                background: open ? HOVER_BG : 'transparent',
-                border: 'none',
-                borderRadius: 4,
-                cursor: 'pointer',
-                color: MUTED_TEXT,
-                fontSize: 13,
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = HOVER_BG;
-              }}
-              onMouseLeave={(e) => {
-                if (!open) (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-              }}
-            >
-              <Cu3Icon id="cu3-icon-addSmall" size={12} />
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                <path fillRule="evenodd" d="M12 17a1 1 0 0 1-.707-.293l-6-6a1 1 0 0 1 1.414-1.414L12 14.586l5.293-5.293a1 1 0 1 1 1.414 1.414l-6 6A1 1 0 0 1 12 17Z" clipRule="evenodd" />
-              </svg>
-            </button>
-          )}
-        >
-          <CreateMenu />
-        </Menu>
-      </div>
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}
+    >
+      <SidebarHeader
+        title="Home"
+        hovered={hovered}
+        onFilterChange={setFilter}
+        variant="filter"
+        filterOpen={filterOpen}
+        onFilterToggle={() => setFilterOpen((v) => !v)}
+      />
+      {filterOpen && <HomeFilterChips />}
 
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', paddingTop: 8, paddingLeft: 4, paddingRight: 4, paddingBottom: 0 }}>
@@ -886,7 +848,7 @@ export function HomeSidebar() {
             <SidebarItem icon={<Cu3Icon id="cu3-icon-addSmall" size={14} />} label="New Space" />
           </>
         ) : (
-          <SpacesTree activeListId={activeListId} onOpen={openList} />
+          <SpacesTree activeListId={activeListId} onOpen={openList} filter={filter} />
         ))}
       </div>
 

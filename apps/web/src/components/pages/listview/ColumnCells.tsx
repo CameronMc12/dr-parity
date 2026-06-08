@@ -21,7 +21,7 @@ const TEXT_SECONDARY = 'var(--cu-text-secondary)';
 const TEXT_MUTED = 'var(--cu-text-muted)';
 const HOVER_BG = 'var(--cu-bg-hover)';
 const OVERDUE = 'rgb(226, 67, 41)';
-const STATUS_PILL_BG = 'rgb(42, 42, 42)';
+const STATUS_PILL_BG = 'var(--cu-status-pill-bg)';
 
 function dueLabel(due: number | null): string {
   if (!due) return '';

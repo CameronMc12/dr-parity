@@ -9,10 +9,13 @@
 
 import { useEffect } from 'react';
 import { useViewsStore } from './index';
+import { seedChannelListViews } from './channel-list-seed';
 
 export function ViewsHydrator() {
   useEffect(() => {
-    void useViewsStore.persist.rehydrate();
+    void Promise.resolve(useViewsStore.persist.rehydrate()).then(() => {
+      seedChannelListViews();
+    });
   }, []);
   return null;
 }
