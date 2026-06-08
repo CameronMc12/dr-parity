@@ -10,7 +10,7 @@
  * Routing: channel → /{ws}/chat/c/{id}, DM → /{ws}/chat/dm/{id}, home → /{ws}/chat.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useWorkspaceStore } from '@/store/workspace';
 import {
@@ -38,6 +38,7 @@ import {
 } from '@/components/pages/chat/chat-tool-icons';
 import { ChevronDownGlyph } from './SidebarHeaderIcons';
 import { dmDisplay } from '@/components/pages/chat/dm-title';
+import { useShallow } from 'zustand/react/shallow';
 
 const WORKSPACE_ID = '90152566819';
 const MUTED = 'var(--cu-text-muted)';
@@ -109,15 +110,42 @@ function DmAvatar({ member }: { member?: Member }) {
   );
 }
 
+function UnreadDot({ count }: { count: number }) {
+  return (
+    <span
+      aria-label={`${count} unread`}
+      style={{
+        minWidth: 18,
+        height: 18,
+        padding: '0 5px',
+        boxSizing: 'border-box',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'var(--cu-accent)',
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: 600,
+        borderRadius: 9,
+        flexShrink: 0,
+      }}
+    >
+      {count}
+    </span>
+  );
+}
+
 function DmRow({
   title,
   member,
   active,
+  badge,
   onOpen,
 }: {
   title: string;
   member?: Member;
   active: boolean;
+  badge: number;
   onOpen: () => void;
 }) {
   const [hover, setHover] = useState(false);
@@ -129,30 +157,34 @@ function DmRow({
         active={active}
         onClick={onOpen}
         rightContent={
-          <button
-            aria-label={`Edit ${title}`}
-            onClick={(e) => {
-              e.stopPropagation();
-            }}
-            style={{
-              width: 20,
-              height: 20,
-              display: hover ? 'flex' : 'none',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'transparent',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-              color: MUTED,
-              flexShrink: 0,
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
-            </svg>
-          </button>
+          hover ? (
+            <button
+              aria-label={`Edit ${title}`}
+              onClick={(e) => {
+                e.stopPropagation();
+              }}
+              style={{
+                width: 20,
+                height: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 4,
+                cursor: 'pointer',
+                color: MUTED,
+                flexShrink: 0,
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+              </svg>
+            </button>
+          ) : badge > 0 ? (
+            <UnreadDot count={badge} />
+          ) : undefined
         }
       />
     </div>
@@ -209,6 +241,23 @@ export function ChatSidebar() {
   const currentMemberId = useCurrentMemberId();
   const createChannel = useWorkspaceStore((s) => s.createChannel);
 
+  // Per-conversation message counts. Drives unread badges: a conversation with
+  // messages the current member has not opened yet shows the count.
+  const channelCounts = useWorkspaceStore(
+    useShallow((s) => {
+      const out: Record<string, number> = {};
+      for (const c of s.channels) out[c.id] = s.messages[c.id]?.length ?? 0;
+      return out;
+    }),
+  );
+  const dmCounts = useWorkspaceStore(
+    useShallow((s) => {
+      const out: Record<string, number> = {};
+      for (const dm of s.dms) out[dm.id] = s.dmMessages[dm.id]?.length ?? 0;
+      return out;
+    }),
+  );
+
   const wsId = pathname.split('/').filter(Boolean)[0] ?? WORKSPACE_ID;
 
   const [hovered, setHovered] = useState(false);
@@ -219,6 +268,11 @@ export function ChatSidebar() {
   const [dmOpen, setDmOpen] = useState(true);
   const [grouped, setGrouped] = useState(true);
   const [recent, setRecent] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const createInputRef = useRef<HTMLInputElement>(null);
+  // Conversations the current member has opened this session (read).
+  const [seen, setSeen] = useState<Set<string>>(new Set());
 
   const memberById = useMemo(() => {
     const map: Record<string, Member> = {};
@@ -228,6 +282,16 @@ export function ChatSidebar() {
 
   const activeChannelId = pathname.match(/\/chat\/c\/([^/]+)/)?.[1] ?? null;
   const activeDmId = pathname.match(/\/chat\/dm\/([^/]+)/)?.[1] ?? null;
+
+  // The open conversation is always read; clear its unread badge.
+  useEffect(() => {
+    const id = activeChannelId ?? activeDmId;
+    if (!id) return;
+    setSeen((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, [activeChannelId, activeDmId]);
+
+  const unreadFor = (id: string, count: number): number =>
+    seen.has(id) ? 0 : count;
 
   const q = search.trim().toLowerCase();
   const visibleChannels = q
@@ -242,16 +306,40 @@ export function ChatSidebar() {
     .map((id) => channels.find((c) => c.id === id))
     .filter((c): c is Channel => Boolean(c));
 
-  const openChannel = (id: string) => router.push(`/${wsId}/chat/c/${id}`);
-  const openDm = (id: string) => router.push(`/${wsId}/chat/dm/${id}`);
+  const markSeen = (id: string) =>
+    setSeen((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+
+  const openChannel = (id: string) => {
+    markSeen(id);
+    router.push(`/${wsId}/chat/c/${id}`);
+  };
+  const openDm = (id: string) => {
+    markSeen(id);
+    router.push(`/${wsId}/chat/dm/${id}`);
+  };
   const goHome = () => router.push(`/${wsId}/chat`);
 
-  const addChannel = () => {
-    const name = window.prompt('Channel name')?.trim();
-    if (!name) return;
+  const startCreate = () => {
+    setCreating(true);
+    setDraftName('');
+    setChannelsOpen(true);
+  };
+
+  const commitCreate = () => {
+    const name = draftName.trim();
+    if (!name) {
+      setCreating(false);
+      return;
+    }
     const channel = createChannel(name);
+    setCreating(false);
+    setDraftName('');
     openChannel(channel.id);
   };
+
+  useEffect(() => {
+    if (creating) createInputRef.current?.focus();
+  }, [creating]);
 
   const composeButton = (
     <button
@@ -321,6 +409,7 @@ export function ChatSidebar() {
               icon={channelIcon(c.id)}
               label={c.name}
               active={activeChannelId === c.id}
+              badge={unreadFor(c.id, channelCounts[c.id] ?? 0)}
               onClick={() => openChannel(c.id)}
             />
           ))}
@@ -347,14 +436,51 @@ export function ChatSidebar() {
                 icon={channelIcon(c.id)}
                 label={c.name}
                 active={activeChannelId === c.id}
+                badge={unreadFor(c.id, channelCounts[c.id] ?? 0)}
                 onClick={() => openChannel(c.id)}
               />
             ))}
-            <SidebarItem
-              icon={<Cu3Icon id="cu3-icon-addSmall" size={16} />}
-              label="Add Channel"
-              onClick={addChannel}
-            />
+            {creating ? (
+              <div style={{ padding: '2px 8px 2px 12px' }}>
+                <input
+                  ref={createInputRef}
+                  data-testid="chat-create-channel-input"
+                  value={draftName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      commitCreate();
+                    } else if (e.key === 'Escape') {
+                      setCreating(false);
+                      setDraftName('');
+                    }
+                  }}
+                  onBlur={commitCreate}
+                  placeholder="Channel name…"
+                  aria-label="New channel name"
+                  style={{
+                    width: '100%',
+                    height: 28,
+                    padding: '0 8px',
+                    boxSizing: 'border-box',
+                    background: 'var(--cu-bg-input)',
+                    border: `1px solid var(--cu-accent)`,
+                    borderRadius: 6,
+                    outline: 'none',
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                    color: LIGHT,
+                  }}
+                />
+              </div>
+            ) : (
+              <SidebarItem
+                icon={<Cu3Icon id="cu3-icon-addSmall" size={16} />}
+                label="Add Channel"
+                onClick={startCreate}
+              />
+            )}
           </>
         )}
 
@@ -380,6 +506,7 @@ export function ChatSidebar() {
                 title={display.title}
                 member={display.other}
                 active={activeDmId === dm.id}
+                badge={unreadFor(dm.id, dmCounts[dm.id] ?? 0)}
                 onOpen={() => openDm(dm.id)}
               />
             ))}

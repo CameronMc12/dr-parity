@@ -10,6 +10,7 @@ import { PlannerSidebar } from './sidebars/PlannerSidebar';
 import { TeamsSidebar } from './sidebars/TeamsSidebar';
 import { DashboardsSidebar } from './sidebars/DashboardsSidebar';
 import { WhiteboardsSidebar } from './sidebars/WhiteboardsSidebar';
+import { GoalsSidebar } from './sidebars/GoalsSidebar';
 
 const SIDEBAR_MAP: Record<string, ReactNode> = {
   home:        <HomeSidebar />,
@@ -21,6 +22,7 @@ const SIDEBAR_MAP: Record<string, ReactNode> = {
   docs:        <DocsSidebar />,
   dashboards:  <DashboardsSidebar />,
   whiteboards: <WhiteboardsSidebar />,
+  goals:       <GoalsSidebar />,
   // Timesheets: no sidebar in ClickUp; full-width Time view is future feature work
   timesheets:  null,
   settings:    null, // rendered with wsId prop below

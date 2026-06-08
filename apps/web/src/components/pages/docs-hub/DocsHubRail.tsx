@@ -2,7 +2,7 @@
 
 import { type ReactNode } from 'react';
 import { useDocsHubStore } from '@/store/docs-hub-store';
-import { DOC_HUB_ROWS } from './docs-hub-data';
+import { useDocs, useDocsHydration } from '@/store/workspace/docs.slice';
 import {
   AllDocsIcon,
   MyDocsIcon,
@@ -127,9 +127,13 @@ function FavoriteRow({ row }: { row: { name: string; emoji: string | null } }) {
  * active section drives the hub's table (only "All Docs" is populated here).
  */
 export function DocsHubRail() {
+  useDocsHydration();
   const activeId = useDocsHubStore((s) => s.activeSection);
   const onSelect = useDocsHubStore((s) => s.setActiveSection);
-  const favorites = DOC_HUB_ROWS.slice(0, 1);
+  const docs = useDocs();
+  const favorites = docs
+    .filter((d) => d.favorite)
+    .map((d) => ({ id: d.id, name: d.name, emoji: d.emoji }));
 
   return (
     <aside

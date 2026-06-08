@@ -1,39 +1,50 @@
 'use client';
 
-import { PageSurface, EmptyState, DarkButton, PlusIcon } from '../page-primitives';
+import { PageSurface, TEXT_PRIMARY } from '../page-primitives';
 import { DashboardsHubToolbar } from './DashboardsHubToolbar';
 import { DashboardCard } from './DashboardCard';
-import { DashboardsBigIcon } from './dashboards-hub-icons';
-import { DASHBOARDS } from '@/data/dashboards-seed';
+import { TemplatesRow } from './TemplatesRow';
+import { DashboardDetail } from './DashboardDetail';
+import { useDashboardsUi } from './dashboards-ui-store';
+import { DASHBOARDS, dashboardById } from '@/data/dashboards-seed';
 
 /**
- * Dashboards hub (distinct from the per-view DashboardView dash widget).
- * Oracle: docs/research/crawl/app.clickup.com/exhaustive-dashboards/...
- * Header toolbar over a grid of dashboard cards, or an empty state when the
- * workspace has no dashboards (the case for this seed).
+ * Dashboards hub. Two states driven by the local dashboards UI store:
+ *  - gallery: templates row + a grid of dashboard cards (the landing).
+ *  - detail: a single dashboard's live widget grid (DashboardDetail).
+ *
+ * Metrics inside each dashboard are computed from the real workspace tasks
+ * store; this surface only owns navigation and layout.
  */
 export function DashboardsHub() {
-  const hasDashboards = DASHBOARDS.length > 0;
+  const openId = useDashboardsUi((s) => s.openDashboardId);
+  const openDashboard = useDashboardsUi((s) => s.openDashboard);
+  const closeDashboard = useDashboardsUi((s) => s.closeDashboard);
+
+  const active = openId ? dashboardById(openId) : undefined;
+
+  if (active) {
+    return (
+      <PageSurface>
+        <DashboardDetail dashboard={active} onBack={closeDashboard} />
+      </PageSurface>
+    );
+  }
 
   return (
     <PageSurface>
       <DashboardsHubToolbar />
-      {hasDashboards ? (
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 24 }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20 }}>
-            {DASHBOARDS.map((dashboard) => (
-              <DashboardCard key={dashboard.id} dashboard={dashboard} />
-            ))}
-          </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 24 }}>
+        <TemplatesRow />
+        <h2 style={{ fontSize: 13, fontWeight: 600, color: TEXT_PRIMARY, margin: '0 0 12px' }}>
+          My Dashboards
+        </h2>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+          {DASHBOARDS.map((dashboard) => (
+            <DashboardCard key={dashboard.id} dashboard={dashboard} onOpen={openDashboard} />
+          ))}
         </div>
-      ) : (
-        <EmptyState
-          illustration={<span style={{ color: 'rgb(200, 200, 200)' }}><DashboardsBigIcon /></span>}
-          title="No dashboards yet"
-          subtitle="Build a dashboard to track work across your workspace at a glance."
-          action={<DarkButton icon={<PlusIcon size={16} />}>New Dashboard</DarkButton>}
-        />
-      )}
+      </div>
     </PageSurface>
   );
 }

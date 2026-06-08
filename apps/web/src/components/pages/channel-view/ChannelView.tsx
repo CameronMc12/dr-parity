@@ -16,13 +16,12 @@ import { useState } from 'react';
 import { useWorkspaceStore } from '@/store/workspace';
 import {
   useChannelByListId,
-  useCurrentMemberId,
   useMembers,
   useMessagesByChannel,
 } from '@/store/workspace/hooks';
 import type { ViewScope } from '@/lib/view-scope';
 import { ViewShell } from '@/components/views/ViewShell';
-import { ChatMessageList } from '../chat/ChatMessageList';
+import { RichThread } from '../chat/RichThread';
 import { ChannelComposer } from './ChannelComposer';
 import { ChannelEmptyState } from './ChannelEmptyState';
 import { ChannelRail } from './ChannelRail';
@@ -74,7 +73,6 @@ export function ChannelView({ scope, viewId }: { scope: ViewScope; viewId?: stri
   const name = channel?.name ?? 'channel';
 
   const members = useMembers();
-  const currentMemberId = useCurrentMemberId();
   const messages = useMessagesByChannel(channelId);
   const sendMessage = useWorkspaceStore((s) => s.sendMessage);
 
@@ -93,12 +91,12 @@ export function ChannelView({ scope, viewId }: { scope: ViewScope; viewId?: stri
             {messages.length === 0 ? (
               <ChannelEmptyState channelName={name} />
             ) : (
-              <ChatMessageList
+              <RichThread
                 testid="channel-view-messages"
                 lines={messages}
                 members={members}
-                currentMemberId={currentMemberId}
-                emptyLabel={null}
+                emptyTitle=""
+                emptySubtitle=""
               />
             )}
             <ChannelComposer

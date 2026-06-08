@@ -1,11 +1,26 @@
+'use client';
+
 import { BORDER, TEXT_PRIMARY, PillButton, PlusIcon } from '../page-primitives';
-import { SortIcon, FolderIcon, ArchivedIcon } from './goals-icons';
+import { SortIcon, FolderIcon } from './goals-icons';
+import { useGoalsStore } from './goals-ui-store';
 
 /**
- * Goals header toolbar. Oracle (right-aligned over the page title row):
- * Sort by: Updated · Folders: Hide · Archived: Hide · [+ NEW GOAL].
+ * Goals header toolbar: title + active folder label, a sort/folder filter pair,
+ * and the primary "+ New Goal" CTA which prepends a goal to the active folder.
  */
 export function GoalsToolbar() {
+  const folders = useGoalsStore((s) => s.folders);
+  const selectedFolderId = useGoalsStore((s) => s.selectedFolderId);
+  const addGoal = useGoalsStore((s) => s.addGoal);
+
+  const activeFolder = folders.find((f) => f.id === selectedFolderId);
+  const filterLabel = activeFolder ? activeFolder.name : 'All folders';
+
+  const handleNew = () => {
+    const targetFolder = selectedFolderId ?? folders[0]?.id;
+    if (targetFolder) addGoal(targetFolder);
+  };
+
   return (
     <div
       style={{
@@ -18,12 +33,16 @@ export function GoalsToolbar() {
         borderBottom: `1px solid ${BORDER}`,
       }}
     >
-      <h1 style={{ fontSize: 18, fontWeight: 600, color: TEXT_PRIMARY, margin: 0 }}>Goals</h1>
+      <h1 style={{ fontSize: 18, fontWeight: 600, color: TEXT_PRIMARY, margin: 0 }}>
+        {activeFolder ? activeFolder.name : 'Goals'}
+      </h1>
       <span style={{ flex: 1 }} />
-      <PillButton icon={<SortIcon />}>Sort by: Updated</PillButton>
-      <PillButton icon={<FolderIcon />}>Folders: Hide</PillButton>
-      <PillButton icon={<ArchivedIcon />}>Archived: Hide</PillButton>
+      <PillButton icon={<SortIcon />}>Sort: Due date</PillButton>
+      <PillButton icon={<FolderIcon />} caret>
+        {filterLabel}
+      </PillButton>
       <button
+        onClick={handleNew}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -31,7 +50,7 @@ export function GoalsToolbar() {
           height: 30,
           paddingLeft: 12,
           paddingRight: 14,
-          background: 'rgb(48, 48, 48)',
+          background: 'rgb(36, 174, 100)',
           border: 'none',
           borderRadius: 6,
           cursor: 'pointer',

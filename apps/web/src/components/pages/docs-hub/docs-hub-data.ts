@@ -1,29 +1,10 @@
-import docPagesJson from '@/data/doc-pages.json';
-import { DOCS_TREE } from '@/data/docs-tree';
+import { docUpdatedAt, type Doc } from '@/store/workspace/docs.slice';
 
 /**
- * Docs hub table model. The source of truth for *which* docs exist is
- * `doc-pages.json` (13 docs, including the DR-PARITY-SEED Handbook), since that
- * is the same set the single-doc DocView reads. Location + emoji are enriched
- * from `docs-tree.json` where a matching row exists; `updated` is derived from
- * the latest page `dateUpdated`. Rows sort newest-first, with the Handbook
- * pinned to the top to mirror the oracle (All Docs, Date viewed ↓).
+ * Docs hub table row. Derived from a live `Doc` in the docs store (the editable,
+ * persisted source of truth) rather than the static export, so created / renamed
+ * / deleted docs reflect immediately in the hub.
  */
-
-interface RawPage {
-  id: string;
-  name: string;
-  content: string;
-  orderIndex: number;
-  dateUpdated: number;
-}
-
-interface RawDoc {
-  docId: string;
-  name: string;
-  pages: RawPage[];
-}
-
 export interface DocHubRow {
   /** Doc id — opens /<wsId>/v/dc/<id> in the single-doc DocView. */
   id: string;
@@ -35,32 +16,17 @@ export interface DocHubRow {
   pageCount: number;
   /** Last-updated epoch ms (max page dateUpdated). */
   updated: number;
+  favorite: boolean;
 }
 
-const HANDBOOK_ID = '2kyr6013-2715';
-
-const TREE_BY_ID = new Map(DOCS_TREE.map((d) => [d.id, d]));
-
-function latestUpdated(pages: RawPage[]): number {
-  return pages.reduce((max, p) => (p.dateUpdated > max ? p.dateUpdated : max), 0);
-}
-
-function toRow(doc: RawDoc): DocHubRow {
-  const tree = TREE_BY_ID.get(doc.docId);
+export function docToRow(doc: Doc): DocHubRow {
   return {
-    id: doc.docId,
+    id: doc.id,
     name: doc.name,
-    location: tree?.location ?? 'Everything',
-    emoji: tree?.emoji ?? null,
+    location: doc.location,
+    emoji: doc.emoji,
     pageCount: doc.pages.length,
-    updated: latestUpdated(doc.pages),
+    updated: docUpdatedAt(doc),
+    favorite: doc.favorite,
   };
 }
-
-export const DOC_HUB_ROWS: DocHubRow[] = (docPagesJson as RawDoc[])
-  .map(toRow)
-  .sort((a, b) => {
-    if (a.id === HANDBOOK_ID) return -1;
-    if (b.id === HANDBOOK_ID) return 1;
-    return b.updated - a.updated;
-  });

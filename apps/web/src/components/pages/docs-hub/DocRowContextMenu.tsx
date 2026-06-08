@@ -42,25 +42,31 @@ const MoveIcon = () => <I d="M12 4v16M12 4l-3 3M12 4l3 3M4 12h16M4 12l3-3M4 12l3
 const ArchiveIcon = () => <I d="M4 5h16v4H4zM5.5 9v8a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V9M10 13h4" />;
 const DeleteIcon = () => <I d="M5 7h14M9.5 7V5h5v2M6.5 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4L18 7" />;
 
+export interface DocRowActions {
+  onOpen: (doc: DocHubRow) => void;
+  onRename?: (id: string) => void;
+  onDuplicate?: (id: string) => void;
+  onToggleFavorite?: (id: string) => void;
+  onDelete?: (id: string) => void;
+}
+
 /**
  * Right-click context menu for a docs-hub table row. Mirrors the ClickUp doc
  * row menu (Open / Rename / Copy link / Duplicate / Favorite / Move / Archive /
- * Delete). Docs are not workspace-tree nodes so the mutating items run a local
- * no-op then close; Delete asks for confirmation before signalling the parent.
- * Positioned as a fixed surface at the cursor, matching TaskContextMenu.
+ * Delete). Rename / Duplicate / Favorite / Delete mutate the docs store via the
+ * supplied callbacks; Delete asks for confirmation first. Positioned as a fixed
+ * surface at the cursor, matching TaskContextMenu.
  */
 export function DocRowContextMenu({
   doc,
   pos,
   onClose,
-  onOpen,
-  onDelete,
+  actions,
 }: {
   doc: DocHubRow;
   pos: DocRowContextMenuPos;
   onClose: () => void;
-  onOpen: () => void;
-  onDelete?: (id: string) => void;
+  actions: DocRowActions;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -104,11 +110,9 @@ export function DocRowContextMenu({
       typeof window === 'undefined'
         ? true
         : window.confirm(`Delete "${doc.name}"? This cannot be undone.`);
-    if (ok) onDelete?.(doc.id);
+    if (ok) actions.onDelete?.(doc.id);
     onClose();
   };
-
-  const noop = () => act(() => undefined);
 
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
@@ -138,15 +142,27 @@ export function DocRowContextMenu({
         animation: 'cuMenuIn 110ms ease',
       }}
     >
-      <MenuItem icon={<OpenIcon />} label="Open" onSelect={() => act(onOpen)} />
-      <MenuItem icon={<RenameIcon />} label="Rename" onSelect={noop} />
+      <MenuItem icon={<OpenIcon />} label="Open" onSelect={() => act(() => actions.onOpen(doc))} />
+      <MenuItem
+        icon={<RenameIcon />}
+        label="Rename"
+        onSelect={() => act(() => actions.onRename?.(doc.id))}
+      />
       <MenuItem icon={<CopyLinkIcon />} label="Copy link" onSelect={copyLink} />
-      <MenuItem icon={<DuplicateIcon />} label="Duplicate" onSelect={noop} />
+      <MenuItem
+        icon={<DuplicateIcon />}
+        label="Duplicate"
+        onSelect={() => act(() => actions.onDuplicate?.(doc.id))}
+      />
       <MenuDivider />
-      <MenuItem icon={<FavoriteIcon />} label="Add to Favorites" onSelect={noop} />
-      <MenuItem icon={<MoveIcon />} label="Move" onSelect={noop} />
+      <MenuItem
+        icon={<FavoriteIcon />}
+        label={doc.favorite ? 'Remove from Favorites' : 'Add to Favorites'}
+        onSelect={() => act(() => actions.onToggleFavorite?.(doc.id))}
+      />
+      <MenuItem icon={<MoveIcon />} label="Move" onSelect={() => act(() => undefined)} />
       <MenuDivider />
-      <MenuItem icon={<ArchiveIcon />} label="Archive" onSelect={noop} />
+      <MenuItem icon={<ArchiveIcon />} label="Archive" onSelect={() => act(() => undefined)} />
       <MenuItem
         icon={<span style={{ color: DANGER }}><DeleteIcon /></span>}
         label={<span style={{ color: DANGER }}>Delete</span>}
@@ -163,13 +179,10 @@ interface OpenState {
 
 /**
  * Wire any docs-hub row to the right-click menu. Spread `onContextMenu` onto
- * each row, render `menu` once. `onOpen` navigates to the doc; `onDelete` removes
- * the row from local state (the data set is static, so deletion is session-only).
+ * each row, render `menu` once. Actions (open / rename / duplicate / favorite /
+ * delete) mutate the docs store via the supplied callbacks.
  */
-export function useDocRowContextMenu(
-  onOpen: (doc: DocHubRow) => void,
-  onDelete?: (id: string) => void,
-) {
+export function useDocRowContextMenu(actions: DocRowActions) {
   const [state, setState] = useState<OpenState | null>(null);
 
   const onContextMenu = (e: React.MouseEvent, doc: DocHubRow) => {
@@ -181,13 +194,7 @@ export function useDocRowContextMenu(
   const close = () => setState(null);
 
   const menu: ReactNode = state ? (
-    <DocRowContextMenu
-      doc={state.doc}
-      pos={state.pos}
-      onClose={close}
-      onOpen={() => onOpen(state.doc)}
-      onDelete={onDelete}
-    />
+    <DocRowContextMenu doc={state.doc} pos={state.pos} onClose={close} actions={actions} />
   ) : null;
 
   return { onContextMenu, menu, close };

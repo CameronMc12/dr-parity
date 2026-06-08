@@ -10,29 +10,25 @@
  */
 
 import { useState } from 'react';
-import { DOCS_TREE } from '@/data/docs-tree';
-import { getDocPages } from '@/lib/view-data';
+import { useDoc } from '@/store/workspace/docs.slice';
 import { PageStackIcon } from './doc-icons';
-import type { ExtraPage } from './DocSidebar';
 import { DOC } from './tokens';
 
 export function DocPageTree({
   docId,
   pageId,
-  extraPages,
   onSelect,
   onAddPage,
 }: {
   docId: string;
   pageId?: string;
-  extraPages: ExtraPage[];
   onSelect: (docId: string, pageId?: string) => void;
   onAddPage: () => void;
 }) {
-  const doc = getDocPages(docId);
-  const node = DOCS_TREE.find((d) => d.id === docId);
+  const doc = useDoc(docId);
   const pages = doc?.pages ?? [];
-  const docName = doc?.name ?? node?.name ?? 'Untitled';
+  const docName = doc?.name ?? 'Untitled';
+  const emoji = doc?.emoji ?? null;
   // No explicit page id => the first page is the active landing page.
   const activeId = pageId ?? pages[0]?.id;
 
@@ -62,7 +58,7 @@ export function DocPageTree({
           color: DOC.textPrimary,
         }}
       >
-        {node?.emoji && <span style={{ fontSize: 13 }}>{node.emoji}</span>}
+        {emoji && <span style={{ fontSize: 13 }}>{emoji}</span>}
         <span
           style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >
@@ -87,14 +83,6 @@ export function DocPageTree({
           key={page.id}
           label={page.name}
           active={page.id === activeId}
-          onSelect={() => onSelect(docId, page.id)}
-        />
-      ))}
-      {extraPages.map((page) => (
-        <PageRow
-          key={page.id}
-          label={page.name}
-          active={page.id === pageId}
           onSelect={() => onSelect(docId, page.id)}
         />
       ))}

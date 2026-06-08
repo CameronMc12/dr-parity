@@ -2,12 +2,12 @@
 
 /**
  * Doc view. Page-tree sidebar + a ClickUp-1:1 doc reader/editor rendering REAL
- * crawled ClickUp doc bodies (markdown). Bodies come from `getDocPages` /
- * `getDocPage`; the sidebar tree from `docs-tree.json`. The body renders
+ * crawled ClickUp doc bodies (markdown). Docs are read from the persisted docs
+ * store (`docs.slice`), seeded from the research export. The body renders
  * read-only via `MarkdownBody`, or as an editable raw-markdown surface
- * (`DocEditor`) with a slash menu + format toolbar. Title/body/new-subpage edits
- * are held in component state, keyed by page id, so switching pages preserves
- * unsaved work.
+ * (`DocEditor`) with a slash menu + format toolbar. Title / body edits and
+ * new / duplicated / deleted pages all mutate the store and persist to
+ * localStorage, so changes survive reload and reflect in the hub and sidebar.
  *
  * Contract (do not change the export name or props):
  *   route /<wsId>/v/dc/:docId/:pageId?  ->  <DocView docId=… pageId=… />
@@ -15,11 +15,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ViewScope } from '@/lib/view-scope';
-import { DOCS_TREE } from '@/data/docs-tree';
-import { getDocPage, getDocPages, type DocPage } from '@/lib/view-data';
+import {
+  useDoc,
+  useDocPage,
+  useDocsHydration,
+  useDocsStore,
+} from '@/store/workspace/docs.slice';
 import { useMembers, useCurrentMemberId } from '@/store/workspace/hooks';
 import { appendBlock, buildBlock, type BlockType } from './block-insert';
-import { type ExtraPage } from './DocSidebar';
 import { DocPageTree } from './DocPageTree';
 import { DocHeader } from './DocHeader';
 import { DocEditor, type DocEditorHandle } from './DocEditor';
@@ -29,8 +32,6 @@ import { MarkdownBody } from './MarkdownBody';
 import { PageStackIcon, LinkIcon } from './doc-icons';
 import { clockUpdated } from './relative-time';
 import { DOC } from './tokens';
-
-type PageEdit = Pick<DocPage, 'name' | 'content'>;
 
 const WIDTH_PX: Record<DocWidth, number> = {
   small: 680,
@@ -50,22 +51,18 @@ export function DocView({
   pageId?: string;
   scope?: ViewScope;
 }) {
+  useDocsHydration();
   const [activeDocId, setActiveDocId] = useState(docId);
   const [activePageId, setActivePageId] = useState<string | undefined>(pageId);
   const [editing, setEditing] = useState(false);
-  const [edits, setEdits] = useState<Record<string, PageEdit>>({});
   // ClickUp opens a doc with the page-tree rail expanded (oracle: seed-view-doc);
   // the "pages" pill toggles it.
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [favorites, setFavorites] = useState<Record<string, boolean>>({});
   const [width, setWidth] = useState<DocWidth>('default');
   const [serif, setSerif] = useState(false);
-  // In-memory subpages created via the starter / slash menu, keyed by doc id.
-  const [extraPages, setExtraPages] = useState<Record<string, ExtraPage[]>>({});
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   const editorRef = useRef<DocEditorHandle>(null);
-  const subpageSeq = useRef(0);
   const toastTimer = useRef(0);
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
@@ -77,37 +74,31 @@ export function DocView({
     [members, currentMemberId],
   );
 
+  // Store mutations — every edit persists through these.
+  const renameDoc = useDocsStore((s) => s.renameDoc);
+  const renamePage = useDocsStore((s) => s.renamePage);
+  const setPageContent = useDocsStore((s) => s.setPageContent);
+  const createPage = useDocsStore((s) => s.createPage);
+  const duplicatePageAction = useDocsStore((s) => s.duplicatePage);
+  const deletePageAction = useDocsStore((s) => s.deletePage);
+  const toggleFavorite = useDocsStore((s) => s.toggleFavorite);
+
   useEffect(() => {
     setActiveDocId(docId);
     setActivePageId(pageId);
   }, [docId, pageId]);
 
-  const doc = getDocPages(activeDocId);
-  const page = getDocPage(activeDocId, activePageId);
-  const docNode = useMemo(
-    () => DOCS_TREE.find((d) => d.id === activeDocId),
-    [activeDocId],
-  );
+  const doc = useDoc(activeDocId);
+  const page = useDocPage(activeDocId, activePageId);
+  // Resolve the page id even when the route omitted it (landing page).
+  const resolvedPageId = page?.id;
+  const isFirstPage = doc?.pages[0]?.id === resolvedPageId;
 
-  const docExtras = useMemo(
-    () => extraPages[activeDocId] ?? [],
-    [extraPages, activeDocId],
-  );
-  const extraActive = useMemo(
-    () => docExtras.find((p) => p.id === activePageId),
-    [docExtras, activePageId],
-  );
+  const title = page?.name ?? doc?.name ?? 'Untitled';
+  const body = page?.content ?? '';
 
-  const sourceName = extraActive?.name ?? page?.name ?? 'Untitled';
-  const sourceContent = extraActive?.content ?? page?.content ?? '';
-  const editKey = extraActive?.id ?? page?.id;
-  const edit = editKey ? edits[editKey] : undefined;
-  const title = edit?.name ?? sourceName;
-  const body = edit?.content ?? sourceContent;
-
-  const pageCount =
-    (doc?.pages.length ?? (docNode ? 1 : 0)) + docExtras.length;
-  const hasPage = Boolean(extraActive || (doc && page));
+  const pageCount = doc?.pages.length ?? 0;
+  const hasPage = Boolean(doc && page);
   // ClickUp centres the title/author/starter only on a fresh empty page.
   const isEmptyBody = !editing && body.trim().length === 0;
 
@@ -117,32 +108,34 @@ export function DocView({
     setEditing(false);
   }, []);
 
-  const patchEdit = useCallback(
-    (patch: Partial<PageEdit>) => {
-      if (!editKey) return;
-      setEdits((prev) => {
-        const base = prev[editKey] ?? { name: sourceName, content: sourceContent };
-        return { ...prev, [editKey]: { ...base, ...patch } };
-      });
+  // Title edits hit the doc name on the landing page, else the page name.
+  const patchTitle = useCallback(
+    (name: string) => {
+      if (!doc || !resolvedPageId) return;
+      if (isFirstPage) renameDoc(doc.id, name);
+      else renamePage(doc.id, resolvedPageId, name);
     },
-    [editKey, sourceName, sourceContent],
+    [doc, resolvedPageId, isFirstPage, renameDoc, renamePage],
   );
 
-  // Side-effect for tree-affecting blocks. Returns the label that seeds the
-  // inserted markdown (the subpage name). Inline blocks return undefined.
+  const patchBody = useCallback(
+    (content: string) => {
+      if (!doc || !resolvedPageId) return;
+      setPageContent(doc.id, resolvedPageId, content);
+    },
+    [doc, resolvedPageId, setPageContent],
+  );
+
+  // Side-effect for tree-affecting blocks. Mints a real subpage in the store and
+  // returns its name so the inserted markdown can reference it.
   const sideEffectForBlock = useCallback(
     (block: BlockType): string | undefined => {
-      if (block !== 'subpage') return undefined;
-      subpageSeq.current += 1;
-      const id = `extra-${activeDocId}-${subpageSeq.current}`;
-      const name = `Subpage ${subpageSeq.current}`;
-      setExtraPages((prev) => {
-        const list = prev[activeDocId] ?? [];
-        return { ...prev, [activeDocId]: [...list, { id, name, content: '' }] };
-      });
+      if (block !== 'subpage' || !doc) return undefined;
+      const name = `Subpage ${doc.pages.length}`;
+      createPage(doc.id, { name });
       return name;
     },
-    [activeDocId],
+    [doc, createPage],
   );
 
   // Insert a block by appending its markdown to the body, then drop into edit
@@ -151,11 +144,11 @@ export function DocView({
     (block: BlockType) => {
       const label = sideEffectForBlock(block);
       const snippet = buildBlock(block, label);
-      patchEdit({ content: appendBlock(body, snippet) });
+      patchBody(appendBlock(body, snippet));
       setEditing(true);
       requestAnimationFrame(() => editorRef.current?.focus());
     },
-    [body, patchEdit, sideEffectForBlock],
+    [body, patchBody, sideEffectForBlock],
   );
 
   const startWriting = useCallback(() => {
@@ -163,25 +156,22 @@ export function DocView({
     requestAnimationFrame(() => editorRef.current?.focus());
   }, []);
 
-  // Page-tree "Add page": mint a fresh in-session subpage and switch to it.
+  // Page-tree "Add page": mint a fresh persisted page and switch to it.
   const addPage = useCallback(() => {
-    subpageSeq.current += 1;
-    const id = `extra-${activeDocId}-${subpageSeq.current}`;
-    const name = `Untitled page ${subpageSeq.current}`;
-    setExtraPages((prev) => {
-      const list = prev[activeDocId] ?? [];
-      return { ...prev, [activeDocId]: [...list, { id, name, content: '' }] };
-    });
-    setActivePageId(id);
-    setEditing(false);
-  }, [activeDocId]);
+    if (!doc) return;
+    const id = createPage(doc.id, { name: `Untitled page ${doc.pages.length + 1}` });
+    if (id) {
+      setActivePageId(id);
+      setEditing(false);
+    }
+  }, [doc, createPage]);
 
   const blankWiki = useCallback(() => {
     sideEffectForBlock('subpage');
-    patchEdit({ content: appendBlock(body, buildBlock('heading')) });
+    patchBody(appendBlock(body, buildBlock('heading')));
     setEditing(true);
     requestAnimationFrame(() => editorRef.current?.focus());
-  }, [sideEffectForBlock, patchEdit, body]);
+  }, [sideEffectForBlock, patchBody, body]);
 
   const writeWithAi = useCallback(
     (prompt: string) => {
@@ -189,12 +179,12 @@ export function DocView({
       if (editing) {
         editorRef.current?.appendText(drafted);
       } else {
-        patchEdit({ content: appendBlock(body, { markdown: drafted }) });
+        patchBody(appendBlock(body, { markdown: drafted }));
         setEditing(true);
         requestAnimationFrame(() => editorRef.current?.focus());
       }
     },
-    [editing, body, patchEdit],
+    [editing, body, patchBody],
   );
 
   const toast = useCallback((message: string) => {
@@ -207,50 +197,38 @@ export function DocView({
   const insertTemplate = useCallback(
     (name: string) => {
       const skeleton = `# ${name}\n\n## Overview\n\nWrite a short summary here.\n\n## Details\n\n- Key point one\n- Key point two\n\n## Next steps\n\n1. First action\n2. Second action`;
-      patchEdit({ content: appendBlock(body, { markdown: skeleton }) });
+      patchBody(appendBlock(body, { markdown: skeleton }));
       setEditing(true);
       requestAnimationFrame(() => editorRef.current?.focus());
       toast(`Inserted "${name}" template`);
     },
-    [body, patchEdit, toast],
+    [body, patchBody, toast],
   );
 
-  // Clone the active page (source or extra) into a fresh in-session subpage.
+  // Clone the active page into a fresh persisted page and switch to it.
   const duplicatePage = useCallback(() => {
-    subpageSeq.current += 1;
-    const id = `extra-${activeDocId}-${subpageSeq.current}`;
-    const name = `${title} (copy)`;
-    const content = body;
-    setExtraPages((prev) => {
-      const list = prev[activeDocId] ?? [];
-      return { ...prev, [activeDocId]: [...list, { id, name, content }] };
-    });
-    setActivePageId(id);
-    setEditing(false);
-    toast('Page duplicated');
-  }, [activeDocId, title, body, toast]);
+    if (!doc || !resolvedPageId) return;
+    const id = duplicatePageAction(doc.id, resolvedPageId);
+    if (id) {
+      setActivePageId(id);
+      setEditing(false);
+      toast('Page duplicated');
+    }
+  }, [doc, resolvedPageId, duplicatePageAction, toast]);
 
-  // Delete only works on in-session subpages; source pages are read-only mirrors.
+  // Delete the active page. A doc must keep at least one page.
   const deletePage = useCallback(() => {
-    if (!extraActive) {
-      toast('Source pages can’t be deleted in the offline clone');
+    if (!doc || !resolvedPageId) return;
+    if (doc.pages.length <= 1) {
+      toast('A doc must keep at least one page');
       return;
     }
-    const removedId = extraActive.id;
-    setExtraPages((prev) => {
-      const list = prev[activeDocId] ?? [];
-      return { ...prev, [activeDocId]: list.filter((p) => p.id !== removedId) };
-    });
-    setEdits((prev) => {
-      if (!(removedId in prev)) return prev;
-      const next = { ...prev };
-      delete next[removedId];
-      return next;
-    });
-    setActivePageId(page?.id);
+    const nextId = doc.pages.find((p) => p.id !== resolvedPageId)?.id;
+    deletePageAction(doc.id, resolvedPageId);
+    setActivePageId(nextId);
     setEditing(false);
     toast('Page deleted');
-  }, [activeDocId, extraActive, page, toast]);
+  }, [doc, resolvedPageId, deletePageAction, toast]);
 
   // Offline download: render the current markdown body to a file via a Blob.
   const downloadDoc = useCallback(
@@ -283,8 +261,8 @@ export function DocView({
     [title, body, toast],
   );
 
-  const favorite = Boolean(favorites[activeDocId]);
-  const lastUpdated = extraActive ? null : page?.dateUpdated ?? null;
+  const favorite = doc?.favorite ?? false;
+  const lastUpdated = page?.dateUpdated ?? null;
   const columnWidth = WIDTH_PX[width];
 
   return (
@@ -296,7 +274,6 @@ export function DocView({
         <DocPageTree
           docId={activeDocId}
           pageId={activePageId}
-          extraPages={docExtras}
           onSelect={select}
           onAddPage={addPage}
         />
@@ -305,9 +282,7 @@ export function DocView({
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <DocHeader
           favorite={favorite}
-          onToggleFavorite={() =>
-            setFavorites((prev) => ({ ...prev, [activeDocId]: !prev[activeDocId] }))
-          }
+          onToggleFavorite={() => toggleFavorite(activeDocId)}
           onCopyLink={() => copyLink(activeDocId, activePageId)}
           onShare={() => {
             copyLink(activeDocId, activePageId);
@@ -351,7 +326,7 @@ export function DocView({
                       serif={serif}
                       centered={isEmptyBody}
                       placeholder={isEmptyBody && title === 'Untitled'}
-                      onChange={(name) => patchEdit({ name })}
+                      onChange={patchTitle}
                     />
                     <AuthorRow
                       name={author?.name ?? 'You'}
@@ -365,7 +340,7 @@ export function DocView({
                     <DocEditor
                       ref={editorRef}
                       value={body}
-                      onChange={(content) => patchEdit({ content })}
+                      onChange={patchBody}
                       onBlockSideEffect={sideEffectForBlock}
                     />
                   ) : body.trim().length > 0 ? (
