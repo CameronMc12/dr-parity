@@ -28,6 +28,11 @@ import { DashboardView } from '@/components/pages/dashboard/DashboardView';
 import { DashboardsHub } from '@/components/pages/dashboards-hub/DashboardsHub';
 import { GoalsView } from '@/components/pages/goals/GoalsView';
 import { DocsHub } from '@/components/pages/docs-hub/DocsHub';
+import { AiHub } from '@/components/pages/ai/AiHub';
+import { TeamsPage } from '@/components/pages/teams/TeamsPage';
+import { WhiteboardsPage } from '@/components/pages/whiteboards/WhiteboardsPage';
+import { TimesheetsPage } from '@/components/pages/timesheets/TimesheetsPage';
+import { PlannerPage } from '@/components/pages/planner/PlannerPage';
 import { TeamView } from '@/components/pages/team/TeamView';
 import { RepliesPage } from '@/components/pages/RepliesPage';
 import { TaskRoute } from '@/components/task/TaskRoute';
@@ -73,6 +78,24 @@ function renderRouteContent(route: string[], wsId: string) {
   // /v/dc/<docId>. Icon-rail Docs navigates here; rows open the single doc.
   if (section === 'docs') {
     return <DocsHub wsId={wsId} />;
+  }
+
+  // Icon-rail hub pages. Each is a self-contained skeleton surface that a
+  // Phase 2 agent fleshes out without touching this dispatch.
+  if (section === 'ai') {
+    return <AiHub />;
+  }
+  if (section === 'teams') {
+    return <TeamsPage />;
+  }
+  if (section === 'whiteboards') {
+    return <WhiteboardsPage />;
+  }
+  if (section === 'timesheets') {
+    return <TimesheetsPage />;
+  }
+  if (section === 'planner') {
+    return <PlannerPage />;
   }
 
   // Task detail: /<wsId>/t/<taskId>. Direct navigation opens the global task
@@ -201,6 +224,11 @@ function getRouteShellIcon(route: string[]): IconBarItemId | null {
   if (section === 'goals') return 'goals';
   if (section === 'dashboards') return 'dashboards';
   if (section === 'docs') return 'docs';
+  if (section === 'ai') return 'ai';
+  if (section === 'teams') return 'teams';
+  if (section === 'whiteboards') return 'whiteboards';
+  if (section === 'timesheets') return 'timesheets';
+  if (section === 'planner') return 'planner';
   // /chat/r/* are Home-sidebar routes (Replies/Assigned); /chat and /chat/c|dm
   // belong to the Chat sidebar.
   if (section === 'chat' && route[2] !== 'r') return 'chat';

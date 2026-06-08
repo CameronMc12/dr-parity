@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { CreateTaskModal } from '@/components/create/CreateTaskModal';
+import { InviteModal } from '@/components/invite/InviteModal';
 import { SettingsModal } from '@/components/pages/settings/SettingsModal';
 import { TaskModal } from '@/components/task/TaskModal';
 import { IconBar } from './IconBar';
@@ -49,6 +50,9 @@ export function AppShell({
 
       {/* Global centered Settings modal — opened via avatar menu or /settings */}
       <SettingsModal />
+
+      {/* Global Invite-members modal — opened from the icon-rail Invite button */}
+      <InviteModal />
 
       {/* global-actions-bar — full width, h=40, white bg */}
       <TopBar />

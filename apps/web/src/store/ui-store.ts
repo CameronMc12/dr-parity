@@ -30,6 +30,11 @@ interface UiState {
   openSettings: (section?: string) => void;
   closeSettings: () => void;
   setSettingsSection: (section: string) => void;
+
+  /** Whether the centered Invite-members modal overlay is open. */
+  inviteOpen: boolean;
+  openInvite: () => void;
+  closeInvite: () => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -66,4 +71,8 @@ export const useUiStore = create<UiState>((set) => ({
     set({ settingsOpen: true, settingsSection: section ?? 'profile' }),
   closeSettings: () => set({ settingsOpen: false }),
   setSettingsSection: (section) => set({ settingsSection: section }),
+
+  inviteOpen: false,
+  openInvite: () => set({ inviteOpen: true }),
+  closeInvite: () => set({ inviteOpen: false }),
 }));

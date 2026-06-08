@@ -1,6 +1,8 @@
 import type { ComponentType } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useShellStore } from '@/store/shell-store';
+import { useUiStore } from '@/store/ui-store';
+import { Menu, MenuItem, MenuHeading } from '@/components/ui/Menu';
 import { TeamsIcon, UpgradeIcon, GoalsIcon } from '@/components/ui/Icons';
 import type { IconBarItemId } from '@/types/workspace';
 
@@ -13,12 +15,9 @@ import type { IconBarItemId } from '@/types/workspace';
 
 type IconComponent = ComponentType<{ size?: number }>;
 
-// 'teams' is an oracle nav item not yet in the shared IconBarItemId union.
-type NavItemId = IconBarItemId | 'teams';
-
 // dot: oracle shows a single pink notification badge on Chat only.
 const NAV_ITEMS: {
-  id: NavItemId;
+  id: IconBarItemId;
   label: string;
   iconId?: string;
   iconIdFilled?: string;
@@ -93,23 +92,50 @@ function ExpandSidebarGlyph({ size = 18 }: { size?: number }) {
 
 const DEFAULT_WS = '90152566819';
 
+// Sections reached via router.push from a nav icon. home/spaces drive the
+// sidebar swap through the store only and intentionally stay out of this map.
+const PUSH_SECTIONS: Partial<Record<IconBarItemId, string>> = {
+  chat: 'chat',
+  docs: 'docs',
+  dashboards: 'dashboards',
+  goals: 'goals',
+  ai: 'ai',
+  teams: 'teams',
+  whiteboards: 'whiteboards',
+  timesheets: 'timesheets',
+  planner: 'planner',
+};
+
+// "More" overflow apps — each navigates to its section route.
+const MORE_ITEMS: { id: IconBarItemId; label: string; Glyph?: IconComponent; iconId?: string }[] = [
+  { id: 'whiteboards', label: 'Whiteboards', iconId: 'cu3-icon-v4IaSidebarWhiteboards' },
+  { id: 'timesheets',  label: 'Timesheets',  iconId: 'cu3-icon-v4IaSidebarTimesheets' },
+  { id: 'goals',       label: 'Goals',       Glyph: GoalsIcon },
+  { id: 'ai',          label: 'AI',          iconId: 'cu3-icon-v4IaSidebarBrain' },
+  { id: 'teams',       label: 'Teams',       Glyph: TeamsIcon },
+];
+
 export function IconBar() {
   const activeIcon = useShellStore((s) => s.activeIcon);
   const setActiveIcon = useShellStore((s) => s.setActiveIcon);
   const sidebarOpen = useShellStore((s) => s.sidebarOpen);
   const setSidebarOpen = useShellStore((s) => s.setSidebarOpen);
+  const openInvite = useUiStore((s) => s.openInvite);
   const pathname = usePathname();
   const router = useRouter();
   const wsId = pathname.split('/').filter(Boolean)[0] ?? DEFAULT_WS;
 
-  // Clicking a nav icon sets the active shell; Chat also navigates to its home
-  // route so the main panel switches to "New Direct Message".
-  const onNavClick = (id: NavItemId) => {
-    setActiveIcon(id as IconBarItemId);
-    if (id === 'chat') router.push(`/${wsId}/chat`);
-    if (id === 'docs') router.push(`/${wsId}/docs`);
-    if (id === 'dashboards') router.push(`/${wsId}/dashboards`);
-    if (id === 'goals') router.push(`/${wsId}/goals`);
+  // Clicking a nav icon sets the active shell; sections in PUSH_SECTIONS also
+  // navigate to their route. home/spaces only swap the sidebar via the store.
+  const onNavClick = (id: IconBarItemId) => {
+    setActiveIcon(id);
+    const section = PUSH_SECTIONS[id];
+    if (section) router.push(`/${wsId}/${section}`);
+  };
+
+  const goSection = (id: IconBarItemId) => {
+    setActiveIcon(id);
+    router.push(`/${wsId}/${id}`);
   };
 
   return (
@@ -218,21 +244,39 @@ export function IconBar() {
                 );
               })}
 
-              {/* More item */}
+              {/* More item — opens an overflow-apps popover */}
               <div className="cu-simple-bar-home-switch__item more">
-                <a
-                  className="cu-simple-bar-item__link"
-                  href="#"
-                  aria-label="More"
-                  onClick={(e) => e.preventDefault()}
-                  title="More"
+                <Menu
+                  align="left"
+                  width={220}
+                  trigger={({ ref, onClick }) => (
+                    <button
+                      ref={ref}
+                      type="button"
+                      className="cu-simple-bar-item__link"
+                      aria-label="More"
+                      title="More"
+                      onClick={onClick}
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }}
+                    >
+                      <span className="cu-simple-bar-item__inner">
+                        <span className="cu-simple-bar-item__icon cu-simple-bar__more-icon">
+                          <Cu3Icon id="cu3-icon-nineDots" size={20} />
+                        </span>
+                      </span>
+                    </button>
+                  )}
                 >
-                  <span className="cu-simple-bar-item__inner">
-                    <span className="cu-simple-bar-item__icon cu-simple-bar__more-icon">
-                      <Cu3Icon id="cu3-icon-nineDots" size={20} />
-                    </span>
-                  </span>
-                </a>
+                  <MenuHeading>Apps</MenuHeading>
+                  {MORE_ITEMS.map(({ id, label, Glyph, iconId }) => (
+                    <MenuItem
+                      key={id}
+                      icon={Glyph ? <Glyph size={16} /> : iconId ? <Cu3Icon id={iconId} size={16} /> : undefined}
+                      label={label}
+                      onSelect={() => goSection(id)}
+                    />
+                  ))}
+                </Menu>
                 <NavLabel label="More" />
               </div>
             </div>
@@ -247,7 +291,7 @@ export function IconBar() {
                   className="cu-simple-bar-item__link cu-invite-button__button"
                   href="#"
                   aria-label="Invite members"
-                  onClick={(e) => e.preventDefault()}
+                  onClick={(e) => { e.preventDefault(); openInvite(); }}
                   title="Invite"
                 >
                   <span className="cu-simple-bar-item__inner">
