@@ -1,24 +1,34 @@
-import * as Switch from '@radix-ui/react-switch';
+'use client';
 
-const PREFERENCE_GROUPS = [
-  {
-    title: 'Task defaults',
-    items: [
-      { id: 'auto-assign',    label: 'Auto-assign tasks to me',             defaultChecked: true },
-      { id: 'show-closed',    label: 'Show closed tasks by default',        defaultChecked: false },
-      { id: 'time-tracking',  label: 'Enable time tracking',                defaultChecked: true },
-    ],
-  },
-  {
-    title: 'Display',
-    items: [
-      { id: 'show-avatars',   label: 'Show user avatars in lists',          defaultChecked: true },
-      { id: 'animations',     label: 'Enable animations',                   defaultChecked: true },
-    ],
-  },
+import { useGeneralPrefs, useSetGeneral } from '@/store/preferences/hooks';
+import { SettingsRow, SelectInput } from './controls';
+import type {
+  StartOfWeek,
+  TimeFormat,
+  DefaultHomeView,
+} from '@/store/preferences/types';
+
+const WEEK_OPTIONS: { value: StartOfWeek; label: string }[] = [
+  { value: 'sunday', label: 'Sunday' },
+  { value: 'monday', label: 'Monday' },
+];
+
+const TIME_OPTIONS: { value: TimeFormat; label: string }[] = [
+  { value: '12h', label: '12-hour' },
+  { value: '24h', label: '24-hour' },
+];
+
+const HOME_OPTIONS: { value: DefaultHomeView; label: string }[] = [
+  { value: 'home', label: 'Home' },
+  { value: 'inbox', label: 'Inbox' },
+  { value: 'dashboard', label: 'Dashboards' },
+  { value: 'docs', label: 'Docs' },
 ];
 
 export function Preferences() {
+  const general = useGeneralPrefs();
+  const setGeneral = useSetGeneral();
+
   return (
     <div className="p-6 max-w-2xl">
       <h1 className="text-[var(--cu-text-primary)] text-lg font-semibold mb-1">
@@ -28,52 +38,53 @@ export function Preferences() {
         Personalise your ClickUp experience.
       </p>
 
-      <div className="flex flex-col gap-5">
-        {PREFERENCE_GROUPS.map((group) => (
-          <section key={group.title}>
-            <h2 className="text-[var(--cu-text-secondary)] text-xs font-semibold uppercase tracking-wider mb-3">
-              {group.title}
-            </h2>
-            <div
-              className="
-                rounded-[var(--cu-radius-lg)] overflow-hidden
-                bg-[var(--cu-bg-strong)] border border-[var(--cu-border-divider)]
-              "
-            >
-              {group.items.map((item, i) => (
-                <div
-                  key={item.id}
-                  className={`
-                    flex items-center justify-between px-4 py-3
-                    ${i < group.items.length - 1 ? 'border-b border-[var(--cu-border-divider)]' : ''}
-                  `}
-                >
-                  <label htmlFor={item.id} className="text-sm text-[var(--cu-text-primary)] cursor-pointer">
-                    {item.label}
-                  </label>
-                  <Switch.Root
-                    id={item.id}
-                    defaultChecked={item.defaultChecked}
-                    className="
-                      w-9 h-5 rounded-full relative cursor-pointer
-                      bg-[var(--cu-accent)] data-[state=unchecked]:bg-[var(--cu-border)]
-                      transition-colors
-                    "
-                  >
-                    <Switch.Thumb
-                      className="
-                        block w-4 h-4 rounded-full bg-white shadow-sm
-                        translate-x-0.5 data-[state=checked]:translate-x-[18px]
-                        transition-transform
-                      "
-                    />
-                  </Switch.Root>
-                </div>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
+      <section>
+        <h2 className="text-[var(--cu-text-secondary)] text-xs font-semibold uppercase tracking-wider mb-3">
+          General
+        </h2>
+        <div
+          className="
+            rounded-[var(--cu-radius-lg)] p-4
+            bg-[var(--cu-bg-strong)] border border-[var(--cu-border-divider)]
+          "
+        >
+          <SettingsRow
+            label="Start of week"
+            description="The first day shown in calendar views."
+          >
+            <SelectInput<StartOfWeek>
+              value={general.startOfWeek}
+              options={WEEK_OPTIONS}
+              widthClass="w-36"
+              onChange={(startOfWeek) => setGeneral({ startOfWeek })}
+            />
+          </SettingsRow>
+
+          <SettingsRow
+            label="Time format"
+            description="How times are displayed across the app."
+          >
+            <SelectInput<TimeFormat>
+              value={general.timeFormat}
+              options={TIME_OPTIONS}
+              widthClass="w-36"
+              onChange={(timeFormat) => setGeneral({ timeFormat })}
+            />
+          </SettingsRow>
+
+          <SettingsRow
+            label="Default home view"
+            description="Where ClickUp lands when you open the workspace."
+          >
+            <SelectInput<DefaultHomeView>
+              value={general.defaultHomeView}
+              options={HOME_OPTIONS}
+              widthClass="w-36"
+              onChange={(defaultHomeView) => setGeneral({ defaultHomeView })}
+            />
+          </SettingsRow>
+        </div>
+      </section>
     </div>
   );
 }

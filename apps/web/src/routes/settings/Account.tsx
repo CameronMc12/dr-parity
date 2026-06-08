@@ -1,31 +1,39 @@
-import type { ReactNode } from 'react';
-import * as Switch from '@radix-ui/react-switch';
+'use client';
+
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import {
+  useProfilePrefs,
+  useSetProfile,
+  useAppearancePrefs,
+  useSetAppearance,
+} from '@/store/preferences/hooks';
+import {
+  SettingsRow,
+  TextInput,
+  ToggleSwitch,
+  SelectInput,
+} from './controls';
+import type { Theme } from '@/store/preferences/types';
 
-function SettingsRow({
-  label,
-  description,
-  children,
-}: {
-  label: string;
-  description?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 py-4 border-b border-[var(--cu-border-divider)] last:border-0">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-[var(--cu-text-primary)] font-medium">{label}</p>
-        {description && (
-          <p className="text-xs text-[var(--cu-text-muted)] mt-0.5">{description}</p>
-        )}
-      </div>
-      <div className="shrink-0 flex items-center">{children}</div>
-    </div>
-  );
-}
+const THEME_OPTIONS: { value: Theme; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
 
 export function Account() {
+  const profile = useProfilePrefs();
+  const setProfile = useSetProfile();
+  const appearance = useAppearancePrefs();
+  const setAppearance = useSetAppearance();
+
+  const initials = profile.name
+    .split(' ')
+    .map((p) => p.charAt(0))
+    .join('')
+    .slice(0, 2) || 'CM';
+
   return (
     <div className="p-6 max-w-2xl">
       <h1 className="text-[var(--cu-text-primary)] text-lg font-semibold mb-1">
@@ -47,51 +55,45 @@ export function Account() {
           "
         >
           <div className="flex items-center gap-4 pb-4 mb-4 border-b border-[var(--cu-border-divider)]">
-            <Avatar fallback="CM" size="md" />
+            <Avatar fallback={initials} size="md" />
             <div className="flex-1">
               <p className="text-sm font-medium text-[var(--cu-text-primary)]">
-                Cameron M
+                {profile.name}
               </p>
-              <p className="text-xs text-[var(--cu-text-muted)]">
-                cameron12mcallister@gmail.com
-              </p>
+              <p className="text-xs text-[var(--cu-text-muted)]">{profile.email}</p>
             </div>
-            <Button variant="secondary" size="sm">
-              Edit profile
-            </Button>
+            <span className="text-xs px-2 py-0.5 rounded-[var(--cu-radius-sm)] bg-[var(--cu-bg-hover)] text-[var(--cu-text-secondary)]">
+              {profile.role}
+            </span>
           </div>
 
           <SettingsRow
             label="Display name"
             description="How your name appears to others in the workspace."
           >
-            <input
-              type="text"
-              defaultValue="Cameron M"
-              className="
-                h-7 px-3 rounded-[var(--cu-radius-sm)] text-xs w-44
-                bg-[var(--cu-bg-input)] text-[var(--cu-text-primary)]
-                border border-[var(--cu-border)] placeholder:text-[var(--cu-text-muted)]
-                focus:outline-none focus:border-[var(--cu-accent)]
-                transition-colors
-              "
+            <TextInput
+              value={profile.name}
+              onChange={(name) => setProfile({ name })}
+            />
+          </SettingsRow>
+
+          <SettingsRow label="Email" description="Your account email address.">
+            <TextInput
+              type="email"
+              value={profile.email}
+              widthClass="w-56"
+              onChange={(email) => setProfile({ email })}
             />
           </SettingsRow>
 
           <SettingsRow
-            label="Email"
-            description="Your account email address."
+            label="Timezone"
+            description="Used for due dates and reminders."
           >
-            <input
-              type="email"
-              defaultValue="cameron12mcallister@gmail.com"
-              className="
-                h-7 px-3 rounded-[var(--cu-radius-sm)] text-xs w-56
-                bg-[var(--cu-bg-input)] text-[var(--cu-text-primary)]
-                border border-[var(--cu-border)] placeholder:text-[var(--cu-text-muted)]
-                focus:outline-none focus:border-[var(--cu-accent)]
-                transition-colors
-              "
+            <TextInput
+              value={profile.timezone}
+              widthClass="w-56"
+              onChange={(timezone) => setProfile({ timezone })}
             />
           </SettingsRow>
         </div>
@@ -109,46 +111,29 @@ export function Account() {
           "
         >
           <SettingsRow
-            label="Dark mode"
-            description="Use the dark theme across the app."
+            label="Theme"
+            description="Choose how ClickUp looks for you."
           >
-            <Switch.Root
-              defaultChecked
-              className="
-                w-9 h-5 rounded-full relative cursor-pointer
-                bg-[var(--cu-accent)] data-[state=unchecked]:bg-[var(--cu-border)]
-                transition-colors
-              "
-            >
-              <Switch.Thumb
-                className="
-                  block w-4 h-4 rounded-full bg-white shadow-sm
-                  translate-x-0.5 data-[state=checked]:translate-x-[18px]
-                  transition-transform
-                "
-              />
-            </Switch.Root>
+            <SelectInput<Theme>
+              value={appearance.theme}
+              options={THEME_OPTIONS}
+              widthClass="w-36"
+              onChange={(theme) => setAppearance({ theme })}
+            />
           </SettingsRow>
 
           <SettingsRow
-            label="Compact mode"
+            label="Compact sidebar"
             description="Reduce spacing to show more content."
           >
-            <Switch.Root
-              className="
-                w-9 h-5 rounded-full relative cursor-pointer
-                bg-[var(--cu-accent)] data-[state=unchecked]:bg-[var(--cu-border)]
-                transition-colors
-              "
-            >
-              <Switch.Thumb
-                className="
-                  block w-4 h-4 rounded-full bg-white shadow-sm
-                  translate-x-0.5 data-[state=checked]:translate-x-[18px]
-                  transition-transform
-                "
-              />
-            </Switch.Root>
+            <ToggleSwitch
+              checked={appearance.sidebarDensity === 'compact'}
+              onCheckedChange={(checked) =>
+                setAppearance({
+                  sidebarDensity: checked ? 'compact' : 'comfortable',
+                })
+              }
+            />
           </SettingsRow>
         </div>
       </section>
@@ -156,9 +141,6 @@ export function Account() {
       <div className="flex gap-2">
         <Button variant="primary" size="md">
           Save changes
-        </Button>
-        <Button variant="ghost" size="md">
-          Cancel
         </Button>
       </div>
     </div>

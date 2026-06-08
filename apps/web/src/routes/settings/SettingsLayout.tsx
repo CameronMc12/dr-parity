@@ -12,9 +12,11 @@ const WORKSPACE_SECTIONS = [
 ];
 
 const MY_SETTINGS_SECTIONS = [
-  { key: 'account',       label: 'Preferences' },
+  { key: 'account',       label: 'Profile' },
   { key: 'notifications', label: 'Notifications' },
-  { key: 'workspaces',    label: 'Workspaces' },
+  { key: 'preferences',   label: 'Preferences' },
+  { key: 'calendar',      label: 'Calendar' },
+  { key: 'apps',          label: 'Apps' },
   { key: 'security',      label: 'Security' },
 ];
 

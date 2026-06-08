@@ -46,10 +46,31 @@ function isClosed(t: Task): boolean {
   return TERMINAL.has(t.statusType);
 }
 
+/** Inclusive start-of-day for `now`, used by the relative due-date buckets. */
+function startOfToday(now: number): number {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function passesDueDate(t: Task, bucket: NonNullable<FilterState['dueDate']>): boolean {
+  if (bucket === 'none') return t.dueDate == null;
+  if (t.dueDate == null) return false;
+  const now = Date.now();
+  const dayStart = startOfToday(now);
+  const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+  if (bucket === 'overdue') return t.dueDate < now;
+  if (bucket === 'today') return t.dueDate >= dayStart && t.dueDate < dayEnd;
+  // 'week': due any time from start-of-today through the next 7 days.
+  return t.dueDate >= dayStart && t.dueDate < dayStart + 7 * 24 * 60 * 60 * 1000;
+}
+
 function passesFilters(t: Task, f: FilterState): boolean {
   if (f.status.length && !f.status.includes(t.status)) return false;
   if (f.priority.length && (!t.priority || !f.priority.includes(t.priority))) return false;
   if (f.assignee.length && !t.assignees.some((a) => f.assignee.includes(a.id))) return false;
+  if (f.tags.length && !(t.tags ?? []).some((tag) => f.tags.includes(tag.name))) return false;
+  if (f.dueDate && !passesDueDate(t, f.dueDate)) return false;
   return true;
 }
 

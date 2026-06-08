@@ -645,14 +645,22 @@ function GroupColumnHeader({
   );
 }
 
+/**
+ * Inline "+ Add Task" row pinned to the bottom of every group. Enter creates a
+ * task in this group's bucket and keeps focus for rapid entry (ClickUp); Escape
+ * clears the draft and blurs. Mirrors the Table view's CreateRow pattern.
+ */
 function GroupQuickAdd({ onAdd, gridTemplate }: { onAdd: (name: string) => void; gridTemplate: string }) {
   const [draft, setDraft] = useState('');
   const [focused, setFocused] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const submit = () => {
     const name = draft.trim();
     if (!name) return;
     onAdd(name);
     setDraft('');
+    // Keep focus so the user can type the next task immediately.
+    inputRef.current?.focus();
   };
   return (
     <div
@@ -665,10 +673,13 @@ function GroupQuickAdd({ onAdd, gridTemplate }: { onAdd: (name: string) => void;
         paddingLeft: ROW_PAD_LEFT,
         paddingRight: ROW_PAD_RIGHT,
         borderBottom: `1px solid ${BORDER}`,
+        background: focused ? HOVER_BG : 'transparent',
+        transition: 'background 120ms',
       }}
     >
       <span style={{ color: TEXT_MUTED, fontSize: 16, textAlign: 'center', lineHeight: 1 }}>+</span>
       <input
+        ref={inputRef}
         data-testid="list-quick-add"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -678,14 +689,19 @@ function GroupQuickAdd({ onAdd, gridTemplate }: { onAdd: (name: string) => void;
           if (e.key === 'Enter') {
             e.preventDefault();
             submit();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setDraft('');
+            e.currentTarget.blur();
           }
         }}
         placeholder="Add Task"
+        aria-label="Add Task"
         style={{
           border: 'none',
           outline: 'none',
           fontSize: 13,
-          color: focused ? TEXT_PRIMARY : TEXT_MUTED,
+          color: focused || draft ? TEXT_PRIMARY : TEXT_MUTED,
           background: 'transparent',
           fontFamily: 'inherit',
           width: '100%',

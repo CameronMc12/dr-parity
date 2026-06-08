@@ -70,13 +70,30 @@ export function columnIdForCustomField(fieldId: string): CustomFieldColumnId {
   return `cf:${fieldId}`;
 }
 
+/** Multi-select filter fields (each is an OR-set of allowed values). */
+export type MultiFilterField = 'status' | 'priority' | 'assignee' | 'tags';
+
+/** Relative due-date buckets. `null` = no due-date filter. */
+export type DueDateFilter = 'overdue' | 'today' | 'week' | 'none' | null;
+
 export interface FilterState {
-  /** status string -> included. Empty object = no status filter. */
+  /** status string -> included. Empty array = no status filter. */
   status: string[];
   /** priority key (urgent/high/normal/low) -> included. */
   priority: string[];
   /** assignee id -> included. */
   assignee: string[];
+  /** tag name -> included. Empty array = no tag filter. */
+  tags: string[];
+  /** Relative due-date bucket, or null for no due-date filter. */
+  dueDate: DueDateFilter;
+}
+
+/** A named snapshot of a FilterState the user can re-apply. */
+export interface SavedFilter {
+  id: string;
+  name: string;
+  filters: FilterState;
 }
 
 export interface ViewConfig {
@@ -97,6 +114,8 @@ export interface ViewConfig {
   showSubtaskParentNames: boolean;
   showClosed: boolean;
   filters: FilterState;
+  /** User-named filter snapshots for this view, in save order. */
+  savedFilters: SavedFilter[];
   collapsedGroups: string[];
 }
 
@@ -121,10 +140,18 @@ export interface ViewConfigActions {
   ) => void;
   toggleFilterValue: (
     listId: string,
-    field: keyof FilterState,
+    field: MultiFilterField,
     value: string,
   ) => void;
+  /** Set (or clear, with null) the relative due-date filter bucket. */
+  setDueDateFilter: (listId: string, value: DueDateFilter) => void;
   clearFilters: (listId: string) => void;
+  /** Save the view's current filters as a named snapshot. */
+  saveCurrentFilter: (listId: string, name: string) => void;
+  /** Replace the view's active filters with a saved snapshot's filters. */
+  applySavedFilter: (listId: string, savedId: string) => void;
+  /** Remove a saved filter snapshot. */
+  deleteSavedFilter: (listId: string, savedId: string) => void;
   setGroupCollapsed: (listId: string, groupKey: string, collapsed: boolean) => void;
   collapseAllGroups: (listId: string, groupKeys: string[]) => void;
   expandAllGroups: (listId: string) => void;

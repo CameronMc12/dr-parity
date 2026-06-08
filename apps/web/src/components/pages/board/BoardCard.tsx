@@ -21,6 +21,7 @@ import { useSubtasks } from '@/store/workspace/hooks';
 import type { Task } from '@/store/workspace/types';
 import {
   CalendarAddIcon,
+  CheckboxIcon,
   CommentIcon,
   FlagIcon,
   FlagOutline,
@@ -72,6 +73,8 @@ export function BoardCard({
   onContextMenu: (e: React.MouseEvent, task: Task) => void;
 }) {
   const openTask = useUiStore((s) => s.openTask);
+  const selected = useUiStore((s) => s.selectedTaskIds.includes(task.id));
+  const toggleSelected = useUiStore((s) => s.toggleTaskSelected);
   const toggleTaskComplete = useWorkspaceStore((s) => s.toggleTaskComplete);
   const subtasks = useSubtasks(task.id);
   const [hover, setHover] = useState(false);
@@ -111,18 +114,57 @@ export function BoardCard({
         gap: size.gap,
         padding: `${size.padY}px ${size.padX}px`,
         background: BOARD.cardBg,
-        border: `1px solid ${hover ? BOARD.borderStrong : BOARD.border}`,
+        border: `1px solid ${selected ? BOARD.accent : hover ? BOARD.borderStrong : BOARD.border}`,
         borderRadius: BOARD.cardRadius,
         cursor: 'pointer',
-        boxShadow: hover ? BOARD.shadowCardHover : BOARD.shadowCard,
+        boxShadow: selected
+          ? `0 0 0 1px ${BOARD.accent}, ${BOARD.shadowCard}`
+          : hover
+            ? BOARD.shadowCardHover
+            : BOARD.shadowCard,
         opacity: dragging ? 0.4 : 1,
         transform: hover && !dragging ? 'translateY(-1px)' : 'none',
         transition: 'box-shadow 120ms, border-color 120ms, transform 120ms, opacity 120ms',
         userSelect: 'none',
       }}
     >
-      {/* Title row: hover reveals leading complete-circle + trailing kebab. */}
+      {/* Title row: a select checkbox (hover or selected), the name, and on hover
+          a leading complete-circle + trailing kebab. */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+        <div
+          style={{
+            width: hover || selected ? 18 : 0,
+            opacity: hover || selected ? 1 : 0,
+            overflow: 'hidden',
+            flexShrink: 0,
+            marginTop: 1,
+            transition: 'width 120ms, opacity 120ms',
+          }}
+        >
+          <button
+            type="button"
+            data-testid="board-card-select"
+            aria-label={selected ? 'Deselect task' : 'Select task'}
+            aria-pressed={selected}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleSelected(task.id);
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              color: selected ? BOARD.accent : BOARD.textMuted,
+            }}
+          >
+            <CheckboxIcon size={16} checked={selected} />
+          </button>
+        </div>
+
         <div
           style={{
             width: hover ? 18 : 0,

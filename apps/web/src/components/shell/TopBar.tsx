@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { SearchIcon, ChevronDownIcon } from '@/components/ui/Icons';
 import { useUiStore } from '@/store/ui-store';
+import { SearchCommandPalette } from '@/components/shell/sidebars/SearchSidebar';
 
 /**
  * Top-bar action glyphs.
@@ -149,6 +150,7 @@ function ActionButton({
 export function TopBar() {
   const openCreateTask = useUiStore((s) => s.openCreateTask);
   const openSettings = useUiStore((s) => s.openSettings);
+  const openSearch = useUiStore((s) => s.openSearch);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   return (
     // cu-home-top-bar matches ClickUp's top bar element class (border-bottom, h=44px from computed)
@@ -237,6 +239,7 @@ export function TopBar() {
       {/* Center: Search button */}
       <button
         aria-label="Search"
+        onClick={() => openSearch()}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -463,6 +466,8 @@ export function TopBar() {
         )}
         </div>
       </div>
+
+      <SearchCommandPalette />
     </header>
   );
 }

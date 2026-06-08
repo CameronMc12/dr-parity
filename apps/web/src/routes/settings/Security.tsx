@@ -1,7 +1,13 @@
-import * as Switch from '@radix-ui/react-switch';
+'use client';
+
 import { Button } from '@/components/ui/Button';
+import { useSecurityPrefs, useSetSecurity } from '@/store/preferences/hooks';
+import { ToggleSwitch } from './controls';
 
 export function Security() {
+  const security = useSecurityPrefs();
+  const setSecurity = useSetSecurity();
+
   return (
     <div className="p-6 max-w-2xl">
       <h1 className="text-[var(--cu-text-primary)] text-lg font-semibold mb-1">
@@ -48,21 +54,12 @@ export function Security() {
                 Require a second verification step when signing in.
               </p>
             </div>
-            <Switch.Root
-              className="
-                w-9 h-5 rounded-full relative cursor-pointer
-                bg-[var(--cu-accent)] data-[state=unchecked]:bg-[var(--cu-border)]
-                transition-colors
-              "
-            >
-              <Switch.Thumb
-                className="
-                  block w-4 h-4 rounded-full bg-white shadow-sm
-                  translate-x-0.5 data-[state=checked]:translate-x-[18px]
-                  transition-transform
-                "
-              />
-            </Switch.Root>
+            <ToggleSwitch
+              checked={security.twoFactorEnabled}
+              onCheckedChange={(twoFactorEnabled) =>
+                setSecurity({ twoFactorEnabled })
+              }
+            />
           </div>
         </div>
       </section>

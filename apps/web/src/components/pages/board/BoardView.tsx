@@ -35,6 +35,7 @@ import { ViewShell } from '@/components/views/ViewShell';
 import { ViewToolbar, type ViewToolbarControl } from '@/components/views/ViewToolbar';
 import { useTaskContextMenu } from '@/components/menus/useTaskContextMenu';
 import { BoardColumn } from './BoardColumn';
+import { BoardBulkBar } from './BoardBulkBar';
 import { AddGroupColumn } from './AddGroupColumn';
 import { CardSizeControl } from './CardSizeControl';
 import { useBoardDnd } from './useBoardDnd';
@@ -159,6 +160,7 @@ export function BoardView({ scope }: { scope: ViewScope }) {
           background: BOARD.bg,
           color: BOARD.textPrimary,
           overflow: 'hidden',
+          position: 'relative',
         }}
       >
         <ViewToolbar
@@ -213,6 +215,8 @@ export function BoardView({ scope }: { scope: ViewScope }) {
 
           <AddGroupColumn onAdd={(name) => addGroup(key, name, '')} />
         </div>
+
+        <BoardBulkBar columns={visibleColumns} />
       </div>
       {menu}
     </ViewShell>

@@ -44,6 +44,7 @@ import { SettingsRoute } from '@/components/pages/settings/SettingsRoute';
 import { useShellStore } from '@/store/shell-store';
 import { WorkspaceHydrator } from '@/store/workspace/WorkspaceHydrator';
 import { ViewsHydrator } from '@/store/views/ViewsHydrator';
+import { PreferencesHydrator } from '@/store/preferences/PreferencesHydrator';
 import { resolveViewSegment } from '@/store/views';
 import { VIEW_TO_LIST } from '@/data/workspace-tree';
 import { ScopeViewRoute } from '@/components/views/ScopeViewRoute';
@@ -250,6 +251,7 @@ export function ClickUpWorkspace({ route }: { route: string[] }) {
       <CuIconSprite />
       <WorkspaceHydrator />
       <ViewsHydrator />
+      <PreferencesHydrator />
       <AppShell wsId={wsId}>{renderRouteContent(route, wsId)}</AppShell>
     </QueryClientProvider>
   );

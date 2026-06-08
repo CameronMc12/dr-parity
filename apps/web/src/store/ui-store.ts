@@ -35,6 +35,14 @@ interface UiState {
   inviteOpen: boolean;
   openInvite: () => void;
   closeInvite: () => void;
+
+  /** Whether the centered ⌘K global-search command palette is open. */
+  searchOpen: boolean;
+  /** Live query text for the command palette (kept here so ⌘K can preseed it). */
+  searchQuery: string;
+  openSearch: (query?: string) => void;
+  closeSearch: () => void;
+  setSearchQuery: (query: string) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -75,4 +83,10 @@ export const useUiStore = create<UiState>((set) => ({
   inviteOpen: false,
   openInvite: () => set({ inviteOpen: true }),
   closeInvite: () => set({ inviteOpen: false }),
+
+  searchOpen: false,
+  searchQuery: '',
+  openSearch: (query) => set({ searchOpen: true, searchQuery: query ?? '' }),
+  closeSearch: () => set({ searchOpen: false, searchQuery: '' }),
+  setSearchQuery: (query) => set({ searchQuery: query }),
 }));

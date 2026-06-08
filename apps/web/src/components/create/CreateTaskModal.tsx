@@ -5,8 +5,11 @@ import type { CSSProperties } from 'react';
 import { useUiStore } from '@/store/ui-store';
 import { useWorkspaceStore } from '@/store/workspace';
 import { useCurrentMemberId, useSpaces } from '@/store/workspace/hooks';
-import type { Assignee, ListNode } from '@/store/workspace/types';
+import type { Assignee, ListNode, TaskTag } from '@/store/workspace/types';
 import { formatTaskDate } from '@/lib/format-date';
+import { useTemplatesStore } from '@/store/templates';
+import { useTemplatesHydration } from '@/store/templates/hooks';
+import type { TaskTemplate, TemplateStatus } from '@/store/templates/types';
 
 const TEXT_PRIMARY = 'var(--cu-text-primary, rgb(32,32,32))';
 const TEXT_MUTED = 'var(--cu-text-muted, rgb(130,130,130))';
@@ -57,6 +60,10 @@ export function CreateTaskModal() {
   const createTask = useWorkspaceStore((s) => s.createTask);
   const members = useWorkspaceStore((s) => s.members);
 
+  useTemplatesHydration();
+  const templates = useTemplatesStore((s) => s.templates);
+  const addTemplate = useTemplatesStore((s) => s.addTemplate);
+
   const lists = useMemo<FlatList[]>(() => flattenLists(spaces), [spaces]);
   const me = members.find((m) => m.id === myId);
 
@@ -66,6 +73,9 @@ export function CreateTaskModal() {
   const [priority, setPriority] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState<string>('');
   const [assignToMe, setAssignToMe] = useState(true);
+  const [description, setDescription] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
+  const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
 
   // Reset form each time the modal opens; seed list from caller or first list.
@@ -76,10 +86,34 @@ export function CreateTaskModal() {
     setPriority(null);
     setDueDate('');
     setAssignToMe(true);
+    setDescription('');
+    setTags([]);
+    setAppliedTemplateId(null);
     setListId(defaultListId ?? lists[0]?.id ?? '');
     const t = setTimeout(() => nameRef.current?.focus(), 30);
     return () => clearTimeout(t);
   }, [open, defaultListId, lists]);
+
+  function applyTemplate(tpl: TaskTemplate) {
+    setAppliedTemplateId(tpl.id);
+    if (!name.trim()) setName(tpl.name);
+    setStatus(tpl.status);
+    setPriority(tpl.priority);
+    setTags(tpl.tags);
+    setDescription(buildTemplateBody(tpl));
+  }
+
+  function saveAsTemplate() {
+    const tplName = name.trim() || 'Untitled template';
+    addTemplate({
+      name: tplName,
+      status: status as TemplateStatus,
+      priority,
+      description,
+      tags,
+      checklist: [],
+    });
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -102,6 +136,7 @@ export function CreateTaskModal() {
       assignToMe && me
         ? [{ id: me.id, name: me.name, initials: me.initials, color: me.color }]
         : [];
+    const taskTags: TaskTag[] = tags.map((t) => ({ name: t, color: TAG_COLOR }));
     createTask({
       name: name.trim(),
       listId,
@@ -112,6 +147,7 @@ export function CreateTaskModal() {
       priorityColor: pr?.color ?? null,
       dueDate: dueDate ? new Date(dueDate).getTime() : null,
       assignees,
+      tags: taskTags.length > 0 ? taskTags : undefined,
     });
     close();
   }
@@ -270,6 +306,20 @@ export function CreateTaskModal() {
             onChange={(v) => setPriority(v === '' ? null : v)}
             leading={<FlagGlyph color={activePriority?.color} />}
           />
+
+          <SelectChip
+            label="Template"
+            value={
+              templates.find((t) => t.id === appliedTemplateId)?.name ?? 'From template'
+            }
+            testid="create-task-template-trigger"
+            leading={<TemplateGlyph />}
+            options={templates.map((t) => ({ value: t.id, label: t.name }))}
+            onChange={(id) => {
+              const tpl = templates.find((t) => t.id === id);
+              if (tpl) applyTemplate(tpl);
+            }}
+          />
         </div>
 
         {/* Footer */}
@@ -282,6 +332,19 @@ export function CreateTaskModal() {
             borderTop: `1px solid ${BORDER}`,
           }}
         >
+          <button
+            type="button"
+            onClick={saveAsTemplate}
+            disabled={!name.trim()}
+            data-testid="create-task-save-template"
+            style={{
+              ...ghostBtn,
+              opacity: name.trim() ? 1 : 0.45,
+              cursor: name.trim() ? 'pointer' : 'not-allowed',
+            }}
+          >
+            Save as template
+          </button>
           <span style={{ flex: 1 }} />
           <button onClick={close} style={ghostBtn}>
             Cancel
@@ -522,6 +585,15 @@ function formatDate(iso: string): string {
   return formatTaskDate(iso);
 }
 
+/** Default chip colour applied to template-supplied tags. */
+const TAG_COLOR = '#6395fa';
+
+/** Compose a template's body: its description plus a checklist block. */
+function buildTemplateBody(tpl: TaskTemplate): string {
+  const checklist = tpl.checklist.map((item) => `- [ ] ${item}`).join('\n');
+  return checklist ? `${tpl.description}\n\n${checklist}` : tpl.description;
+}
+
 // ── Styles & glyphs ──────────────────────────────────────────────────────────
 
 const iconBtn: CSSProperties = {
@@ -600,6 +672,13 @@ function PersonGlyph() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 4-6 8-6s8 2 8 6" />
+    </svg>
+  );
+}
+function TemplateGlyph() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" />
     </svg>
   );
 }
