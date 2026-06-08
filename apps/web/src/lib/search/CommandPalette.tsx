@@ -39,15 +39,16 @@ const WORKSPACE_ID = '90152566819';
  * while the surrounding app runs in light mode. These tokens are local to the
  * palette so the dark treatment never bleeds into the rest of the shell.
  */
-const PANEL_BG = '#1f2127';
-const PANEL_BORDER = 'rgba(255,255,255,0.09)';
+const PANEL_BG = '#1c1c1c';
+const PANEL_BORDER = 'rgba(255,255,255,0.08)';
 const FIELD_BORDER = 'rgba(255,255,255,0.12)';
 const TEXT_PRIMARY = 'rgba(255,255,255,0.95)';
 const TEXT_MUTED = 'rgba(255,255,255,0.46)';
 const TEXT_FAINT = 'rgba(255,255,255,0.34)';
-const ROW_ACTIVE_BG = 'rgba(255,255,255,0.07)';
-const CHIP_BG = 'rgba(255,255,255,0.05)';
-const KEYCAP_BG = 'rgba(255,255,255,0.08)';
+const ROW_ACTIVE_BG = 'rgba(255,255,255,0.055)';
+const CHIP_BG = 'rgba(255,255,255,0.045)';
+const KEYCAP_BG = 'rgba(255,255,255,0.07)';
+const DIVIDER = 'rgba(255,255,255,0.1)';
 const FONT = '-apple-system, "Segoe UI", Roboto, sans-serif';
 
 type SourceTab = 'all' | 'clickup' | 'drive' | 'gmail' | 'sharepoint' | 'apps';
@@ -56,19 +57,19 @@ type FilterChip = 'tasks' | 'docs' | 'agents' | 'channels' | 'messages';
 const SOURCE_TABS: { id: SourceTab; label: string; icon: ReactNode }[] = [
   { id: 'all', label: 'All', icon: null },
   { id: 'clickup', label: 'ClickUp', icon: <FlowerGlyph size={14} /> },
-  { id: 'drive', label: 'Google Drive', icon: <DriveGlyph size={14} /> },
-  { id: 'gmail', label: 'Gmail', icon: <GmailGlyph size={14} /> },
-  { id: 'sharepoint', label: 'SharePoint', icon: <SharePointGlyph size={14} /> },
+  { id: 'drive', label: 'Google Drive', icon: <DriveGlyph size={15} /> },
+  { id: 'gmail', label: 'Gmail', icon: <GmailGlyph size={15} /> },
+  { id: 'sharepoint', label: 'SharePoint', icon: <SharePointGlyph size={15} /> },
   { id: 'apps', label: 'Apps', icon: <AppsGlyph size={14} /> },
 ];
 
 /** Filter chips map to the search kinds they constrain results to. */
 const FILTER_CHIPS: { id: FilterChip; label: string; icon: ReactNode; kinds: SearchKind[] | null }[] = [
-  { id: 'tasks', label: 'Tasks', icon: <TaskCircleGlyph size={13} />, kinds: ['task'] },
-  { id: 'docs', label: 'Docs', icon: <DocLinesGlyph size={13} />, kinds: ['doc'] },
-  { id: 'agents', label: 'Agents', icon: <AgentGlyph size={13} />, kinds: null },
-  { id: 'channels', label: 'Channels', icon: <ChannelGlyph size={13} />, kinds: ['list', 'folder', 'space'] },
-  { id: 'messages', label: 'Messages', icon: <MessageGlyph size={13} />, kinds: ['person'] },
+  { id: 'tasks', label: 'Tasks', icon: <TaskCircleGlyph size={14} />, kinds: ['task'] },
+  { id: 'docs', label: 'Docs', icon: <DocLinesGlyph size={14} />, kinds: ['doc'] },
+  { id: 'agents', label: 'Agents', icon: <AgentGlyph size={14} />, kinds: null },
+  { id: 'channels', label: 'Channels', icon: <ChannelGlyph size={14} />, kinds: ['list', 'folder', 'space'] },
+  { id: 'messages', label: 'Messages', icon: <MessageGlyph size={14} />, kinds: ['person'] },
 ];
 
 const SOURCES_WITHOUT_RESULTS: SourceTab[] = ['drive', 'gmail', 'sharepoint', 'apps'];
@@ -292,14 +293,14 @@ export function CommandPalette() {
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
         style={{
-          width: 1040,
+          width: 760,
           maxWidth: 'calc(100vw - 48px)',
           maxHeight: '78vh',
           display: 'flex',
           flexDirection: 'column',
           background: PANEL_BG,
-          borderRadius: 16,
-          boxShadow: '0 24px 64px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.4)',
+          borderRadius: 12,
+          boxShadow: '0 16px 48px rgba(0,0,0,0.6), 0 2px 6px rgba(0,0,0,0.45)',
           border: `1px solid ${PANEL_BORDER}`,
           overflow: 'hidden',
           color: TEXT_PRIMARY,
@@ -321,8 +322,9 @@ export function CommandPalette() {
           {showResultsLabel ? (
             <div
               style={{
-                padding: '8px 22px 6px',
+                padding: '10px 16px 4px',
                 fontSize: 12,
+                fontWeight: 500,
                 color: TEXT_MUTED,
               }}
             >
@@ -366,7 +368,7 @@ function InputRow({
         display: 'flex',
         alignItems: 'center',
         gap: 12,
-        padding: '16px 18px 12px',
+        padding: '14px 16px 12px',
       }}
     >
       <span style={{ color: TEXT_MUTED, display: 'inline-flex' }}>
@@ -384,7 +386,7 @@ function InputRow({
           border: 'none',
           outline: 'none',
           background: 'transparent',
-          fontSize: 17,
+          fontSize: 15,
           color: TEXT_PRIMARY,
           fontFamily: 'inherit',
         }}
@@ -435,8 +437,8 @@ function SourceTabsRow({
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 18,
-        padding: '0 22px',
+        gap: 16,
+        padding: '0 16px',
         borderBottom: `1px solid ${PANEL_BORDER}`,
       }}
       role="tablist"
@@ -489,8 +491,8 @@ function FilterChipsRow({
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 8,
-        padding: '10px 22px',
+        gap: 6,
+        padding: '8px 16px',
       }}
     >
       {FILTER_CHIPS.map((chip) => (
@@ -505,7 +507,7 @@ function FilterChipsRow({
       <Chip icon={<OverflowGlyph size={16} />} ariaLabel="More filters" />
 
       <div style={{ flex: 1 }} />
-      <div style={{ width: 1, height: 18, background: PANEL_BORDER }} />
+      <div style={{ width: 1, height: 16, margin: '0 2px', background: DIVIDER }} />
       <Chip icon={<FilterGlyph size={14} />} label="Filter" />
       <Chip icon={<SortGlyph size={14} />} label="Sort" />
     </div>
@@ -536,9 +538,9 @@ function Chip({
         display: 'flex',
         alignItems: 'center',
         gap: 6,
-        height: 28,
-        padding: label ? '0 11px' : '0 8px',
-        borderRadius: 8,
+        height: 26,
+        padding: label ? '0 10px' : '0 7px',
+        borderRadius: 6,
         border: `1px solid ${active ? FIELD_BORDER : PANEL_BORDER}`,
         background: active ? KEYCAP_BG : 'transparent',
         color: active ? TEXT_PRIMARY : TEXT_MUTED,
@@ -586,7 +588,10 @@ function ResultRow({
         display: 'flex',
         alignItems: 'center',
         gap: 12,
-        padding: '8px 22px',
+        minHeight: 36,
+        margin: '0 8px',
+        padding: '6px 8px',
+        borderRadius: 8,
         background: active ? ROW_ACTIVE_BG : 'transparent',
         cursor: 'pointer',
       }}
@@ -628,10 +633,10 @@ function ResultRow({
         <span style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
           <RowActionPill onAskAi={onAskAi} />
           <RowIconButton label="Open in new tab" onClick={onClick}>
-            <ExternalGlyph size={15} />
+            <ExternalGlyph size={14} />
           </RowIconButton>
           <RowIconButton label="Copy link" onClick={() => copyLink(result)}>
-            <LinkGlyph size={15} />
+            <LinkGlyph size={14} />
           </RowIconButton>
           <span
             aria-hidden="true"
@@ -639,14 +644,14 @@ function ResultRow({
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
-              minWidth: 22,
-              height: 22,
+              minWidth: 20,
+              height: 20,
               padding: '0 5px',
               marginLeft: 2,
               borderRadius: 5,
               background: KEYCAP_BG,
               color: TEXT_MUTED,
-              fontSize: 13,
+              fontSize: 12,
             }}
           >
             ↵
@@ -825,13 +830,13 @@ function FooterBar() {
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 16,
-        padding: '9px 18px',
+        gap: 14,
+        padding: '8px 14px',
         borderTop: `1px solid ${PANEL_BORDER}`,
       }}
     >
       <span style={{ color: TEXT_MUTED, display: 'inline-flex' }}>
-        <NavArrowsGlyph size={16} />
+        <NavArrowsGlyph size={14} />
       </span>
       <span style={hintStyle}>
         Press <Keycap>/</Keycap> to see all available commands, hit <Keycap>Tab</Keycap> to see additional actions
@@ -842,8 +847,8 @@ function FooterBar() {
         aria-label="Search settings"
         onMouseDown={(e) => e.preventDefault()}
         style={{
-          width: 26,
-          height: 26,
+          width: 24,
+          height: 24,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -861,7 +866,7 @@ function FooterBar() {
           (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
         }}
       >
-        <GearGlyph size={16} />
+        <GearGlyph size={14} />
       </button>
     </div>
   );
