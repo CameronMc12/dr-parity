@@ -1,0 +1,12 @@
+import pkg from '/Users/cameronmcallister/Github/dr-parity/node_modules/playwright/index.js';
+const { chromium } = pkg;
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+const page = await ctx.newPage();
+await page.goto('http://localhost:4280/90152566819/home', { waitUntil: 'domcontentloaded' });
+await page.evaluate(() => localStorage.removeItem('parity-workspace-v1'));
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(600);
+const present = await page.evaluate(() => localStorage.getItem('parity-workspace-v1') !== null);
+console.log('re-seeded parity-workspace-v1 present after reload:', present);
+await browser.close();

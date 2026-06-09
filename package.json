@@ -50,6 +50,7 @@
     "build:react": "tsx scripts/build.ts --target=react",
     "build:webapp": "tsx scripts/build.ts --target=webapp",
     "merge:webapp": "tsx scripts/merge-webapp-crawls.ts",
+    "probe:store": "tsx scripts/probe-store.ts",
     "backend:demo": "tsx scripts/backend-demo.ts",
     "backend": "tsx scripts/backend-server.ts",
     "backend:seed": "tsx scripts/backend-seed.ts",
@@ -60,10 +61,16 @@
     "export:clickup": "tsx scripts/clickup-export.ts",
     "crawl:webapp": "tsx scripts/crawl-webapp.ts",
     "crawl:report": "tsx scripts/crawl-report.ts",
+    "coverage-report": "tsx scripts/coverage-report.ts",
     "seed-login": "tsx scripts/seed-login.ts",
     "seed:clickup": "tsx scripts/seed-clickup.ts",
+    "seed:workspace": "tsx scripts/seed-workspace.ts",
     "seed-from-cdp": "tsx scripts/seed-from-cdp.ts",
     "seed-verify": "tsx scripts/seed-verify.ts",
+    "seed:views": "tsx scripts/seed-create-views.ts",
+    "interaction-inventory": "tsx scripts/interaction-inventory.ts",
+    "build:mock-db": "tsx scripts/build-mock-db.ts",
+    "seed:apps-web": "tsx scripts/seed-apps-web-from-engine.ts",
     "parse:har": "tsx scripts/parse-har.ts",
     "parse:trace": "tsx scripts/parse-trace.ts",
     "complete:assets": "tsx scripts/complete-assets.ts",
@@ -93,7 +100,9 @@
     "schema:infer": "tsx scripts/infer-schema.ts",
     "test:mitm:reader": "tsx engine/extract/capture/mitm/flow-reader.test.ts",
     "test:merge:fingerprint": "tsx engine/extract/capture/merge/fingerprint.test.ts",
-    "capture:view-templates": "tsx scripts/capture-view-templates.ts"
+    "capture:view-templates": "tsx scripts/capture-view-templates.ts",
+    "capture:baseline": "tsx scripts/capture-baseline.ts",
+    "surface-map": "tsx scripts/surface-map.ts"
   },
   "dependencies": {
     "citty": "^0.2.2"

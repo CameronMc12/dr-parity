@@ -158,17 +158,20 @@ export function TopBar() {
       aria-label="Top bar"
       className="cu-home-top-bar"
       style={{
-        height: 40,
+        height: 48,
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
-        background: 'var(--cu-bg-topbar)',
+        // Figma: topbar sits at near-black #111 (matching the icon rail), with a
+        // thin #2a2a2a hairline below it. The shared --cu-bg-topbar token is a
+        // lighter #2a2a2a, so the near-black is pinned here at the shell level.
+        background: '#0e0e0e',
         width: '100%',
-        paddingLeft: 6,
-        paddingRight: 6,
+        paddingLeft: 8,
+        paddingRight: 8,
         gap: 0,
         position: 'relative',
-        borderBottom: '1px solid var(--cu-border)',
+        borderBottom: 'none',
       }}
     >
       {/* Left: Workspace picker */}
@@ -244,29 +247,32 @@ export function TopBar() {
           display: 'flex',
           alignItems: 'center',
           gap: 8,
-          height: 28,
-          width: 286,
-          paddingLeft: 10,
+          height: 30,
+          width: 520,
+          maxWidth: '46vw',
+          paddingLeft: 12,
           paddingRight: 10,
-          background: 'var(--cu-bg-input)',
-          border: '1px solid var(--cu-border)',
+          // Figma search pill: #1e2024 fill, #2a2a2a hairline border.
+          background: 'rgb(30, 32, 36)',
+          border: '1px solid rgb(42, 42, 42)',
           borderRadius: 8,
           cursor: 'pointer',
           color: 'var(--cu-text-muted)',
           fontSize: 13,
-          flexShrink: 0,
+          flexShrink: 1,
+          minWidth: 0,
         }}
         onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background = 'var(--cu-bg-hover)';
+          (e.currentTarget as HTMLButtonElement).style.background = 'rgb(38, 40, 45)';
           (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--cu-border-strong)';
         }}
         onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background = 'var(--cu-bg-input)';
-          (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--cu-border)';
+          (e.currentTarget as HTMLButtonElement).style.background = 'rgb(30, 32, 36)';
+          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgb(42, 42, 42)';
         }}
       >
         <SearchIcon size={14} />
-        <span style={{ flex: 1, textAlign: 'left' }}>Search</span>
+        <span style={{ flex: 1, textAlign: 'left' }}>Search...</span>
         <kbd
           style={{
             fontSize: 11,
@@ -388,7 +394,7 @@ export function TopBar() {
                 height: 7,
                 borderRadius: '50%',
                 background: 'rgb(44, 140, 94)',
-                border: '1.5px solid var(--cu-bg-topbar)',
+                border: '1.5px solid rgb(17, 17, 17)',
               }}
             />
           </span>

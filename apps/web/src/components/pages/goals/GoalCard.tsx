@@ -4,11 +4,11 @@ import { useState } from 'react';
 import type { Goal } from '@/data/goals-seed';
 import { ProgressRing } from './ProgressRing';
 
-const PANEL_BG = 'rgb(245, 246, 248)';
-const TITLE = 'rgb(54, 56, 60)';
-const LINK = 'rgb(120, 123, 130)';
-const DATE = 'rgb(168, 171, 178)';
-const DIVIDER = 'rgb(228, 230, 234)';
+const PANEL_BG = 'var(--cu-bg-menu)';
+const TITLE = 'var(--cu-text-primary)';
+const LINK = 'var(--cu-text-secondary)';
+const DATE = 'var(--cu-text-muted)';
+const DIVIDER = 'var(--cu-border-divider)';
 
 /**
  * One goal tile from the Goals landing grid: centered progress ring, goal name,
@@ -102,7 +102,7 @@ export function GoalCard({ goal }: { goal: Goal }) {
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
-            border: '1.5px solid white',
+            border: '1.5px solid var(--cu-bg-menu)',
             boxSizing: 'border-box',
           }}
         >

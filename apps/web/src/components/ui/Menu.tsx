@@ -46,7 +46,58 @@ interface Anchor {
   align: 'left' | 'right';
 }
 
-const MenuCloseContext = createContext<() => void>(() => {});
+/** Concrete viewport-clamped position + height for the popover surface. */
+interface ClampedRect {
+  top: number;
+  left: number;
+  maxHeight: number;
+}
+
+const VIEWPORT_MARGIN = 8;
+const GAP = 6;
+
+/**
+ * Given the trigger rect and measured menu size, return a top/left that keeps the
+ * menu fully on-screen. Prefers opening below the trigger; flips above when there
+ * is more room there. When the menu is taller than the viewport, it is pinned to
+ * the top margin and its height is capped so the body scrolls.
+ */
+function computeClamp({
+  triggerRect,
+  desiredLeft,
+  menuHeight,
+  menuWidth,
+  viewportHeight,
+  viewportWidth,
+}: {
+  triggerRect: DOMRect;
+  desiredLeft: number;
+  menuHeight: number;
+  menuWidth: number;
+  viewportHeight: number;
+  viewportWidth: number;
+}): ClampedRect {
+  const maxHeight = Math.min(menuHeight, viewportHeight - VIEWPORT_MARGIN * 2);
+
+  const belowTop = triggerRect.bottom + GAP;
+  const aboveTop = triggerRect.top - GAP - maxHeight;
+  const fitsBelow = belowTop + maxHeight <= viewportHeight - VIEWPORT_MARGIN;
+  const desiredTop = fitsBelow || aboveTop < VIEWPORT_MARGIN ? belowTop : aboveTop;
+
+  const top = Math.max(
+    VIEWPORT_MARGIN,
+    Math.min(desiredTop, viewportHeight - maxHeight - VIEWPORT_MARGIN),
+  );
+
+  const left = Math.max(
+    VIEWPORT_MARGIN,
+    Math.min(desiredLeft, viewportWidth - menuWidth - VIEWPORT_MARGIN),
+  );
+
+  return { top, left, maxHeight };
+}
+
+export const MenuCloseContext = createContext<() => void>(() => {});
 
 function useOutsideClose(
   open: boolean,
@@ -105,6 +156,7 @@ export function Menu({
 }: MenuProps) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<Anchor | null>(null);
+  const [clamp, setClamp] = useState<ClampedRect | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
 
@@ -120,16 +172,49 @@ export function Menu({
     setAnchor({ rect, placement: placement ?? auto, align });
   }, [placement, align]);
 
+  // After the surface renders, measure it against the viewport and shift it back
+  // on-screen. If it can't fit even after clamping, cap its height + scroll.
+  const clampToViewport = useCallback(() => {
+    const surface = surfaceRef.current;
+    const trigger = triggerRef.current;
+    if (!surface || !trigger) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const desiredLeft = align === 'left' ? triggerRect.left : triggerRect.right - width;
+    setClamp(
+      computeClamp({
+        triggerRect,
+        desiredLeft,
+        menuHeight: surface.scrollHeight,
+        menuWidth: width,
+        viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
+      }),
+    );
+  }, [width, align]);
+
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setClamp(null);
+      return;
+    }
     measure();
-    window.addEventListener('resize', measure);
-    window.addEventListener('scroll', measure, true);
-    return () => {
-      window.removeEventListener('resize', measure);
-      window.removeEventListener('scroll', measure, true);
+    const onChange = () => {
+      measure();
+      clampToViewport();
     };
-  }, [open, measure]);
+    window.addEventListener('resize', onChange);
+    window.addEventListener('scroll', onChange, true);
+    return () => {
+      window.removeEventListener('resize', onChange);
+      window.removeEventListener('scroll', onChange, true);
+    };
+  }, [open, measure, clampToViewport]);
+
+  // Re-run the clamp once the anchor (and thus the surface) is in the DOM.
+  useLayoutEffect(() => {
+    if (!open || !anchor) return;
+    clampToViewport();
+  }, [open, anchor, clampToViewport]);
 
   const onTriggerClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -145,6 +230,11 @@ export function Menu({
         ? { top: rect.bottom + 6, left }
         : { bottom: window.innerHeight - rect.top + 6, left };
   }
+  // The clamp resolves to concrete top/left/maxHeight and always wins, replacing
+  // any bottom-anchored placement so the menu stays fully visible.
+  if (clamp) {
+    surfacePos = { top: clamp.top, left: clamp.left, bottom: 'auto' };
+  }
 
   return (
     <>
@@ -158,7 +248,7 @@ export function Menu({
               position: 'fixed',
               zIndex: 9999,
               width,
-              maxHeight: 'calc(100vh - 24px)',
+              maxHeight: clamp ? clamp.maxHeight : 'calc(100vh - 24px)',
               overflowY: 'auto',
               background: MENU_BG,
               border: `1px solid ${MENU_BORDER}`,

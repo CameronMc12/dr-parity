@@ -44,12 +44,19 @@
 }
 
 /* ── Base reset ───────────────────────────────────────────── */
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+/*
+ * Layered into `base` so Tailwind's `@layer utilities` (a later layer) can
+ * override these resets. Without the layer this unlayered reset would beat
+ * every utility class (margin/padding), breaking utility-styled components.
+ */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
 }
 
 html,

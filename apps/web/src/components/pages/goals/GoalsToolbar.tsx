@@ -5,9 +5,9 @@ import { TEXT_PRIMARY } from '../page-primitives';
 import { SortIcon, FolderIcon, ArchivedIcon } from './goals-icons';
 import { useGoalsStore } from './goals-ui-store';
 
-const BTN_TEXT = 'rgb(74, 77, 84)';
-const ACTIVE_BG = 'rgb(238, 239, 241)';
-const DARK_BG = 'rgb(58, 61, 67)';
+const BTN_TEXT = 'var(--cu-text-secondary)';
+const ACTIVE_BG = 'var(--cu-bg-active)';
+const DARK_BG = 'var(--cu-text-primary)';
 
 /**
  * Goals landing toolbar: "Goals" heading on the left; "Sort by: Updated", a
@@ -58,7 +58,7 @@ export function GoalsToolbar() {
           border: 'none',
           borderRadius: 6,
           cursor: 'pointer',
-          color: 'white',
+          color: 'var(--cu-bg-app)',
           fontSize: 12,
           fontWeight: 600,
           letterSpacing: '0.3px',
@@ -103,7 +103,7 @@ function ToolbarBtn({
         whiteSpace: 'nowrap',
       }}
     >
-      <span style={{ display: 'flex', color: 'rgb(120, 123, 130)', lineHeight: 0 }}>{icon}</span>
+      <span style={{ display: 'flex', color: 'var(--cu-text-muted)', lineHeight: 0 }}>{icon}</span>
       {children}
     </button>
   );

@@ -72,7 +72,7 @@ export function buildHandlersFile(inputs: HandlerBuildInput[]): string {
     ' */',
     '',
     "import { http, HttpResponse } from 'msw';",
-    "import type { HttpHandler } from 'msw';",
+    "import type { HttpHandler, JsonBodyType } from 'msw';",
   ];
 
   const importLines = uniqueImports.map(

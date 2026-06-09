@@ -150,7 +150,22 @@ export async function discoverRightClickTargets(page: Page): Promise<number[]> {
   const script = `(() => {
     var w = window;
     if (!w.__drParityElements) w.__drParityElements = [];
-    var sel = '[role="row"], [role="listitem"], [data-context-menu], li, .card';
+    var sel = [
+      '[role="row"]', '[role="listitem"]', '[data-context-menu]', 'li', '.card',
+      // ClickUp task rows (custom web components, no role="row").
+      '.cu-task-row', '[class*="cu-task-row" i]', '[class*="task-row" i]',
+      // Board cards.
+      '.cu-board-card', '[class*="board-card" i]',
+      // Sidebar items: spaces / folders / lists. Right-click surfaces the
+      // space/folder/list context menu (rename, color, create, delete, etc.).
+      '[class*="sidebar" i] [class*="item" i]',
+      'nav [role="treeitem"]',
+      '[class*="cu-sidebar" i] a',
+      '[data-test*="sidebar" i] [class*="row" i]',
+      '[class*="sidebar" i] [class*="space" i]',
+      '[class*="sidebar" i] [class*="folder" i]',
+      '[class*="sidebar" i] [class*="list" i]'
+    ].join(', ');
     var seen = new Set();
     var indices = [];
     var candidates = Array.prototype.slice.call(document.querySelectorAll(sel));
@@ -163,7 +178,7 @@ export async function discoverRightClickTargets(page: Page): Promise<number[]> {
       if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
       w.__drParityElements.push(el);
       indices.push(w.__drParityElements.length - 1);
-      if (indices.length >= 15) break;
+      if (indices.length >= 24) break;
     }
     return indices;
   })()`;

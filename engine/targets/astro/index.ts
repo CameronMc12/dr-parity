@@ -85,6 +85,9 @@ function deriveDefaultName(cloneDir: string): string {
 export const astroAdapter: TargetAdapter = {
   name: 'astro',
   async build(options: TargetBuildOptions): Promise<TargetBuildSummary> {
+    if (!options.cloneDir) {
+      throw new Error('Astro target requires a clone-dir (cloneDir).');
+    }
     const absClone = resolve(options.cloneDir);
     const absOut = resolve(options.outDir);
     const name = options.name ?? deriveDefaultName(absClone);

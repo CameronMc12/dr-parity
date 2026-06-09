@@ -14,15 +14,16 @@ import { join, resolve } from 'node:path';
 import * as cheerioModule from 'cheerio';
 const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 
-import { extractHead, sliceBody, copyAssetsToPublic } from '../shared';
+import { extractHead, rewriteHeadAssetLinks, sliceBody, copyAssetsToPublic } from '../shared';
 import { buildCloneAssetMap, rewriteBodyAssetUrls } from '../shared';
-import type { CloneAssetMap } from '../shared';
+import type { CloneAssetMap, ExtractedHead } from '../shared';
 import { htmlToJsx } from '../react/html-to-jsx';
 import { writeApp, writeComponent, writeIndexHtml, writeMain } from './emit';
 import type { RouteEntry } from './emit';
 import { writeScaffold } from './scaffold';
 import { loadCrawlGraph, inferStateGroups } from './inference';
 import type { RouteGroup } from './inference';
+import type { CrawlGraph } from './crawler/types';
 import { emitStatefulMain } from './emit-router';
 import { emitShellSplit } from './shell-split';
 import { emitAssetsFromCrawl, mergeCrawlIntoCloneMap } from './emit-assets-from-crawl';
@@ -82,25 +83,109 @@ export function validateCloneDir(cloneDir: string): void {
   }
 }
 
+/** Read the captured document URL from a clone-dir manifest. Empty on miss. */
+function readCloneDocumentUrl(absClone: string): string {
+  try {
+    const manifest = JSON.parse(readFileSync(join(absClone, 'manifest.json'), 'utf8')) as {
+      documentUrl?: string;
+    };
+    return typeof manifest.documentUrl === 'string' ? manifest.documentUrl : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Pick the crawl graph's root state id. Prefers the node whose url matches the
+ * graph startUrl, then the shallowest node (depth 0), then the first node.
+ */
+function pickRootStateId(graph: CrawlGraph): string {
+  if (graph.nodes.length === 0) {
+    throw new Error('Crawl graph has no nodes — cannot derive a root document.');
+  }
+  const byStartUrl =
+    graph.startUrl && graph.nodes.find((n) => n.url === graph.startUrl);
+  if (byStartUrl) return byStartUrl.id;
+
+  let shallowest = graph.nodes[0];
+  for (const node of graph.nodes) {
+    if (node.depth < shallowest.depth) shallowest = node;
+  }
+  return shallowest.id;
+}
+
+/**
+ * Crawl-only head source: load the root-state DOM (a full rendered document
+ * WITH a real `<head>`), parse it, and return the extracted head plus the
+ * documentUrl from the graph. Used when no clone-dir is supplied.
+ */
+async function readCrawlHead(
+  graph: CrawlGraph,
+  getStateDom: (stateId: string) => Promise<string>,
+): Promise<{ head: ExtractedHead; documentUrl: string }> {
+  const rootStateId = pickRootStateId(graph);
+  const rootHtml = await getStateDom(rootStateId);
+  const $root = cheerio.load(rootHtml, null, true);
+
+  // Strip ANY captured <base> (e.g. the app's CDN base href). The clone path
+  // reads an already-base-stripped index.html; crawl-state DOM retains the
+  // live page's base, which would resolve /src/main.tsx and /_ext/* against the
+  // CDN origin and CORS-block them, leaving the page blank. Removing it lets
+  // root-relative refs resolve against the dev/preview origin.
+  $root('head base').remove();
+  const head = extractHead($root);
+
+  const rootNode = graph.nodes.find((n) => n.id === rootStateId);
+  const documentUrl = graph.startUrl || rootNode?.url || '';
+  return { head, documentUrl };
+}
+
 async function buildFromCrawl(
   options: WebappBuildOptions & { crawlDir: string },
-  absClone: string,
+  absClone: string | null,
   absOut: string,
 ): Promise<WebappBuildSummary> {
   const publicDir = join(absOut, 'public');
-  const assetStats = copyAssetsToPublic(absClone, publicDir);
 
-  const html = readFileSync(join(absClone, 'index.html'), 'utf8');
-  const $ = cheerio.load(html, null, true);
-  const head = extractHead($);
+  // Clone-dir assets are copied verbatim when a clone is present. In crawl-only
+  // mode there is no clone to copy; every asset comes from the crawl's
+  // network.jsonl via emitAssetsFromCrawl below, so assetStats starts at zero.
+  const assetStats = absClone
+    ? copyAssetsToPublic(absClone, publicDir)
+    : { count: 0, bytes: 0 };
+
+  // The crawl graph is the source of truth for routes/state and, in crawl-only
+  // mode, also for the document head + documentUrl. Load it once up front.
+  const loaded = await loadCrawlGraph(options.crawlDir);
+
+  // Head + documentUrl. With a clone: parse its index.html and read the manifest
+  // documentUrl. Without a clone: derive both from the crawl's root-state DOM
+  // (a full rendered document WITH a real <head>) and graph.json startUrl.
+  let head: ExtractedHead;
+  let documentUrl: string;
+  if (absClone) {
+    const html = readFileSync(join(absClone, 'index.html'), 'utf8');
+    const $ = cheerio.load(html, null, true);
+    head = extractHead($);
+    // The clone-dir manifest records the captured document URL; head asset refs
+    // (e.g. the global stylesheet at `/static/assets/*.css`) resolve against it.
+    documentUrl = readCloneDocumentUrl(absClone);
+  } else {
+    const crawlHead = await readCrawlHead(loaded.graph, loaded.getStateDom);
+    head = crawlHead.head;
+    documentUrl = crawlHead.documentUrl;
+  }
 
   // Body asset rewriting: crawl-state DOM carries ABSOLUTE asset URLs that
   // fail cross-origin at runtime even though the same assets are captured
   // locally. Rebuild the clone's url map from the sibling parsed/ dir and
   // rewrite every captured body reference to its local served path before
   // JSX emission. Missing parsed inputs → null → bodies pass through unchanged.
-  const parsedDir = join(absClone, '..', 'parsed');
-  const cloneMap: CloneAssetMap | null = buildCloneAssetMap(parsedDir);
+  // Crawl-only mode has no clone parsed dir, so cloneMap is null and every
+  // served path comes from the crawl assets below.
+  const cloneMap: CloneAssetMap | null = absClone
+    ? buildCloneAssetMap(join(absClone, '..', 'parsed'))
+    : null;
 
   // Localize EVERY static asset from the crawl's network.jsonl (superset of all
   // routes), skipping anything the complete clone-dir already covers and any
@@ -115,14 +200,20 @@ async function buildFromCrawl(
   });
   const assetMap: CloneAssetMap | null =
     cloneMap || crawlAssets.servedPaths.size > 0
-      ? mergeCrawlIntoCloneMap(cloneMap, crawlAssets, cloneMap?.documentUrl ?? '')
+      ? mergeCrawlIntoCloneMap(cloneMap, crawlAssets, cloneMap?.documentUrl ?? documentUrl)
       : null;
+
+  // Rewrite same-origin head asset links (global stylesheet, preloads) to their
+  // localized `_ext/...` served paths so the emitted index.html links files the
+  // dev server actually has. Without this the global CSS 404s and the theme
+  // silently falls back. Refs with no localized copy pass through unchanged.
+  // The merged assetMap is used so crawl-localized refs resolve in both modes.
+  head = rewriteHeadAssetLinks(head, cloneMap?.documentUrl ?? documentUrl, assetMap);
 
   // Harvest the union of in-document icon-sprite `<symbol>` defs across every
   // captured state DOM so injected `<use>` refs resolve app-wide.
   const sprite = harvestSprite(options.crawlDir);
 
-  const loaded = await loadCrawlGraph(options.crawlDir);
   const inference = await inferStateGroups(loaded.graph, loaded.getStateDom);
 
   // Scaffold expects a list of RouteEntry — derive from inferred routes.
@@ -138,12 +229,23 @@ async function buildFromCrawl(
   // with a React Router <Outlet/>, emit each route as a content-only component
   // nested under the layout, and wire the layout-route tree in router.tsx. The
   // shell stays mounted across client-side navigations; only the outlet swaps.
+  // Captured-app hostname (e.g. `app.clickup.com`) so the SPA-nav interceptor
+  // can treat the captured DOM's absolute production hrefs as same-origin links
+  // it governs. Empty on a malformed/absent documentUrl.
+  let captureHost = '';
+  try {
+    captureHost = documentUrl ? new URL(documentUrl).hostname : '';
+  } catch {
+    captureHost = '';
+  }
+
   const split = await emitShellSplit({
     routes: inference.routes,
     getStateDom: loaded.getStateDom,
     assetMap,
     outDir: absOut,
     spriteSvg: sprite.spriteSvg,
+    captureHost,
   });
   const componentsEmitted = split.contentComponents + 1; // + layout
 
@@ -191,16 +293,25 @@ async function buildFromCrawl(
 export async function buildWebappProject(
   options: WebappBuildOptions,
 ): Promise<WebappBuildSummary> {
-  const absClone = resolve(options.cloneDir);
+  const absClone = options.cloneDir ? resolve(options.cloneDir) : null;
   const absOut = resolve(options.outDir);
   const force = options.force ?? false;
   const routes = options.routes && options.routes.length > 0 ? options.routes : ['/'];
 
-  if (absOut === absClone || absOut.startsWith(absClone + '/')) {
+  // Crawl-only mode requires a crawl-dir to source the head + assets from.
+  if (!absClone && !options.crawlDir) {
+    throw new Error(
+      'buildWebappProject requires either a clone-dir or a crawlDir (crawl-only mode).',
+    );
+  }
+
+  if (absClone && (absOut === absClone || absOut.startsWith(absClone + '/'))) {
     throw new Error('Refusing to write into the clone directory itself.');
   }
 
-  validateCloneDir(absClone);
+  if (absClone) {
+    validateCloneDir(absClone);
+  }
 
   if (existsSync(absOut) && !force) {
     throw new Error(
@@ -218,10 +329,13 @@ export async function buildWebappProject(
     );
   }
 
+  // Past this point a clone-dir is guaranteed: only the no-crawl legacy path
+  // reaches here, and it is gated by the validation above.
+  const cloneDir = absClone as string;
   const publicDir = join(absOut, 'public');
-  const assetStats = copyAssetsToPublic(absClone, publicDir);
+  const assetStats = copyAssetsToPublic(cloneDir, publicDir);
 
-  const html = readFileSync(join(absClone, 'index.html'), 'utf8');
+  const html = readFileSync(join(cloneDir, 'index.html'), 'utf8');
   const $ = cheerio.load(html, null, true);
 
   const head = extractHead($);

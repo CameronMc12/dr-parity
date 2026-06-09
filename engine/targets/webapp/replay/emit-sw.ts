@@ -51,10 +51,21 @@ const LOCAL_ASSET_PREFIXES = ['/_ext/', '/_external/', '/media/', '/assets/', '/
  *                       or network error it falls back to the existing recordings,
  *                       then empty-200. When empty/null, the SW behaves exactly as
  *                       before (static recordings only) — strict no-regression.
+ * @param originHost     ADDITIVE. The host of the ORIGINAL captured document (e.g.
+ *                       app.omnisocials.com). The clone is served from a DIFFERENT
+ *                       origin (localhost), so a same-origin asset request the app
+ *                       makes by its original ROOT-RELATIVE path (/logos/x.svg,
+ *                       /icons/.../facebook.svg) has NO file at that literal path —
+ *                       the bytes were localized under /_ext/<originHost>/<path>.
+ *                       When the literal same-origin static fetch misses (404 or the
+ *                       SPA index.html fallback), the SW retries the /_ext/<originHost>
+ *                       copy before stubbing. Empty => the retry is skipped (no
+ *                       regression: behaviour is exactly as before).
  */
 export function buildServiceWorker(
   unrecordedMode: UnrecordedMode,
   backendUrl = '',
+  originHost = '',
   enableViewSynth = false,
   enableDocFreeze = false,
   fuzzyConfig: FuzzyBodyMatchConfig | null = null,
@@ -83,6 +94,11 @@ const LOCAL_ASSET_PREFIXES = ${JSON.stringify(LOCAL_ASSET_PREFIXES)};
 // ADDITIVE proxy mode: when non-empty, internal-API requests are forwarded to
 // this OWNED local backend first; backend MISS falls back to recordings.
 const BACKEND_URL = ${JSON.stringify(backendUrl)};
+// ADDITIVE same-origin asset remap: the host of the ORIGINAL captured document.
+// A same-origin static request by its original root-relative path (/logos/x.svg)
+// has no literal file on the clone origin; the bytes live under /_ext/<host>/...
+// On a literal miss the SW retries that localized copy. Empty => retry skipped.
+const ORIGIN_HOST = ${JSON.stringify(originHost)};
 
 let RECORDINGS = [];
 // Optional bridge index (task id -> list match key). Absent unless the build
@@ -423,7 +439,27 @@ const BACKEND_DATA_PATTERNS = [
   /\\/v1\\/task\\/[0-9a-z]+(\\/(assignee|list|comment))?$/i,
 ];
 
-function isBackendDataPath(pathname) {
+// ADDITIVE Tempo seam: when the OWNED backend is a Tempo backend, ALL of its
+// /api/v1/... surface is live + DB-backed (reads, canvas CRUD, generation), so
+// the proxy forwards the WHOLE /api/v1 namespace rather than the narrow ClickUp-
+// era path list above. Two exclusions keep this safe:
+//   - PUBLISH / APPROVE writes are NEVER forwarded (sandbox-only on the backend,
+//     and we must never fire them from the replay). They fall to recordings.
+//   - This widening only applies when BACKEND_URL is set; offline replay (empty
+//     BACKEND_URL) never reaches tryBackend, so the canvas mock + recordings
+//     still answer exactly as before (strict no-regression).
+const BACKEND_FORWARD_NEVER = [
+  /\\/prepare-for-publish/,
+  /\\/publish-creative/,
+  /\\/approvals\\/candidate\\//,
+];
+
+function isBackendForwardable(pathname) {
+  if (BACKEND_FORWARD_NEVER.some((re) => re.test(pathname))) return false;
+  // Tempo seam: forward the whole live /api/v1 surface (reads + canvas CRUD +
+  // generation) so writes persist to the DB. Falls back to recordings on miss.
+  if (/^\\/api\\/v1\\//.test(pathname)) return true;
+  // Legacy ClickUp-era narrow allow-list (unchanged for non-Tempo backends).
   return BACKEND_DATA_PATTERNS.some((re) => re.test(pathname));
 }
 
@@ -437,9 +473,11 @@ function isBackendDataPath(pathname) {
  */
 async function tryBackend(request, url, method, bodyText) {
   if (!BACKEND_URL) return null;
-  // Guard: only forward routed internal-data endpoints. Everything else (flags,
-  // auth, telemetry, CDN) is left for the recording — the proxy never shadows it.
-  if (!isBackendDataPath(url.pathname)) return null;
+  // Guard: only forward routed internal-data endpoints (Tempo: the whole live
+  // /api/v1 surface minus publish/approve; legacy: the narrow ClickUp list).
+  // Everything else (flags, auth, telemetry, CDN) is left for the recording —
+  // the proxy never shadows it.
+  if (!isBackendForwardable(url.pathname)) return null;
   let target;
   try {
     const base = new URL(BACKEND_URL);
@@ -463,7 +501,7 @@ async function tryBackend(request, url, method, bodyText) {
     // An empty/degenerate body is not real data; let the recording answer.
     if (!body || body === '{}' || body === '[]') return null;
     SERVED_BACKEND++;
-    return new Response(body, {
+    return new Response(nullBodyStatus(res.status) ? null : body, {
       status: res.status,
       headers: {
         'content-type': res.headers.get('content-type') || 'application/json',
@@ -476,9 +514,19 @@ async function tryBackend(request, url, method, bodyText) {
   }
 }
 
+// HTTP statuses whose Response MUST have a null body. The Response constructor
+// throws "Response with null body status cannot have body" if a non-null body
+// is supplied for any of these, so force the body to null for them.
+const NULL_BODY_STATUSES = [101, 204, 205, 304];
+
+function nullBodyStatus(status) {
+  return NULL_BODY_STATUSES.indexOf(status) !== -1;
+}
+
 function recordedResponse(rec) {
   SERVED_RECORDING++;
-  return new Response(rec.body, {
+  const body = nullBodyStatus(rec.status) ? null : (rec.body != null ? rec.body : null);
+  return new Response(body, {
     status: rec.status,
     headers: {
       'content-type': rec.contentType || 'application/json',
@@ -515,6 +563,18 @@ function looksStatic(pathname) {
 }
 
 /**
+ * True when the request is for an image, regardless of URL extension. The browser
+ * sends 'Accept: image/avif,image/webp,...,image/*' for an <img> element, so an
+ * extensionless avatar URL (Google profile pic .../a/<id>=s96-c) is still routed
+ * to the cross-origin static handler and resolves its localized _ext copy. Pure
+ * widening of the cross-origin static branch: a non-image request never matches.
+ */
+function acceptsImage(request) {
+  const accept = (request.headers.get('accept') || '').toLowerCase();
+  return accept.indexOf('image/') !== -1;
+}
+
+/**
  * Graceful stub for an uncaptured same-origin static asset (a lazy chunk or
  * asset the crawl never recorded). Returns the RIGHT content-type so a missing
  * file does not hard-crash the bundle: empty JS module for *.js, empty CSS for
@@ -537,23 +597,646 @@ function staticStub(pathname) {
 }
 
 /**
- * Serve a same-origin static request from the static file server; on 404 or a
- * network error, fall back to a typed stub so a missing lazy chunk / asset is
- * non-fatal.
+ * Map a same-origin ROOT-RELATIVE asset path to its localized /_ext/<ORIGIN_HOST>
+ * copy. The clone is served from a different origin than the captured app, so the
+ * app's original same-origin asset URLs (/logos/x.svg, /icons/.../facebook.svg)
+ * have no literal file on the clone origin; the build wrote the bytes under
+ * /_ext/<ORIGIN_HOST>/<sanitized-path>, mirroring emit-assets-from-crawl.urlToExtPath
+ * for the document host. Returns null when ORIGIN_HOST is unset (retry disabled) or
+ * the path is already an _ext path (no double-prefix). Query is dropped: localized
+ * first-party assets are written queryless.
+ */
+function sameOriginToExtPath(pathname) {
+  if (!ORIGIN_HOST) return null;
+  if (pathname.indexOf('/_ext/') === 0) return null;
+  const host = sanitizeSegment(ORIGIN_HOST);
+  let rel = pathname
+    .split('/')
+    .map((seg) => (seg === '' ? '' : sanitizeSegment(seg)))
+    .join('/')
+    .replace(/^\\/+/, '');
+  if (!rel || rel.endsWith('/')) rel = rel + 'index';
+  return '/_ext/' + host + '/' + rel;
+}
+
+/**
+ * True when a static-file fetch did not actually return the asset: a 404, or the
+ * SPA index.html fallback (an HTML body for a request whose extension is not
+ * .html). Under a SPA static server a missing same-origin asset path resolves to
+ * index.html with a 200 + text/html content-type, which the browser rejects for an
+ * img/script (the "Unexpected token <" symptom), so HTML for a non-HTML asset is a MISS.
+ */
+function isStaticMiss(res, pathname) {
+  if (!res) return true;
+  if (res.status === 404) return true;
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  if (ct.indexOf('text/html') !== -1 && !/\\.html?$/i.test(pathname)) return true;
+  return false;
+}
+
+/**
+ * Serve a same-origin static request from the static file server. On a literal
+ * miss (404 or the SPA index.html fallback), retry the localized /_ext/<ORIGIN_HOST>
+ * copy of the same path — this resolves the app's original root-relative asset URLs
+ * (logo / platform icons / avatars) to the bytes the build localized. On a final
+ * miss, fall back to a typed stub so a missing lazy chunk / asset is non-fatal.
  */
 async function handleStatic(request, pathname) {
+  let res = null;
   try {
-    const res = await fetch(request);
-    if (res && res.status !== 404) return res;
+    res = await fetch(request);
   } catch (err) {
-    /* fall through to stub */
+    /* network error -> try _ext remap, then stub */
+  }
+  if (res && !isStaticMiss(res, pathname)) return res;
+
+  const extPath = sameOriginToExtPath(pathname);
+  if (extPath) {
+    try {
+      const local = await fetch(extPath, { cache: 'no-store' });
+      // Guard against the SPA HTML fallback for an extensionless _ext path (see
+      // handleCrossOriginStatic). Extensioned assets (logo/icons/.png) pass.
+      if (local && local.ok && !isStaticMiss(local, extPath)) {
+        return new Response(local.body, {
+          status: 200,
+          headers: {
+            'content-type': local.headers.get('content-type') || 'application/octet-stream',
+            'x-replay-source': 'ext-asset-sameorigin',
+          },
+        });
+      }
+    } catch (err) {
+      /* fall through to stub */
+    }
   }
   return staticStub(pathname);
 }
 
+/** Mirror emit-assets-from-crawl's sanitizeSegment so the SW maps a cross-origin
+ * asset URL to the SAME local _ext path the build wrote it to. */
+function sanitizeSegment(segment) {
+  return segment.replace(/[^a-zA-Z0-9._\\-+~@]/g, '_');
+}
+
+/**
+ * Hosts whose query string is a per-request expiring SIGNATURE (Azure Blob SAS),
+ * not a content selector. The same blob is served under infinitely many signed
+ * URLs, so the build localizes it queryless and the SW must look it up queryless
+ * too — otherwise every canvas ad image 403s once its captured SAS expires.
+ */
+const SAS_QUERY_HOSTS = new Set(['draperfiles.blob.core.windows.net']);
+
+/**
+ * Map a cross-origin asset URL to its localized /_ext/<host>/<path> served path,
+ * mirroring emit-assets-from-crawl.urlToExtPath. Query strings are disambiguated
+ * by the build with a sha-suffix; the SW only maps the QUERYLESS form (which
+ * covers the captured media — ad/project images carry no query). A queried asset
+ * returns null and falls through to the live network, so nothing regresses.
+ *
+ * Exception: SAS-signed hosts (see SAS_QUERY_HOSTS) carry an expiring signature
+ * in the query that does NOT identify the blob. For those we STRIP the query and
+ * map the queryless path, so a captured image matches regardless of its token.
+ */
+function urlToExtServedPath(url) {
+  if (url.search && !SAS_QUERY_HOSTS.has(url.host)) return null;
+  const host = sanitizeSegment(url.host);
+  let pathname = url.pathname
+    .split('/')
+    .map((seg) => (seg === '' ? '' : sanitizeSegment(seg)))
+    .join('/')
+    .replace(/^\\/+/, '');
+  if (!pathname || pathname.endsWith('/')) pathname = pathname + 'index';
+  return '/_ext/' + host + '/' + pathname;
+}
+
+/**
+ * Serve a CROSS-ORIGIN static asset (image/font/media on a captured CDN host,
+ * e.g. the ad/project creatives on a blob/CDN origin) from the localized _ext
+ * copy. On a local miss (asset the crawl never captured) or a non-static path,
+ * fall through to the live network so uncaptured assets still load online —
+ * strictly additive, no same-origin or API behaviour changes.
+ */
+async function handleCrossOriginStatic(request, url) {
+  const servedPath = urlToExtServedPath(url);
+  if (servedPath) {
+    try {
+      const local = await fetch(servedPath, { cache: 'no-store' });
+      // A 200 whose body is the SPA index.html is NOT the asset: a SPA static
+      // server (serve -s) returns index.html for an EXTENSIONLESS localized path
+      // (e.g. an avatar at /_ext/lh3.../a/<id>_s96-c). Treat that as a miss so the
+      // request falls through to the live network instead of painting HTML into
+      // an <img>. Extensioned _ext assets (the logo, icons, .png avatars) are
+      // served verbatim and pass this guard unchanged (no regression).
+      if (local && local.ok && !isStaticMiss(local, servedPath)) {
+        return new Response(local.body, {
+          status: 200,
+          headers: {
+            'content-type': local.headers.get('content-type') || 'application/octet-stream',
+            'x-replay-source': 'ext-asset',
+          },
+        });
+      }
+    } catch (err) {
+      /* fall through to live network */
+    }
+  }
+  try {
+    return await fetch(request);
+  } catch (err) {
+    return new Response(null, { status: 504, headers: { 'x-replay-source': 'ext-miss' } });
+  }
+}
+
+// ===========================================================================
+// STATEFUL CANVAS MOCK (additive). Lazily seeded from the recorded canvas GET,
+// then mutated in-memory so the real Tempo bundle can create / move / edit /
+// connect / delete nodes and edges entirely offline. Nothing here reaches the
+// live backend. Inert for every non-canvas request: handleCanvas returns null
+// unless the path is a canvas endpoint, so all existing read-replay behaviour
+// is untouched (strict no-regression).
+//
+// The bundle is NOT optimistic for create/connect/delete — it reads the
+// response body and only mutates its React state when { success:true } plus the
+// echoed object is present. So each handler echoes the SHAPE the bundle parses.
+// ===========================================================================
+
+const CANVAS_GENERATED_IMAGE_URL =
+  'https://draperfiles.blob.core.windows.net/brand-assets/39066cbf-78de-4197-bb9b-deb842c27ffa/ads/44bb3425-5a1f-45a2-aca2-18f02549d772.png';
+
+// Per-type input/output ports (mirrors the recorded port-status shape) so the
+// bundle can render port handles + validate connections for nodes the store
+// creates (which have no recorded port-status of their own).
+const CANVAS_PORTS = {
+  concept: { input: ['text_prompt', 'product', 'reference_design'], output: ['concept'] },
+  text_prompt: { input: ['concept', 'product', 'reference_design'], output: ['text_prompt'] },
+  product: { input: ['concept', 'text_prompt'], output: ['product'] },
+  reference_design: { input: [], output: ['reference_design'] },
+  persona: { input: [], output: ['persona'] },
+  image: {
+    input: ['concept', 'text_prompt', 'persona', 'product', 'reference_design', 'image', 'experiment'],
+    output: ['image'],
+  },
+};
+
+function canvasUuid() {
+  if (self.crypto && self.crypto.randomUUID) return self.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+// One store per canvas id. { graph: <canvas-GET body>, seeded: bool }.
+const CANVAS_STORES = {};
+let SERVED_CANVAS = 0;
+
+function parseCanvasPath(pathname) {
+  // /api/v1/project/{pid}/canvas[...]
+  const m = pathname.match(/\\/api\\/v1\\/project\\/([^/]+)\\/canvas(?:\\/([^/]+))?(?:\\/(.*))?$/);
+  if (!m) return null;
+  return { projectId: m[1], canvasOrSub: m[2] || '', rest: m[3] || '' };
+}
+
+// Seed a canvas store from the recorded GET body for that project. Returns the
+// graph object (live store), or null when there is no usable recording.
+function seedCanvasStore(projectId) {
+  const recPath = '/api/v1/project/' + projectId + '/canvas';
+  const rec = pickRecording('GET', recPath, '');
+  if (!rec || !rec.body) return null;
+  let graph;
+  try {
+    graph = JSON.parse(rec.body);
+  } catch (err) {
+    return null;
+  }
+  if (!graph || !graph.canvas || !Array.isArray(graph.nodes)) return null;
+  if (!Array.isArray(graph.edges)) graph.edges = [];
+  if (!Array.isArray(graph.groups)) graph.groups = [];
+  const cid = graph.canvas.id;
+  CANVAS_STORES[cid] = { projectId, graph };
+  return graph;
+}
+
+function getCanvasStoreByProject(projectId) {
+  for (const cid of Object.keys(CANVAS_STORES)) {
+    if (CANVAS_STORES[cid].projectId === projectId) return CANVAS_STORES[cid];
+  }
+  const graph = seedCanvasStore(projectId);
+  return graph ? CANVAS_STORES[graph.canvas.id] : null;
+}
+
+function getCanvasStoreByCanvasId(canvasId, projectId) {
+  if (CANVAS_STORES[canvasId]) return CANVAS_STORES[canvasId];
+  // Seed from the project recording (the recorded canvas owns this id).
+  if (projectId) {
+    const graph = seedCanvasStore(projectId);
+    if (graph && graph.canvas.id === canvasId) return CANVAS_STORES[canvasId];
+    if (graph) return CANVAS_STORES[graph.canvas.id];
+  }
+  return null;
+}
+
+function canvasJson(body, status) {
+  return new Response(JSON.stringify(body), {
+    status: status || 200,
+    headers: { 'content-type': 'application/json', 'x-replay-source': 'canvas-store' },
+  });
+}
+
+// Build a full node envelope for a created node, merging the type defaults with
+// whatever the bundle sent in data.
+function buildNode(canvasId, spec) {
+  const type = spec.type;
+  const data = Object.assign({ type: type }, spec.data || {});
+  data.type = type;
+  // image nodes carry richer defaults already in spec.data; ensure arrays exist.
+  if (type === 'image') {
+    if (!Array.isArray(data.images)) data.images = [];
+    if (!Array.isArray(data.uploaded_images)) data.uploaded_images = [];
+  }
+  if (type === 'reference_design' && !Array.isArray(data.images)) data.images = [];
+  if (type === 'product' && !Array.isArray(data.commerce_platform_item_ids)) {
+    data.commerce_platform_item_ids = [];
+  }
+  return {
+    id: canvasUuid(),
+    canvas_id: canvasId,
+    position_x: typeof spec.position_x === 'number' ? spec.position_x : 0,
+    position_y: typeof spec.position_y === 'number' ? spec.position_y : 0,
+    label: spec.label || data.label || type,
+    type: type,
+    data: data,
+    is_groupable: type === 'image',
+    group_id: null,
+    group_order: 0,
+    connected_ports: null,
+    data_source: null,
+    data_source_apply_mode: null,
+    data_source_group_id: null,
+    active_execution: null,
+    auto_generate: false,
+  };
+}
+
+function portStatusForNode(node) {
+  const ports = CANVAS_PORTS[node.type] || { input: [], output: [node.type] };
+  return {
+    node_id: node.id,
+    node_type: node.type,
+    input_ports: ports.input.map((pt) => ({
+      port_type: pt,
+      is_required: false,
+      connection_mode: 'none',
+      sources: [],
+      available_upstream: [],
+      excluded: [],
+    })),
+    output_ports: ports.output.slice(),
+  };
+}
+
+// Pending generate jobs: job_session_id -> { canvasId, nodeId, polls, imageId }.
+const CANVAS_JOBS = {};
+
+/**
+ * Canvas mutation router. Returns a Response for any canvas endpoint the store
+ * owns, or null for a canvas path it does not handle (so the recording / empty
+ * fallback answers) and for every non-canvas request (so nothing regresses).
+ */
+function handleCanvas(method, url, bodyKey, rawBody) {
+  const parsed = parseCanvasPath(url.pathname);
+  if (!parsed) return null;
+  const { projectId, canvasOrSub, rest } = parsed;
+
+  // GET /project/{pid}/canvas — serve the LIVE store (seed on first read).
+  if (method === 'GET' && canvasOrSub === '' && rest === '') {
+    const store = getCanvasStoreByProject(projectId);
+    if (!store) return null; // no recording to seed from -> let recordings answer
+    SERVED_CANVAS++;
+    return canvasJson(store.graph, 200);
+  }
+
+  // PUT /project/{pid}/canvas — whole-graph save (move / edit / delete flush).
+  // Two bundle consumers read this response: one ignores the body (validateStatus
+  // 200), the other reads back the FULL graph (a.canvas.id, a.canvas.viewport_*,
+  // a.project_name, a.nodes/edges/groups) and toasts "Failed to save canvas" when
+  // a.canvas is absent. So echo the live graph (same shape as the canvas GET).
+  if (method === 'PUT' && canvasOrSub === '' && rest === '') {
+    const store = getCanvasStoreByProject(projectId);
+    if (!store) return null;
+    applyCanvasPut(store, rawBody);
+    SERVED_CANVAS++;
+    return canvasJson(store.graph, 200);
+  }
+
+  // Everything below is /canvas/{cid}/...  -> canvasOrSub is the canvas id.
+  const canvasId = canvasOrSub;
+  if (!canvasId) return null;
+  const store = getCanvasStoreByCanvasId(canvasId, projectId);
+  if (!store) return null;
+
+  // node-actions-status is /canvas/node-actions-status (no real canvas id).
+  if (canvasId === 'node-actions-status') {
+    return handleNodeActionsStatus(projectId, bodyKey);
+  }
+
+  // POST /canvas/{cid}/nodes/port-status
+  if (method === 'POST' && rest === 'nodes/port-status') {
+    let ids = [];
+    try {
+      const b = JSON.parse(rawBody);
+      ids = Array.isArray(b.node_ids) ? b.node_ids : [];
+    } catch (err) {
+      ids = [];
+    }
+    const statuses = {};
+    for (const node of store.graph.nodes) {
+      if (ids.length === 0 || ids.indexOf(node.id) !== -1) {
+        statuses[node.id] = portStatusForNode(node);
+      }
+    }
+    SERVED_CANVAS++;
+    return canvasJson({ statuses: statuses }, 200);
+  }
+
+  // POST /canvas/{cid}/nodes — create node(s). Echo { success, nodes:[...] }.
+  if (method === 'POST' && rest === 'nodes') {
+    let specs = [];
+    try {
+      const b = JSON.parse(rawBody);
+      specs = Array.isArray(b) ? b : [b];
+    } catch (err) {
+      specs = [];
+    }
+    const created = specs.map((s) => buildNode(store.graph.canvas.id, s));
+    for (const node of created) store.graph.nodes.push(node);
+    bumpCanvasVersion(store);
+    SERVED_CANVAS++;
+    return canvasJson({ success: true, nodes: created }, 200);
+  }
+
+  // POST /canvas/{cid}/edges — create edge(s). Echo { success, edges:[...] }.
+  if (method === 'POST' && rest === 'edges') {
+    let specs = [];
+    try {
+      const b = JSON.parse(rawBody);
+      specs = Array.isArray(b) ? b : [b];
+    } catch (err) {
+      specs = [];
+    }
+    const created = specs.map((s) => ({
+      id: canvasUuid(),
+      canvas_id: store.graph.canvas.id,
+      source_node_id: s.source_node_id,
+      target_node_id: s.target_node_id,
+      source_port: s.source_port || null,
+      target_port: s.target_port || null,
+    }));
+    for (const edge of created) store.graph.edges.push(edge);
+    bumpCanvasVersion(store);
+    SERVED_CANVAS++;
+    return canvasJson({ success: true, edges: created }, 200);
+  }
+
+  // DELETE /canvas/{cid}/nodes/{nid} — remove node + its edges.
+  if (method === 'DELETE' && /^nodes\\/[^/]+$/.test(rest)) {
+    const nid = rest.split('/')[1];
+    store.graph.nodes = store.graph.nodes.filter((n) => n.id !== nid);
+    store.graph.edges = store.graph.edges.filter(
+      (e) => e.source_node_id !== nid && e.target_node_id !== nid,
+    );
+    bumpCanvasVersion(store);
+    SERVED_CANVAS++;
+    return canvasJson({ success: true }, 200);
+  }
+
+  // DELETE /canvas/{cid}/edges/{eid}
+  if (method === 'DELETE' && /^edges\\/[^/]+$/.test(rest)) {
+    const eid = rest.split('/')[1];
+    store.graph.edges = store.graph.edges.filter((e) => e.id !== eid);
+    bumpCanvasVersion(store);
+    SERVED_CANVAS++;
+    return canvasJson({ success: true }, 200);
+  }
+
+  // PATCH/PUT /canvas/{cid}/node/{nid} — single-node update (merge + echo node).
+  if ((method === 'PATCH' || method === 'PUT') && /^node\\/[^/]+$/.test(rest)) {
+    const nid = rest.split('/')[1];
+    const node = store.graph.nodes.find((n) => n.id === nid);
+    if (!node) return canvasJson({ success: false, error: 'Node not found' }, 404);
+    let patch = {};
+    try {
+      patch = JSON.parse(rawBody) || {};
+    } catch (err) {
+      patch = {};
+    }
+    if (typeof patch.position_x === 'number') node.position_x = patch.position_x;
+    if (typeof patch.position_y === 'number') node.position_y = patch.position_y;
+    if (typeof patch.label === 'string') node.label = patch.label;
+    if (patch.data && typeof patch.data === 'object') {
+      node.data = Object.assign({}, node.data, patch.data);
+    }
+    bumpCanvasVersion(store);
+    SERVED_CANVAS++;
+    return canvasJson({ success: true, node: node }, 200);
+  }
+
+  // POST /canvas/{cid}/node/{nid}/perform-action[-stream] — generate (mock).
+  if (method === 'POST' && /^node\\/[^/]+\\/perform-action(-stream)?$/.test(rest)) {
+    const nid = rest.split('/')[1];
+    return startCanvasGenerate(store, nid, rest.indexOf('-stream') !== -1);
+  }
+
+  // Groups (create / delete) — echo success so group ops don't error.
+  if (method === 'POST' && rest === 'groups') {
+    const group = { id: canvasUuid(), canvas_id: store.graph.canvas.id };
+    try {
+      const b = JSON.parse(rawBody);
+      Object.assign(group, b && typeof b === 'object' ? b : {});
+    } catch (err) {
+      /* keep minimal group */
+    }
+    store.graph.groups.push(group);
+    bumpCanvasVersion(store);
+    SERVED_CANVAS++;
+    return canvasJson({ success: true, groups: [group] }, 200);
+  }
+  if (method === 'DELETE' && /^groups\\/[^/]+$/.test(rest)) {
+    const gid = rest.split('/')[1];
+    store.graph.groups = store.graph.groups.filter((g) => g.id !== gid);
+    bumpCanvasVersion(store);
+    SERVED_CANVAS++;
+    return canvasJson({ success: true }, 200);
+  }
+
+  return null; // unhandled canvas sub-path -> recordings / empty fallback
+}
+
+function bumpCanvasVersion(store) {
+  if (store.graph.canvas && typeof store.graph.canvas.version === 'number') {
+    store.graph.canvas.version += 1;
+  }
+  if (store.graph.canvas) store.graph.canvas.updated_at = new Date().toISOString();
+}
+
+// Apply the whole-graph PUT to the store: replace viewport, node positions /
+// data, and the edge/group sets. New nodes the PUT introduces (with an id the
+// store lacks) are appended; nodes the PUT omits are removed (delete flush).
+function applyCanvasPut(store, rawBody) {
+  let payload;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch (err) {
+    return;
+  }
+  if (!payload || typeof payload !== 'object') return;
+  const canvas = store.graph.canvas;
+  if (canvas) {
+    if (typeof payload.viewport_x === 'number') canvas.viewport_x = payload.viewport_x;
+    if (typeof payload.viewport_y === 'number') canvas.viewport_y = payload.viewport_y;
+    if (typeof payload.viewport_zoom === 'number') canvas.viewport_zoom = payload.viewport_zoom;
+  }
+  if (Array.isArray(payload.nodes)) {
+    const byId = {};
+    for (const n of store.graph.nodes) byId[n.id] = n;
+    const next = [];
+    for (const incoming of payload.nodes) {
+      const existing = byId[incoming.id];
+      if (existing) {
+        if (typeof incoming.position_x === 'number') existing.position_x = incoming.position_x;
+        if (typeof incoming.position_y === 'number') existing.position_y = incoming.position_y;
+        if (typeof incoming.label === 'string') existing.label = incoming.label;
+        if (incoming.data && typeof incoming.data === 'object') {
+          existing.data = Object.assign({}, existing.data, incoming.data);
+        }
+        if (typeof incoming.auto_generate === 'boolean') existing.auto_generate = incoming.auto_generate;
+        next.push(existing);
+      } else {
+        next.push(buildNode(canvas ? canvas.id : '', incoming));
+      }
+    }
+    store.graph.nodes = next;
+  }
+  if (Array.isArray(payload.edges)) {
+    // Keep store edges that the PUT still references; the bundle sends edges by
+    // id once created, so honour the incoming set when it is non-trivial.
+    store.graph.edges = payload.edges.map((e) => ({
+      id: e.id || canvasUuid(),
+      canvas_id: canvas ? canvas.id : '',
+      source_node_id: e.source_node_id,
+      target_node_id: e.target_node_id,
+      source_port: e.source_port || null,
+      target_port: e.target_port || null,
+    }));
+  }
+  if (Array.isArray(payload.groups)) store.graph.groups = payload.groups;
+  bumpCanvasVersion(store);
+}
+
+// Begin a synthetic generate job: register a session, inject a placeholder
+// image into the node after a couple of polls, and report completion via
+// node-actions-status. No real backend, clearly marked is_generated mock.
+function startCanvasGenerate(store, nodeId, isStream) {
+  const node = store.graph.nodes.find((n) => n.id === nodeId);
+  const jobSessionId = canvasUuid();
+  const executionId = canvasUuid();
+  const imageId = canvasUuid();
+  CANVAS_JOBS[jobSessionId] = {
+    canvasId: store.graph.canvas.id,
+    nodeId: nodeId,
+    polls: 0,
+    imageId: imageId,
+    injected: false,
+  };
+  SERVED_CANVAS++;
+  const result = {
+    success: true,
+    job_session_id: jobSessionId,
+    job_id: jobSessionId,
+    execution_id: executionId,
+    message: 'Generation started (replay mock).',
+  };
+  if (isStream) {
+    // Minimal SSE: one frame echoing the job ids, then done.
+    const frame =
+      'data: ' + JSON.stringify({ type: 'started', job_session_id: jobSessionId }) + '\\n\\n';
+    return new Response(frame, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream', 'x-replay-source': 'canvas-store' },
+    });
+  }
+  // Pre-mark the node so a refetch even before the first poll shows progress.
+  if (node) node.active_execution = { execution_id: executionId, status: 'running' };
+  return canvasJson(result, 200);
+}
+
+// node-actions-status poll. After >=1 poll, mark the job finished and inject a
+// mock placeholder image into the node's data.images so the generate UX paints.
+function handleNodeActionsStatus(projectId, bodyKey) {
+  let ids = [];
+  try {
+    const b = JSON.parse(bodyKey);
+    ids = Array.isArray(b.job_session_ids) ? b.job_session_ids : [];
+  } catch (err) {
+    ids = [];
+  }
+  const statuses = {};
+  for (const jid of ids) {
+    const job = CANVAS_JOBS[jid];
+    if (!job) {
+      statuses[jid] = { is_finished: true, success: true, error: null, progress: null };
+      continue;
+    }
+    job.polls += 1;
+    const finished = job.polls >= 1;
+    if (finished && !job.injected) {
+      injectMockImage(job);
+      job.injected = true;
+    }
+    statuses[jid] = {
+      is_finished: finished,
+      success: true,
+      error: null,
+      progress: {
+        created_image_ids: finished ? [job.imageId] : [],
+        completed_node_ids: finished ? [job.nodeId] : [],
+      },
+    };
+  }
+  SERVED_CANVAS++;
+  return canvasJson({ statuses: statuses }, 200);
+}
+
+function injectMockImage(job) {
+  const store = CANVAS_STORES[job.canvasId];
+  if (!store) return;
+  const node = store.graph.nodes.find((n) => n.id === job.nodeId);
+  if (!node || !node.data) return;
+  if (!Array.isArray(node.data.images)) node.data.images = [];
+  node.data.images.push({
+    id: job.imageId,
+    image_asset_id: canvasUuid(),
+    url: CANVAS_GENERATED_IMAGE_URL,
+    is_active: true,
+    is_generated: true,
+    is_mock: true, // mark clearly: replay placeholder, not real AI output
+    generation_prompt: node.data.generate_prompt || '',
+    edit_prompt: '',
+    aspect_ratio:
+      Array.isArray(node.data.aspect_ratios) && node.data.aspect_ratios[0]
+        ? node.data.aspect_ratios[0]
+        : 'square_1_1',
+    parent_image_id: null,
+    display_order: node.data.images.length,
+    text_elements: [],
+    text_elements_extracted: false,
+  });
+  node.active_execution = null;
+  bumpCanvasVersion(store);
+}
+
 ${enableViewSynth ? VIEW_SYNTH_HANDLER_SOURCE : ''}
 ${fuzzyHelpersSource}
-
 async function handleApi(request, url, clientId) {
   await recordingsReady;
   const method = request.method.toUpperCase();
@@ -567,6 +1250,30 @@ async function handleApi(request, url, clientId) {
       bodyKey = '';
     }
   }
+
+  // 0. BACKEND-FIRST when an OWNED backend is wired (additive, no-regression).
+  // With BACKEND_URL set, the OWNED backend is the source of truth: it serves
+  // every live /api/v1 read AND persists canvas/generation WRITES to its DB, so
+  // edits survive a reload (the whole point of wiring a real backend). We try it
+  // BEFORE the in-SW canvas mock so a canvas write hits the DB instead of being
+  // shadowed by SW-memory state. A backend MISS / error returns null and we fall
+  // through to the canvas mock + recordings below, so an uncovered path still
+  // works. When BACKEND_URL is empty this is inert (tryBackend short-circuits),
+  // so the offline replay (canvas mock + recordings) is unchanged.
+  if (BACKEND_URL) {
+    const liveFirst = await tryBackend(request, url, method, rawBody);
+    if (liveFirst) return liveFirst;
+  }
+
+  // 0a. STATEFUL CANVAS MOCK (additive, no-regression). The in-memory canvas store
+  // owns every canvas mutation + the canvas GET refetch so the bundle can create /
+  // move / edit / connect / delete / generate offline. Returns null for any
+  // non-canvas request and for canvas sub-paths it does not handle, so all
+  // existing recording / backend / empty-200 behaviour is untouched. Runs after
+  // the backend (when wired) so the DB owns canvas state; with no backend it runs
+  // first for canvas paths so the live store shadows the (now stale) recorded GET.
+  const canvasRes = handleCanvas(method, url, bodyKey, rawBody);
+  if (canvasRes) return canvasRes;
 
   // 0a. CAPTURED-VIEW GUARD (additive, no-regression). A genericView request for
   // a parent that HAS a captured view-shaped payload is served from that capture,
@@ -656,11 +1363,15 @@ async function handleApi(request, url, clientId) {
   }
   ` : '/* fuzzy-body-match disabled for this profile */'}
 
-  // 0b. ADDITIVE: forward to the OWNED local backend first (live dynamic reads).
-  // A backend MISS or error returns null and we fall through to recordings, so
-  // without BACKEND_URL set this is inert and behaviour is unchanged.
-  const live = await tryBackend(request, url, method, rawBody);
-  if (live) return live;
+  // 0b. ADDITIVE: forward to the OWNED local backend (live dynamic reads).
+  // When BACKEND_URL is set this already ran backend-first at step 0 (no second
+  // round-trip), so this only fires the legacy path: a non-empty backend that
+  // the captured-view guards above let through. A backend MISS or error returns
+  // null and we fall through to recordings; inert when BACKEND_URL is empty.
+  if (!BACKEND_URL) {
+    const live = await tryBackend(request, url, method, rawBody);
+    if (live) return live;
+  }
 
   if (rec) return recordedResponse(rec);
 
@@ -705,6 +1416,21 @@ async function handle(request, clientId) {
   // the bundle requests): serve from disk, stubbing 404s so boot survives.
   if (sameOrigin && (isLocalAsset(url.pathname) || looksStatic(url.pathname))) {
     return handleStatic(request, url.pathname);
+  }
+
+  // Cross-origin static asset (ad/project creatives + fonts on a captured CDN
+  // host, referenced by absolute URL inside recorded JSON bodies): serve the
+  // localized _ext copy, falling through to the live network on a local miss.
+  // Also covers EXTENSIONLESS image URLs (e.g. Google profile avatars at
+  // lh3.googleusercontent.com/a/<id>=s96-c) — the path has no .png so looksStatic
+  // is false, but the browser requests it as an image (Accept: image/...). The
+  // localized _ext copy still resolves; on a miss we fall through to live network.
+  if (
+    !sameOrigin &&
+    request.method === 'GET' &&
+    (looksStatic(url.pathname) || acceptsImage(request))
+  ) {
+    return handleCrossOriginStatic(request, url);
   }
 
   return handleApi(request, url, clientId);

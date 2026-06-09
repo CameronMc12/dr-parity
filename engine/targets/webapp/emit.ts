@@ -9,10 +9,33 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import * as cheerioModule from 'cheerio';
+const cheerio: any = (cheerioModule as any).default ?? cheerioModule;
 
 import type { ExtractedHead } from '../shared/types';
 import { htmlToJsx } from '../react/html-to-jsx';
+import { staticRescueStyleTag } from './static-rescue-css';
 import type { WebappComponentDef } from './types';
+
+/**
+ * Strip the original app's JS bootstrap from the captured head so it cannot
+ * boot the real SPA over ours and so Vite/Rollup never tries to resolve the
+ * captured production bundle path at build time. Removes every `<script>`
+ * carrying a `src` (external bundle/chunk) and every `<link
+ * rel="modulepreload">`. Keeps `<style>`, fonts, and stylesheet `<link>`s so
+ * the visual cascade is untouched. Our own `/src/main.tsx` entry is injected
+ * by writeIndexHtml as the single remaining module entry.
+ */
+function stripAppBundleRefs(headInnerHtml: string): string {
+  if (headInnerHtml.trim().length === 0) return headInnerHtml;
+  // Parse as a fragment (isDocument=false). Cheerio flattens the head wrapper,
+  // so the captured tags become top-level — query without a `head >` combinator.
+  const $ = cheerio.load(headInnerHtml, null, false);
+  $('script[src]').remove();
+  $('link[rel="modulepreload"]').remove();
+  $('link[rel="preload"][as="script"]').remove();
+  return ($.root().html() ?? headInnerHtml).trim();
+}
 
 function ensureDir(filePath: string): void {
   mkdirSync(dirname(filePath), { recursive: true });
@@ -116,11 +139,17 @@ export function writeIndexHtml(args: {
   const { outDir, head } = args;
   const filePath = join(outDir, 'index.html');
 
+  const headHtml = stripAppBundleRefs(head.innerHTML);
+
+  // Static-render layout rescue MUST be the last head child so it wins the
+  // cascade over the app's own stylesheets (it also uses !important). See
+  // static-rescue-css.ts for the why and the safety constraints.
   const content = [
     '<!doctype html>',
     `<html${head.htmlAttrs}>`,
     '  <head>',
-    indent(head.innerHTML, '    '),
+    indent(headHtml, '    '),
+    indent(staticRescueStyleTag(), '    '),
     '  </head>',
     `  <body${head.bodyAttrs}>`,
     '    <div id="root"></div>',

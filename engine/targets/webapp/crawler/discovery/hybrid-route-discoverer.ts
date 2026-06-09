@@ -24,16 +24,20 @@
  * a second sub-discoverer, composed in the same way.
  */
 
+import type { Page } from 'playwright';
+
 import {
   extractViewsFromNetworkLogs,
   fallbackUrlSegments,
   synthesiseViewUrl,
   type ExtractedView,
 } from './api-hierarchy-traverser';
+import { expandSidebarTree } from './sidebar-tree-expander';
 import {
   CONFIDENCE_RANK,
   PRIORITY_NEW_ROUTE,
   type DiscoveryContext,
+  type PageDiscoveryContext,
   type RouteDiscoverer,
   type RouteSeed,
   type SeedConfidence,
@@ -167,77 +171,104 @@ function fanFallbackSeeds(viewId: string, origin: string): RouteSeed[] {
 // Factory
 // =============================================================================
 
+async function bootstrapPass(
+  ctx: DiscoveryContext,
+  verbose: boolean,
+): Promise<RouteSeed[]> {
+  // Merge in-flight + bootstrap corpus, deduped by path. The bootstrap
+  // corpus carries prior captures with real bodies; the in-flight
+  // `networkLogPaths` is typically empty at t=0 on a fresh crawl.
+  const corpus = Array.from(
+    new Set<string>([
+      ...(ctx.networkLogPaths ?? []),
+      ...(ctx.bootstrapCorpusPaths ?? []),
+    ]),
+  );
+  if (corpus.length === 0) {
+    if (verbose) {
+      console.log(`${LOG_PREFIX} no network logs provided — yielding 0 seeds`);
+    }
+    return [];
+  }
+  console.log(
+    `${LOG_PREFIX} corpus: live=${ctx.networkLogPaths?.length ?? 0} bootstrap=${ctx.bootstrapCorpusPaths?.length ?? 0} merged=${corpus.length}`,
+  );
+
+  const { views, unresolvedViewIds, stats } = await extractViewsFromNetworkLogs({
+    networkLogPaths: corpus,
+    verbose,
+  });
+
+  const { seeds: typedSeeds, strictCount, inferredCount } = collapseTypedRecords(
+    views,
+    ctx.origin,
+  );
+
+  const fallbackSeeds: RouteSeed[] = [];
+  for (const viewId of unresolvedViewIds) {
+    for (const seed of fanFallbackSeeds(viewId, ctx.origin)) {
+      fallbackSeeds.push(seed);
+    }
+  }
+
+  // Final dedup by URL. Higher confidence wins; equal-confidence => first-seen.
+  const byUrl = new Map<string, RouteSeed>();
+  for (const seed of [...typedSeeds, ...fallbackSeeds]) {
+    const existing = byUrl.get(seed.url);
+    if (!existing) {
+      byUrl.set(seed.url, seed);
+      continue;
+    }
+    const existingRank = CONFIDENCE_RANK[(existing.confidence ?? 'strict') as SeedConfidence];
+    const candidateRank = CONFIDENCE_RANK[(seed.confidence ?? 'strict') as SeedConfidence];
+    if (candidateRank > existingRank) byUrl.set(seed.url, seed);
+  }
+  const seeds = Array.from(byUrl.values());
+
+  const uniqueViewIds = new Set<string>();
+  for (const seed of seeds) {
+    if (seed.viewId) uniqueViewIds.add(seed.viewId);
+  }
+
+  console.log(
+    `${LOG_PREFIX} bootstrap seeds: strict=${strictCount} inferred=${inferredCount} fallback=${fallbackSeeds.length} ` +
+      `(unresolved_viewIds=${unresolvedViewIds.length} x segments=${fallbackUrlSegments().length}) ` +
+      `total_seeds=${seeds.length} unique_viewIds=${uniqueViewIds.size} ` +
+      `extract_stats={lines:${stats.scannedLines},bodies:${stats.bodiesParsed}}`,
+  );
+
+  return seeds;
+}
+
+async function pagePass(ctx: PageDiscoveryContext): Promise<RouteSeed[]> {
+  const page = ctx.page as Page;
+  const { seeds, stats } = await expandSidebarTree(page, ctx.origin);
+  console.log(
+    `${LOG_PREFIX} page-sidebar pass: extracted ${stats.anchorsExtracted} <a href> nodes, ` +
+      `${stats.totalCollapsedClicked} aria-expanded nodes flipped ` +
+      `(iterations=${stats.iterations}, collapsed_remaining=${stats.finalCollapsedRemaining})`,
+  );
+  return seeds;
+}
+
 export function createHybridRouteDiscoverer(
   options: HybridDiscovererOptions = {},
 ): RouteDiscoverer {
   const verbose = options.verbose === true;
 
-  return {
+  const discoverer: RouteDiscoverer = {
     name: 'hybrid-route-discoverer',
-    async discover(ctx: DiscoveryContext): Promise<RouteSeed[]> {
-      // Merge in-flight + bootstrap corpus, deduped by path. The bootstrap
-      // corpus carries prior captures with real bodies; the in-flight
-      // `networkLogPaths` is typically empty at t=0 on a fresh crawl.
-      const corpus = Array.from(
-        new Set<string>([
-          ...(ctx.networkLogPaths ?? []),
-          ...(ctx.bootstrapCorpusPaths ?? []),
-        ]),
-      );
-      if (corpus.length === 0) {
-        if (verbose) {
-          console.log(`${LOG_PREFIX} no network logs provided — yielding 0 seeds`);
-        }
-        return [];
-      }
-      console.log(
-        `${LOG_PREFIX} corpus: live=${ctx.networkLogPaths?.length ?? 0} bootstrap=${ctx.bootstrapCorpusPaths?.length ?? 0} merged=${corpus.length}`,
-      );
-
-      const { views, unresolvedViewIds, stats } = await extractViewsFromNetworkLogs({
-        networkLogPaths: corpus,
-        verbose,
-      });
-
-      const { seeds: typedSeeds, strictCount, inferredCount } = collapseTypedRecords(
-        views,
-        ctx.origin,
-      );
-
-      const fallbackSeeds: RouteSeed[] = [];
-      for (const viewId of unresolvedViewIds) {
-        for (const seed of fanFallbackSeeds(viewId, ctx.origin)) {
-          fallbackSeeds.push(seed);
-        }
-      }
-
-      // Final dedup by URL. Higher confidence wins; equal-confidence => first-seen.
-      const byUrl = new Map<string, RouteSeed>();
-      for (const seed of [...typedSeeds, ...fallbackSeeds]) {
-        const existing = byUrl.get(seed.url);
-        if (!existing) {
-          byUrl.set(seed.url, seed);
-          continue;
-        }
-        const existingRank = CONFIDENCE_RANK[(existing.confidence ?? 'strict') as SeedConfidence];
-        const candidateRank = CONFIDENCE_RANK[(seed.confidence ?? 'strict') as SeedConfidence];
-        if (candidateRank > existingRank) byUrl.set(seed.url, seed);
-      }
-      const seeds = Array.from(byUrl.values());
-
-      const uniqueViewIds = new Set<string>();
-      for (const seed of seeds) {
-        if (seed.viewId) uniqueViewIds.add(seed.viewId);
-      }
-
-      console.log(
-        `${LOG_PREFIX} seeds: strict=${strictCount} inferred=${inferredCount} fallback=${fallbackSeeds.length} ` +
-          `(unresolved_viewIds=${unresolvedViewIds.length} x segments=${fallbackUrlSegments().length}) ` +
-          `total_seeds=${seeds.length} unique_viewIds=${uniqueViewIds.size} ` +
-          `extract_stats={lines:${stats.scannedLines},bodies:${stats.bodiesParsed}}`,
-      );
-
-      return seeds;
+    discoverFromBootstrap(ctx) {
+      return bootstrapPass(ctx, verbose);
+    },
+    discoverFromPage(ctx) {
+      return pagePass(ctx);
+    },
+    // Legacy alias — delegates to the bootstrap pass for any caller that
+    // hasn't yet migrated to the two-phase interface.
+    discover(ctx) {
+      return bootstrapPass(ctx, verbose);
     },
   };
+  return discoverer;
 }

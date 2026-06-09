@@ -54,10 +54,31 @@ function recordingFingerprint(rec: ReplayRecording): string {
     }
   }
   const hc = hostClass(host);
-  const { template } = pathTemplate(pathname);
+  const { template, params } = pathTemplate(pathname);
   const sq = stableQuery(search);
   const bsh = bodyShapeOf(rec.requestBodyKey);
-  const keyParts = `${rec.method.toUpperCase()} ${hc}${template}${sq ? `?${sq}` : ''} #${bsh}`;
+  const method = rec.method.toUpperCase();
+  // For idempotent READS, the concrete resource id IS the identity: GET
+  // /project/A/canvas and GET /project/B/canvas template to the same path but
+  // return different per-resource bodies, so collapsing them loses every canvas
+  // but one. Fold the concrete path-param values into the GET fingerprint so
+  // each resource keeps its own recording. Writes (POST/PATCH/...) keep the
+  // shape-only fingerprint so structurally-identical mutations still collapse,
+  // and GET collection endpoints (no id params) are unaffected — no regression.
+  const idScope =
+    (method === 'GET' || method === 'HEAD') && Object.keys(params).length > 0
+      ? ` !${Object.values(params).join('/')}`
+      : '';
+  // BATCH-READ POSTs (fetch-by-ids / bulk / query / search) are idempotent reads
+  // whose DISTINCT request bodies return DISTINCT payloads. The shape-only hash
+  // (bsh) collapses every id-list into one recording, so a canvas that looks up
+  // many products keeps a single arbitrary product and the rest fall back to the
+  // empty-200 stub (which the app then .map()s and crashes on). For these reads
+  // we fingerprint by the FULL body value so each id-list keeps its own
+  // recording. Genuine mutating POSTs are untouched (shape-only), no regression.
+  const isBatchRead = method === 'POST' && /(-by-ids|\/bulk|\/batch|\/query|\/search|\/port-status)$/.test(template);
+  const bodyScope = isBatchRead && rec.requestBodyKey ? ` ~${rec.requestBodyKey}` : '';
+  const keyParts = `${method} ${hc}${template}${sq ? `?${sq}` : ''} #${bsh}${idScope}${bodyScope}`;
   // matchKey (bridge per-list routing) must keep recordings distinct so a per-list
   // recording is never collapsed into another list's. Plain recordings carry no key.
   return rec.matchKey ? `${keyParts} @${rec.matchKey}` : keyParts;

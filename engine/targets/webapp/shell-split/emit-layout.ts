@@ -44,15 +44,17 @@ export interface EmitLayoutArgs {
   componentName: string;
   shellHtml: string;
   routes: SidebarNavRoute[];
+  /** Captured-app hostname (e.g. `app.clickup.com`) for same-origin detection. */
+  captureHost: string;
 }
 
 export function emitLayoutComponent(args: EmitLayoutArgs): string {
-  const { componentName, shellHtml, routes } = args;
+  const { componentName, shellHtml, routes, captureHost } = args;
 
   // The interaction layer emits lines that reference `bodyRef`; we alias the
   // shell ref to `bodyRef` so those lines splice in unchanged.
   const interaction = emitInteractionEffect();
-  const sidebarNav = emitSidebarNavEffect(routes);
+  const sidebarNav = emitSidebarNavEffect(routes, captureHost);
 
   const head = [
     "import { useEffect, useRef, useState } from 'react';",

@@ -93,7 +93,7 @@ function CreatePill() {
             padding: 0,
             background: 'var(--cu-bg-strong, rgb(38,38,38))',
             border: 'none',
-            borderRadius: 8,
+            borderRadius: 6,
             cursor: 'pointer',
             color: '#fff',
             flexShrink: 0,

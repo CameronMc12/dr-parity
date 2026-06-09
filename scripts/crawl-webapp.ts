@@ -23,6 +23,13 @@ type CliArgs = {
   maxDepth: number;
   maxTime: number;
   maxStates: number;
+  routeBudget?: number;
+  settleMs?: number;
+  scrollCapture: boolean;
+  keyboardHarness: boolean;
+  dndHarness: boolean;
+  hoverHarness: boolean;
+  interactionDelayMs?: number;
   userDataDir: string;
   viewport: { width: number; height: number };
   dryRun: boolean;
@@ -32,6 +39,10 @@ type CliArgs = {
   bypassServiceWorker: boolean;
   blocklistPath?: string;
   profile?: string;
+  noDiscoverers: boolean;
+  scopePrefix?: string;
+  sanityReset?: boolean;
+  headless?: boolean;
   help: boolean;
 };
 
@@ -46,6 +57,28 @@ Options:
   --max-depth=<n>         Max BFS depth (default: 6)
   --max-time=<seconds>    Max crawl duration in seconds (default: 600)
   --max-states=<n>        Max unique states (default: 500)
+  --route-budget=<n>      Max interactions (clicks/right-clicks) spent inside a
+                          single route before moving on (default: 60). Raise it
+                          for deeper per-route coverage of modal/overlay states.
+  --settle-ms=<n>         Extra wait (ms) AFTER the load/idle/steady-state wait
+                          but BEFORE each route's base DOM snapshot. Lets
+                          data-driven views (ClickUp task grids) render backend
+                          rows before capture. Default 0 (no extra wait).
+  --scroll-capture        Scroll the primary grid/list container to the bottom
+                          (then back to top) BEFORE the base snapshot to trigger
+                          lazy/virtualized rows + lazy images. Default off.
+  --no-keyboard           Disable the L5 keyboard harness (Cmd/Ctrl+K command
+                          center, slash menu, curated safe hotkey sweep).
+                          Default ON.
+  --no-dnd                Disable the drag-and-drop harness (reversible drags
+                          when a dnd-kit / react-beautiful-dnd / native-draggable
+                          signature is present). Default ON.
+  --no-hover              Disable the L4 hover-as-state harness (hover-triggered
+                          tooltips / popovers). Default ON.
+  --interaction-delay-ms=<n>
+                          Inter-interaction throttle (ms) for the extended
+                          harnesses to stay under rate limits. Default: env
+                          DRPARITY_INTERACTION_DELAY_MS, then a 400-800ms jitter.
   --user-data-dir=<path>  Persistent Chrome profile (default: ~/.config/playwright-pinterest)
   --viewport=<wxh>        Viewport e.g. 1440x900 (default: 1440x900)
   --blocklist=<path>      Extra blocklist file (one phrase per line)
@@ -61,6 +94,24 @@ Options:
                           Default: auto-resolve by host (falls back to "default"
                           which is bytewise-identical to pre-profile behaviour).
                           Known profiles: default, clickup.
+  --no-discoverers        FOCUSED CRAWL. Disable the profile route-discoverers
+                          (bootstrap-corpus + page sidebar expander) so the
+                          frontier is the start URL plus whatever the in-page
+                          interaction harnesses surface. Keeps a smoke/focus run
+                          ON the start route instead of flooding it with stale
+                          corpus seeds. Default off (discoverers run).
+  --scope-prefix=<url>    FOCUSED CRAWL. Only enqueue routes whose normalised URL
+                          starts with this prefix (the start URL is always
+                          allowed). Confines the crawl to a sub-tree (e.g. a
+                          single List view) so the harnesses fire. Default: none.
+  --sanity-reset          Run sanityReset(page) once after the first authenticated
+                          nav, returning the UI to a pristine default baseline
+                          (no chat/home panel leak, no stray overlays) before
+                          discovery + first capture. DEFAULT ON for focused runs
+                          (--no-discoverers / --focus); off otherwise.
+  --no-sanity-reset       Force-disable the sanity reset even in focused runs.
+  --headless              Launch the persistent-profile Chrome headless. Default
+                          off (headed), so behaviour is unchanged unless set.
   -h, --help              Show this help
 `.trim();
 
@@ -86,6 +137,11 @@ function parseArgs(argv: string[]): CliArgs {
     aggressive: false,
     captureJs: false,
     bypassServiceWorker: false,
+    scrollCapture: false,
+    keyboardHarness: true,
+    dndHarness: true,
+    hoverHarness: true,
+    noDiscoverers: false,
     help: false,
   };
 
@@ -105,6 +161,50 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (raw === '--bypass-sw') {
       out.bypassServiceWorker = true;
+      continue;
+    }
+    if (raw === '--scroll-capture') {
+      out.scrollCapture = true;
+      continue;
+    }
+    if (raw === '--no-keyboard') {
+      out.keyboardHarness = false;
+      continue;
+    }
+    if (raw === '--no-dnd') {
+      out.dndHarness = false;
+      continue;
+    }
+    if (raw === '--no-hover') {
+      out.hoverHarness = false;
+      continue;
+    }
+    if (raw === '--no-discoverers' || raw === '--focus') {
+      out.noDiscoverers = true;
+      continue;
+    }
+    if (raw === '--sanity-reset') {
+      out.sanityReset = true;
+      continue;
+    }
+    if (raw === '--no-sanity-reset') {
+      out.sanityReset = false;
+      continue;
+    }
+    if (raw === '--headless') {
+      out.headless = true;
+      continue;
+    }
+    if (raw.startsWith('--scope-prefix=')) {
+      out.scopePrefix = raw.slice('--scope-prefix='.length);
+      continue;
+    }
+    if (raw.startsWith('--interaction-delay-ms=')) {
+      const value = Number(raw.slice('--interaction-delay-ms='.length));
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error(`Invalid --interaction-delay-ms "${raw}". Expected a non-negative integer (ms).`);
+      }
+      out.interactionDelayMs = value;
       continue;
     }
     if (raw.startsWith('--proxy=')) {
@@ -129,6 +229,22 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (raw.startsWith('--max-states=')) {
       out.maxStates = Number(raw.slice('--max-states='.length));
+      continue;
+    }
+    if (raw.startsWith('--route-budget=')) {
+      const value = Number(raw.slice('--route-budget='.length));
+      if (!Number.isFinite(value) || value <= 0) {
+        throw new Error(`Invalid --route-budget "${raw}". Expected a positive integer.`);
+      }
+      out.routeBudget = value;
+      continue;
+    }
+    if (raw.startsWith('--settle-ms=')) {
+      const value = Number(raw.slice('--settle-ms='.length));
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error(`Invalid --settle-ms "${raw}". Expected a non-negative integer (ms).`);
+      }
+      out.settleMs = value;
       continue;
     }
     if (raw.startsWith('--user-data-dir=')) {
@@ -201,6 +317,15 @@ async function main(): Promise<void> {
     maxDepth: args.maxDepth,
     maxTime: args.maxTime,
     maxStates: args.maxStates,
+    ...(args.routeBudget !== undefined ? { routeBudget: args.routeBudget } : {}),
+    ...(args.settleMs !== undefined ? { settleMs: args.settleMs } : {}),
+    scrollCapture: args.scrollCapture,
+    keyboardHarness: args.keyboardHarness,
+    dndHarness: args.dndHarness,
+    hoverHarness: args.hoverHarness,
+    ...(args.interactionDelayMs !== undefined
+      ? { interactionDelayMs: args.interactionDelayMs }
+      : {}),
     userDataDir: args.userDataDir,
     viewport: args.viewport,
     dryRun: args.dryRun,
@@ -210,6 +335,12 @@ async function main(): Promise<void> {
     proxyServer: args.proxyServer,
     bypassServiceWorker: args.bypassServiceWorker,
     profile,
+    noDiscoverers: args.noDiscoverers,
+    ...(args.scopePrefix !== undefined ? { scopePrefix: args.scopePrefix } : {}),
+    // Default ON for focused runs (--no-discoverers / --focus), unless explicitly
+    // overridden by --sanity-reset / --no-sanity-reset.
+    sanityReset: args.sanityReset ?? args.noDiscoverers,
+    headless: args.headless,
   };
 
   console.log(`[crawl] startUrl    : ${opts.startUrl}`);
@@ -218,7 +349,13 @@ async function main(): Promise<void> {
   console.log(`[crawl] maxDepth    : ${opts.maxDepth}`);
   console.log(`[crawl] maxTime     : ${opts.maxTime}s`);
   console.log(`[crawl] maxStates   : ${opts.maxStates}`);
+  console.log(`[crawl] routeBudget : ${opts.routeBudget ?? 'default (60)'}`);
+  console.log(`[crawl] settleMs    : ${opts.settleMs ?? 0} (pre-capture data settle)`);
+  console.log(`[crawl] scrollCap   : ${opts.scrollCapture} (pre-capture scroll pass)`);
+  console.log(`[crawl] harnesses   : kbd=${opts.keyboardHarness} dnd=${opts.dndHarness} hover=${opts.hoverHarness}`);
+  console.log(`[crawl] intDelayMs  : ${opts.interactionDelayMs ?? 'env/default (400-800 jitter)'}`);
   console.log(`[crawl] userDataDir : ${opts.userDataDir}`);
+  console.log(`[crawl] headless    : ${opts.headless ?? false}`);
   console.log(`[crawl] dryRun      : ${opts.dryRun}`);
   console.log(`[crawl] aggressive  : ${opts.aggressive}`);
   console.log(`[crawl] captureJs   : ${opts.captureJs} (replay full-JS)`);
@@ -226,6 +363,9 @@ async function main(): Promise<void> {
   console.log(`[crawl] bypass-sw   : ${opts.bypassServiceWorker ?? false}`);
   console.log(`[crawl] blocklist   : ${extraBlocklist.length} extra phrases`);
   console.log(`[crawl] profile     : ${profile.name} (discoverers=${profile.discoverers?.length ?? 0})`);
+  console.log(`[crawl] noDiscover  : ${opts.noDiscoverers} (focus mode)`);
+  console.log(`[crawl] scopePrefix : ${opts.scopePrefix ?? 'none'}`);
+  console.log(`[crawl] sanityReset : ${opts.sanityReset ?? false}`);
 
   const summary = await runCrawler(opts);
 

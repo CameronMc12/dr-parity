@@ -1,1 +1,9 @@
 @import "@parity/design-system/clickup-globals.css";
+
+/*
+ * The design-system stylesheet imports Tailwind, but its automatic source scan
+ * is rooted at the design-system package and misses this app's components.
+ * Register this app's source tree so utility classes used in the settings panes
+ * (and anywhere else) are generated.
+ */
+@source "../";

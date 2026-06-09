@@ -29,7 +29,12 @@ export interface WebappComponentDef extends ComponentDef {
 }
 
 export interface WebappBuildOptions {
-  cloneDir: string;
+  /**
+   * Path to a static HTML clone (input). Optional in crawl-only mode: when
+   * absent, `crawlDir` MUST be set and the build derives the document head +
+   * documentUrl from the crawl's root-state DOM and graph.json.
+   */
+  cloneDir?: string;
   outDir: string;
   name: string;
   force?: boolean;

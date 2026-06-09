@@ -81,7 +81,7 @@ export function buildBranchingHandler(
     const only = uniqueRefs[0];
     const code = [
       `  http.${methodLower}(${quoteJson(handlerPath)}, () =>`,
-      `    HttpResponse.json(${only.importName} as unknown, { status: ${only.status} }),`,
+      `    HttpResponse.json(${only.importName} as JsonBodyType, { status: ${only.status} }),`,
       `  ),`,
     ].join('\n');
     return { handlerCode: code, imports };
@@ -96,7 +96,7 @@ export function buildBranchingHandler(
     const first = uniqueRefs[0];
     const code = [
       `  http.${methodLower}(${quoteJson(handlerPath)}, () =>`,
-      `    HttpResponse.json(${first.importName} as unknown, { status: ${first.status} }),`,
+      `    HttpResponse.json(${first.importName} as JsonBodyType, { status: ${first.status} }),`,
       `  ),`,
     ].join('\n');
     return { handlerCode: code, imports };
@@ -105,7 +105,7 @@ export function buildBranchingHandler(
   const branchLines: string[] = [];
   for (const branch of branches) {
     branchLines.push(
-      `    if (key === ${quoteJson(branch.key)}) return HttpResponse.json(${branch.importName} as unknown, { status: ${branch.status} });`,
+      `    if (key === ${quoteJson(branch.key)}) return HttpResponse.json(${branch.importName} as JsonBodyType, { status: ${branch.status} });`,
     );
   }
 
@@ -115,7 +115,7 @@ export function buildBranchingHandler(
     `    let key = raw;`,
     `    try { key = stableStringify(JSON.parse(raw)); } catch { /* keep raw */ }`,
     ...branchLines,
-    `    return HttpResponse.json(${def.importName} as unknown, { status: ${def.status} });`,
+    `    return HttpResponse.json(${def.importName} as JsonBodyType, { status: ${def.status} });`,
     `  }),`,
   ].join('\n');
 

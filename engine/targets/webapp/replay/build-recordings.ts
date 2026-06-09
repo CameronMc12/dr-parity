@@ -39,15 +39,28 @@ function originOf(url: string): string {
   }
 }
 
+/**
+ * A body is "rich" when it carries real payload, not an empty/degenerate stub.
+ * Mirrors merge-crawls' cross-crawl policy so the same endpoint never keeps a
+ * thin/null sibling that shadows a real payload captured later in the SAME crawl.
+ */
+function bodyRichness(body: string): number {
+  const b = (body ?? '').trim();
+  if (b === '' || b === '{}' || b === '[]' || b === 'null') return 0;
+  return b.length;
+}
+
 function recordingsFromGroup(group: EndpointGroup): ReplayRecording[] {
-  const seen = new Set<string>();
-  const out: ReplayRecording[] = [];
+  // Same endpoint + same request body + same status can appear many times in a
+  // crawl with DIFFERENT response bodies (e.g. GET /user/ returns null on some
+  // hits and the real authed user on others). Keep the RICHEST body per dedupe
+  // key so a null/empty hit never shadows the real payload.
+  const byKey = new Map<string, ReplayRecording>();
+  const order: string[] = [];
   for (const rec of group.records) {
     const requestBodyKey = normalizeRequestBody(rec.requestBody);
     const dedupeKey = `${requestBodyKey}::${rec.responseStatus}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-    out.push({
+    const candidate: ReplayRecording = {
       method: group.method,
       pathPattern: group.pathPattern,
       origin: group.origin || originOf(rec.url),
@@ -55,9 +68,16 @@ function recordingsFromGroup(group: EndpointGroup): ReplayRecording[] {
       status: rec.responseStatus,
       contentType: contentTypeOf(rec),
       body: redactString(rec.responseBody ?? ''),
-    });
+    };
+    const existing = byKey.get(dedupeKey);
+    if (!existing) {
+      order.push(dedupeKey);
+      byKey.set(dedupeKey, candidate);
+    } else if (bodyRichness(candidate.body) > bodyRichness(existing.body)) {
+      byKey.set(dedupeKey, candidate);
+    }
   }
-  return out;
+  return order.map((k) => byKey.get(k) as ReplayRecording);
 }
 
 export async function buildRecordings(

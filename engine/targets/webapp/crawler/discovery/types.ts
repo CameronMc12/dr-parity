@@ -107,9 +107,45 @@ export type DiscoveryContext = {
   bootstrapCorpusPaths?: readonly string[];
 };
 
+/**
+ * Page-time discovery context. Issued by the crawler AFTER the first
+ * navigation + settle, when a live `Page` is available. The base
+ * `DiscoveryContext` fields are inherited so a discoverer's `discoverFromPage`
+ * implementation has access to the host / origin / startUrl just like
+ * `discoverFromBootstrap`.
+ *
+ * The `Page` type is `unknown` here on purpose: only discoverer
+ * implementations that opt in (e.g. the sidebar tree-expander) need to know
+ * Playwright; the structural sub-type in `../types` does not depend on
+ * Playwright at all.
+ */
+export type PageDiscoveryContext = DiscoveryContext & {
+  /** Live Playwright `Page` handle. Typed `unknown` so consumers cast. */
+  page: unknown;
+};
+
 export interface RouteDiscoverer {
   /** Human-readable name for logging. */
   readonly name: string;
-  /** Run the discovery pass. Returns an array of seeds (may be empty). */
+  /**
+   * Bootstrap-phase discovery: runs ONCE at crawler init, before the first
+   * navigation. Reads previously-captured artefacts (e.g. `network.jsonl`
+   * corpus) without a live `Page`.
+   */
+  discoverFromBootstrap(ctx: DiscoveryContext): Promise<RouteSeed[]>;
+  /**
+   * Optional page-phase discovery: runs ONCE after the first navigation +
+   * settle, with a live `Page`. Discoverers that don't need DOM access leave
+   * this undefined and the crawler skips the call.
+   */
+  discoverFromPage?(ctx: PageDiscoveryContext): Promise<RouteSeed[]>;
+  /**
+   * @deprecated Use `discoverFromBootstrap`. Kept on the interface (and
+   * intentionally non-optional) so the structural sub-type `WebappProfileLike`
+   * in `../types` still matches without us having to edit that file this
+   * iteration. New discoverers should implement this as a thin delegate to
+   * `discoverFromBootstrap`. The crawler routes through `discoverFromBootstrap`
+   * first; `discover` is the fallback when only the legacy method exists.
+   */
   discover(ctx: DiscoveryContext): Promise<RouteSeed[]>;
 }

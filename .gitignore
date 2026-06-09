@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+apps/clickup-react/node_modules/
 .pnp
 .pnp.js
 
@@ -32,6 +33,22 @@ analysis/
 # Local Claude tooling (regenerable via playwright-cli install --skills)
 .claude/skills/playwright-cli/
 .claude/commands/
+.claude/worktrees/
+.playwright-cli/
+
+# Archived / superseded code (kept locally, not in history)
+.archive/
+
+# Captures, crawls, exports, parity output — local only, regenerable
+docs/research/
+tooling/parity-harness/output/
+tooling/parity-harness/tooling/
+
+# Ad-hoc local capture / MCP experiment scripts (repo root)
+/cu-*.mjs
+/list_mcp*.js
+/mcp_client.js
+/mcp.json
 
 # Environment
 .env
@@ -96,3 +113,10 @@ docs/research/clickup-export/*/
 
 # Parity harness output (regenerable)
 parity-track-report/
+tooling/parity-harness/output/*.png
+tooling/parity-harness/output/*.json
+tooling/parity-harness/output/*.md
+tooling/parity-harness/node_modules/
+
+# React-target test output (proof, not committed)
+react-target-test/

@@ -2,12 +2,13 @@ import type { ReactNode } from 'react';
 import { AiAssistantPanel } from '@/components/ai-panel/AiAssistantPanel';
 import { CreateTaskModal } from '@/components/create/CreateTaskModal';
 import { InviteModal } from '@/components/invite/InviteModal';
-import { SettingsModal } from '@/components/pages/settings/SettingsModal';
+import { SettingsPage } from '@/components/pages/settings/SettingsPage';
 import { TaskModal } from '@/components/task/TaskModal';
 import { IconBar } from './IconBar';
 import { NotificationsBanner } from './NotificationsBanner';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import { useUiStore } from '@/store/ui-store';
 
 /**
  * AppShell — exact DOM structure of the ClickUp oracle (localhost:7050).
@@ -32,6 +33,8 @@ export function AppShell({
   children: ReactNode;
   wsId?: string;
 }) {
+  const settingsOpen = useUiStore((s) => s.settingsOpen);
+
   return (
     <div
       style={{
@@ -48,9 +51,6 @@ export function AppShell({
 
       {/* Global task-detail modal — overlays the active route, list stays behind */}
       <TaskModal wsId={wsId} />
-
-      {/* Global centered Settings modal — opened via avatar menu or /settings */}
-      <SettingsModal />
 
       {/* Global Invite-members modal — opened from the icon-rail Invite button */}
       <InviteModal />
@@ -88,6 +88,9 @@ export function AppShell({
               flex: '1 1 0',
               minHeight: 0,
               overflow: 'hidden',
+              padding: '0px 6px 6px 6px',
+              gap: '6px',
+              background: '#0e0e0e' // Dark background for the island container
             }}
           >
             {/* cu-simple-bar — icon bar, black, 64px */}
@@ -133,30 +136,68 @@ export function AppShell({
                       flex: '1 1 0',
                       minHeight: 0,
                       overflow: 'hidden',
-                      background: 'var(--cu-bg-sidebar)',
+                      gap: 0,
+                      background: 'transparent',
                     }}
                   >
-                    {/* cu-global-sidebar__container — Sidebar, 256px */}
-                    <Sidebar wsId={wsId} />
+                    {settingsOpen ? (
+                      /* Settings surface — spans both sidebar + main, fills
+                         everything right of the icon rail, below the topbar.
+                         The SettingsPage's own left column reuses the shell
+                         sidebar slot treatment (256px, --cu-bg-sidebar, rounded
+                         left corners) and its right panel rounds the right
+                         corners, so the outer wrapper only supplies the border. */
+                      <div
+                        style={{
+                          display: 'flex',
+                          flex: '1 1 0',
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          borderRadius: '6px',
+                          border: '1px solid rgba(255,255,255,0.04)',
+                        }}
+                      >
+                        <SettingsPage />
+                      </div>
+                    ) : (
+                      <>
+                        {/* cu-global-sidebar__container — Sidebar, 256px */}
+                        <div style={{
+                          width: 256,
+                          flexShrink: 0,
+                          borderTopLeftRadius: '6px',
+                          borderBottomLeftRadius: '6px',
+                          border: '1px solid rgba(255,255,255,0.04)',
+                          borderRight: 'none',
+                          overflow: 'hidden',
+                          display: 'flex',
+                          background: 'var(--cu-bg-sidebar)'
+                        }}>
+                          <Sidebar wsId={wsId} />
+                        </div>
 
-                    {/* cu-manager2__main — main content, fills remaining */}
-                    <main
-                      className="cu-manager2__main"
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        flex: '1 1 0',
-                        minWidth: 0,
-                        overflow: 'hidden',
-                        background: 'var(--cu-bg-app)',
-                      }}
-                    >
-                      <NotificationsBanner />
-                      {children}
-                    </main>
+                        <main
+                          className="cu-manager2__main"
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            flex: '1 1 0',
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            background: 'var(--cu-bg-app)',
+                            borderTopRightRadius: '6px',
+                            borderBottomRightRadius: '6px',
+                            border: '1px solid rgba(255,255,255,0.04)',
+                          }}
+                        >
+                          <NotificationsBanner />
+                          {children}
+                        </main>
 
-                    {/* Right-docked Brain / Max AI panel — shrinks main when open */}
-                    <AiAssistantPanel />
+                        {/* Right-docked Brain / Max AI panel — shrinks main when open */}
+                        <AiAssistantPanel />
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

@@ -2,9 +2,9 @@
 
 import { FolderOpenIcon } from './goals-icons';
 
-const TILE_BG = 'rgb(247, 248, 249)';
-const ICON = 'rgb(196, 199, 205)';
-const BADGE_BG = 'rgb(89, 93, 102)';
+const TILE_BG = 'var(--cu-bg-menu)';
+const ICON = 'var(--cu-text-muted)';
+const BADGE_BG = 'var(--cu-text-secondary)';
 
 /**
  * First grid tile on the Goals landing: an empty light square with an
@@ -39,7 +39,7 @@ export function CreateFolderTile({ onClick }: { onClick?: () => void }) {
             height: 22,
             borderRadius: '50%',
             background: BADGE_BG,
-            color: 'white',
+            color: 'var(--cu-bg-menu)',
             fontSize: 15,
             fontWeight: 400,
             display: 'flex',

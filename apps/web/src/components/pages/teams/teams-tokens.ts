@@ -8,8 +8,10 @@ export const T = {
   hoverBg: 'var(--cu-bg-hover, rgb(248,248,248))',
   activeBg: 'var(--cu-bg-active, rgb(240,240,240))',
   appBg: 'var(--cu-bg-app, rgb(255,255,255))',
-  /** Faint skeleton-bar fill on the card cover. */
-  skeleton: 'rgba(0,0,0,0.07)',
+  /** Elevated card surface (raised above the app background). */
+  cardBg: 'var(--cu-bg-menu, rgb(255,255,255))',
+  /** Faint skeleton-bar fill on the card cover (theme-neutral translucent). */
+  skeleton: 'color-mix(in srgb, var(--cu-text-primary) 8%, transparent)',
   /** Solid near-black CTA. */
   dark: 'var(--cu-text-primary, rgb(24,24,24))',
 } as const;

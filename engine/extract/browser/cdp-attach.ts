@@ -77,10 +77,13 @@ async function openCdp(cdpUrl: string, probeTimeoutMs: number): Promise<CdpHandl
   return { mode: 'cdp', browser, existingContext: contexts[0] };
 }
 
-async function openPersistent(userDataDir: string): Promise<PersistentHandle> {
+async function openPersistent(
+  userDataDir: string,
+  headless: boolean
+): Promise<PersistentHandle> {
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chrome',
-    headless: false,
+    headless,
     args: ['--disable-blink-features=AutomationControlled'],
     ignoreDefaultArgs: ['--enable-automation'],
   });
@@ -106,7 +109,7 @@ export async function openBrowser(opts: OpenBrowserOptions): Promise<BrowserHand
     case 'cdp':
       return openCdp(cdpUrl, probeTimeoutMs);
     case 'persistent':
-      return openPersistent(userDataDir);
+      return openPersistent(userDataDir, opts.headless ?? false);
     default: {
       const exhaustive: never = opts.mode;
       throw new Error(`Unknown capture mode: ${String(exhaustive)}`);

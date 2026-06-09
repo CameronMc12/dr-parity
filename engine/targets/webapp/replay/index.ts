@@ -179,95 +179,80 @@ export async function emitReplay(options: ReplayBuildOptions): Promise<ReplayBui
 
   // 4. Emit boot shim + SW, rewrite bootstrap HTML.
   const seeded = loadSeededState(crawlDir);
+  // Original captured-document host (e.g. app.omnisocials.com). The SW uses it to
+  // remap the app's same-origin root-relative asset URLs (/logos/x.svg, platform
+  // icons, avatars) to their localized /_ext/<host>/... copy when the literal
+  // same-origin path misses. Best-effort parse; '' disables the remap (no regression).
+  let originHost = '';
+  try {
+    originHost = new URL(bootstrap.url).host;
+  } catch {
+    originHost = '';
+  }
+
   // 4a. Additive: view-synth template inference (ClickUp profile only).
   // Resolves the profile from the bootstrap host, checks viewSynth.enabled,
   // expands the templatePaths glob, infers one template per viewType, and
   // emits replay/view-templates.json. No-op for every other profile.
   let enableViewSynth = false;
-  {
-    let synthHost = '';
-    try {
-      synthHost = new URL(bootstrap.url).host;
-    } catch {
-      synthHost = '';
-    }
-    if (synthHost) {
-      const profile = resolveProfile(synthHost);
-      if (profile.viewSynth?.enabled) {
-        const templateFiles = expandBootstrapCorpus(profile.viewSynth.templatePaths ?? []);
-        if (templateFiles.length > 0) {
-          const templates = await inferViewTemplates(templateFiles);
-          if (templates.size > 0) {
-            emitViewTemplates(templates, outDir);
-            enableViewSynth = true;
-            warnings.push(
-              `[view-synth] inferred ${templates.size} view template(s) from ${templateFiles.length} log file(s)`,
-            );
-          }
-        }
-      }
-    }
-  }
-  // 4b. Additive: doc-freeze. Loads the captured doc-pages export, emits
-  // replay/doc-pages.json, and inlines the doc-freezer shim into the boot
-  // shim so /v/dc/<id> routes render with captured markdown content.
   let enableDocFreeze = false;
   let extraShimJs = '';
-  {
-    let docHost = '';
-    try {
-      docHost = new URL(bootstrap.url).host;
-    } catch {
-      docHost = '';
+  let fuzzyConfig: FuzzyBodyMatchConfig | null = null;
+  if (originHost) {
+    const profile = resolveProfile(originHost);
+    if (profile.fuzzyBodyMatch?.enabled) {
+      fuzzyConfig = {
+        enabled: true,
+        ...(profile.fuzzyBodyMatch.thresholds ? { thresholds: profile.fuzzyBodyMatch.thresholds } : {}),
+        ...(profile.fuzzyBodyMatch.endpointPatterns ? { endpointPatterns: profile.fuzzyBodyMatch.endpointPatterns } : {}),
+      };
+      warnings.push(`[fuzzy-body-match] enabled (${profile.fuzzyBodyMatch.endpointPatterns?.length ?? 0} extra patterns)`);
     }
-    if (docHost) {
-      const profile = resolveProfile(docHost);
-      if (profile.docFreeze?.enabled && profile.docFreeze.pagesIndexPath) {
-        const src = profile.docFreeze.pagesIndexPath;
-        const absPath = isAbsolute(src) ? src : resolvePath(process.cwd(), src);
-        const loaded = loadDocPages(absPath);
-        if (loaded.docCount > 0) {
-          emitDocPages(loaded.index, outDir);
-          extraShimJs = buildDocFreezerShim();
-          enableDocFreeze = true;
+    if (profile.viewSynth?.enabled) {
+      const templateFiles = expandBootstrapCorpus(profile.viewSynth.templatePaths ?? []);
+      if (templateFiles.length > 0) {
+        const templates = await inferViewTemplates(templateFiles);
+        if (templates.size > 0) {
+          emitViewTemplates(templates, outDir);
+          enableViewSynth = true;
           warnings.push(
-            `[doc-freeze] loaded ${loaded.docCount} doc(s), ${loaded.pageCount} page(s), ${loaded.totalContentBytes} content bytes`,
+            `[view-synth] inferred ${templates.size} view template(s) from ${templateFiles.length} log file(s)`,
           );
         }
       }
     }
-  }
-  // 4c. Additive: fuzzy POST-body match config. Resolves the profile from the
-  // bootstrap host, checks fuzzyBodyMatch.enabled, and threads the config
-  // (thresholds + endpointPatterns) through to the SW emitter. The SW inlines
-  // the matcher source and wires the POST fall-through. No-op for every other
-  // profile / when the flag is false.
-  let fuzzyConfig: FuzzyBodyMatchConfig | null = null;
-  {
-    let fuzzyHost = '';
-    try {
-      fuzzyHost = new URL(bootstrap.url).host;
-    } catch {
-      fuzzyHost = '';
-    }
-    if (fuzzyHost) {
-      const profile = resolveProfile(fuzzyHost);
-      if (profile.fuzzyBodyMatch?.enabled) {
-        fuzzyConfig = {
-          enabled: true,
-          ...(profile.fuzzyBodyMatch.thresholds ? { thresholds: profile.fuzzyBodyMatch.thresholds } : {}),
-          ...(profile.fuzzyBodyMatch.endpointPatterns ? { endpointPatterns: profile.fuzzyBodyMatch.endpointPatterns } : {}),
-        };
-        warnings.push(`[fuzzy-body-match] enabled (${profile.fuzzyBodyMatch.endpointPatterns?.length ?? 0} extra patterns)`);
+    // 4b. Additive: doc-freeze. Loads the captured doc-pages export, emits
+    // replay/doc-pages.json, and inlines the doc-freezer shim into the boot
+    // shim so /v/dc/<id> routes render with captured markdown content.
+    if (profile.docFreeze?.enabled && profile.docFreeze.pagesIndexPath) {
+      const src = profile.docFreeze.pagesIndexPath;
+      const absPath = isAbsolute(src) ? src : resolvePath(process.cwd(), src);
+      const loaded = loadDocPages(absPath);
+      if (loaded.docCount > 0) {
+        emitDocPages(loaded.index, outDir);
+        extraShimJs = buildDocFreezerShim();
+        enableDocFreeze = true;
+        warnings.push(
+          `[doc-freeze] loaded ${loaded.docCount} doc(s), ${loaded.pageCount} page(s), ${loaded.totalContentBytes} content bytes`,
+        );
       }
     }
   }
+
   const bootShimJs = buildBootShim({
     seeded,
     wsConnections: ws.connections,
     ...(extraShimJs ? { extraShimJs } : {}),
   });
-  const serviceWorker = buildServiceWorker(unrecordedMode, options.backendUrl ?? '', enableViewSynth, enableDocFreeze, fuzzyConfig);
+
+  const serviceWorker = buildServiceWorker(
+    unrecordedMode,
+    options.backendUrl ?? '',
+    originHost,
+    enableViewSynth,
+    enableDocFreeze,
+    fuzzyConfig,
+  );
 
   const { html } = rewriteBootstrapHtml({
     html: bootstrap.html,

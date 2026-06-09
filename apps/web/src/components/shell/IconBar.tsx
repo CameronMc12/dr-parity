@@ -52,27 +52,134 @@ function Cu3Icon({ id, size = 20 }: { id: string; size?: number }) {
   );
 }
 
+// Icon-rail geometry tokens (measured from Figma).
+const RAIL_BG = '#111111';                       // one shade darker than sidebar
+const RAIL_DIVIDER = 'rgba(255,255,255,0.06)';   // faint right divider
+const LABEL_MUTED = '#7b7b7b';
+const LABEL_ACTIVE = '#ffffff';
+const HIGHLIGHT_HOVER = 'rgba(255,255,255,0.07)';
+const HIGHLIGHT_ACTIVE = 'rgba(255,255,255,0.11)';
+const UPGRADE_PURPLE = '#5842C8';
+
+// Scoped overrides for the vendor cu-simple-bar layout. The shipped design-system
+// CSS draws a 52×62 pill highlight; Figma wants a 40×40 rounded-square (radius 12)
+// centred behind the 32px icon, muted #7b7b7b labels at weight 590, and the rail
+// one shade darker than the sidebar with a faint right divider.
+const RAIL_CSS = `
+.cu-simple-bar { width: 64px; }
+.cu-simple-bar__container { width: 64px; }
+.cu-simple-bar__container-inner {
+  width: 64px;
+  height: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  background: var(--cu-bg-sidebar);
+  border-radius: 6px;
+  border: none;
+  padding-left: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+/* Flex column for items */
+.cu-simple-bar__body-items,
+.cu-simple-bar__body-pinned-hubs {
+  width: 100%;
+  padding-top: 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.cu-simple-bar__expand-sidebar { width: 100%; display: flex; justify-content: center; }
+.cu-simple-bar-home-switch__item { 
+  width: 100%; 
+  height: 48px; 
+  display: flex; 
+  flex-direction: column; 
+  align-items: center; 
+  justify-content: center; 
+}
+
+/* Icon button */
+.cu-simple-bar-home-switch__item .cu-simple-bar-item__link,
+.cu-simple-bar-home-switch__item.invite .cu-simple-bar-item__link,
+.cu-simple-bar-home-switch__item.upgrade .cu-simple-bar-item__link {
+  width: 100%;
+  height: 32px;
+  border-radius: 0;
+  background: transparent !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+.cu-simple-bar-home-switch__item .cu-simple-bar-item__inner {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  transition: background 120ms ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cu-simple-bar-home-switch__item .cu-simple-bar-item__icon { 
+  color: ${LABEL_MUTED}; 
+  display: flex; 
+  align-items: center; 
+  justify-content: center; 
+}
+.cu-simple-bar-home-switch__item .cu-simple-bar-item__icon .svg { color: inherit; fill: currentColor; }
+
+/* Hover (any item) */
+.cu-simple-bar-home-switch__item:hover .cu-simple-bar-item__inner { background: ${HIGHLIGHT_HOVER}; }
+.cu-simple-bar-home-switch__item:hover .cu-simple-bar-item__icon { color: ${LABEL_ACTIVE}; }
+.cu-simple-bar-home-switch__item:hover .cu-rail-label { color: ${LABEL_ACTIVE}; }
+/* Upgrade keeps its purple tint on hover */
+.cu-simple-bar-home-switch__item.upgrade:hover .cu-simple-bar-item__icon { color: ${UPGRADE_PURPLE}; }
+.cu-simple-bar-home-switch__item.upgrade:hover .cu-rail-label { color: ${UPGRADE_PURPLE}; }
+.cu-simple-bar-home-switch__item.upgrade .cu-rail-label { color: ${UPGRADE_PURPLE}; }
+
+/* Active */
+.cu-simple-bar-home-switch__item.active .cu-simple-bar-item__inner { background: ${HIGHLIGHT_ACTIVE}; }
+.cu-simple-bar-home-switch__item.active .cu-simple-bar-item__icon { color: ${LABEL_ACTIVE}; }
+
+/* Label below icon, ~0px gap */
+.cu-rail-label-container { width: 100%; display: flex; justify-content: center; margin-top: 0px; }
+.cu-rail-label {
+  font-size: 9.5px;
+  font-weight: 590;
+  line-height: 14px;
+  letter-spacing: -0.1px;
+  text-align: center;
+  max-width: 52px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: ${LABEL_MUTED};
+}
+
+/* Bottom invite/upgrade slots */
+.cu-simple-bar__bottom { 
+  padding-bottom: 5px; 
+  display: flex; 
+  flex-direction: column; 
+  align-items: center; 
+  gap: 1px; 
+  width: 100%;
+}
+.cu-simple-bar-home-switch__item.invite,
+.cu-simple-bar-home-switch__item.upgrade { width: 100%; height: 48px; }
+`;
+
 // Centered label that fits inside the 64px rail with a right-side ellipsis.
-// Overrides the conflicting vendor label-container/divider layout inline.
 function NavLabel({ label, active }: { label: string; active?: boolean }) {
   return (
-    <span
-      className="cu-simple-bar-item__label-container"
-      style={{ width: 64, marginLeft: 0, display: 'flex', justifyContent: 'center' }}
-    >
+    <span className="cu-rail-label-container">
       <span
-        className="cu-simple-bar-item__label"
-        style={{
-          maxWidth: 52,
-          textAlign: 'center',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          fontSize: 10,
-          lineHeight: '16px',
-          fontWeight: active ? 700 : 600,
-          letterSpacing: '-0.2px',
-        }}
+        className="cu-rail-label"
+        style={{ color: active ? LABEL_ACTIVE : LABEL_MUTED }}
       >
         {label}
       </span>
@@ -145,6 +252,7 @@ export function IconBar() {
       aria-label="App navigation"
       style={{ maxWidth: 256 }}
     >
+      <style>{RAIL_CSS}</style>
       {/* <div role="navigation" class="cu-simple-bar__container sidebar-v3 ..."> */}
       <div
         className="cu-simple-bar__container sidebar-v3 cu-simple-bar__container_v4 cu-simple-bar__container_non-expandable cu-simple-bar__container_collapsed"
@@ -205,9 +313,9 @@ export function IconBar() {
                       <span className={`cu-simple-bar-item__inner${isActive ? ' active' : ''}`}>
                         <span className="cu-simple-bar-item__icon" style={{ position: 'relative' }}>
                           {Glyph ? (
-                            <Glyph size={20} />
+                            <Glyph size={18} />
                           ) : (
-                            <Cu3Icon id={isActive ? iconIdFilled! : iconId!} size={20} />
+                            <Cu3Icon id={isActive ? iconIdFilled! : iconId!} size={18} />
                           )}
                           {dot != null && (
                             <span
@@ -261,7 +369,7 @@ export function IconBar() {
                     >
                       <span className="cu-simple-bar-item__inner">
                         <span className="cu-simple-bar-item__icon cu-simple-bar__more-icon">
-                          <Cu3Icon id="cu3-icon-nineDots" size={20} />
+                          <Cu3Icon id="cu3-icon-nineDots" size={18} />
                         </span>
                       </span>
                     </button>
@@ -296,7 +404,7 @@ export function IconBar() {
                 >
                   <span className="cu-simple-bar-item__inner">
                     <span className="cu-simple-bar-item__icon">
-                      <Cu3Icon id="cu3-icon-addUser" size={20} />
+                      <Cu3Icon id="cu3-icon-addUser" size={18} />
                     </span>
                   </span>
                 </a>
@@ -315,9 +423,9 @@ export function IconBar() {
                   <span className="cu-simple-bar-item__inner">
                     <span
                       className="cu-simple-bar-item__icon"
-                      style={{ color: 'rgb(176, 132, 246)' }}
+                      style={{ color: UPGRADE_PURPLE }}
                     >
-                      <UpgradeIcon size={20} />
+                      <UpgradeIcon size={18} />
                     </span>
                   </span>
                 </a>

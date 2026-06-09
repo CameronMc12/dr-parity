@@ -100,6 +100,9 @@
   --cu-shadow-md:  0 4px 12px rgba(0, 0, 0, 0.12);
   --cu-shadow-lg:  0 8px 24px rgba(0, 0, 0, 0.16);
 
+  /* ── Status pill (light grey capsule behind a status label) ── */
+  --cu-status-pill-bg: rgb(232, 232, 232);
+
   /* ── Status colours ───────────────────────────────────────── */
   --cu-status-red:    rgb(210, 30, 36);
   --cu-status-green:  rgb(44, 140, 94);
@@ -183,6 +186,9 @@
   --cu-shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.5);
   --cu-shadow-md:  0 4px 12px rgba(0, 0, 0, 0.55);
   --cu-shadow-lg:  0 8px 24px rgba(0, 0, 0, 0.6);
+
+  /* ── Status pill (dark grey capsule in dark theme) ── */
+  --cu-status-pill-bg: rgb(42, 42, 42);
 
   /* ── Indigo grouping accent (sampled from "Group: Status" pill) ── */
   --cu-indigo:         rgb(50, 36, 129);    /* #322481 pill bg */

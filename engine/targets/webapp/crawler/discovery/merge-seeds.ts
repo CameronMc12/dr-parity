@@ -120,30 +120,124 @@ export async function mergeProfileDiscovererSeeds(
   };
   for (const discoverer of discoverers) {
     try {
-      const seeds = sortSeedsByConfidence(await discoverer.discover(ctx));
-      const perTier: Record<SeedConfidence, number> = { strict: 0, inferred: 0, fallback: 0 };
-      let added = 0;
-      for (const seed of seeds) {
-        const key = normalizeRouteUrl(seed.url);
-        if (enqueuedRoutes.has(key)) continue;
-        enqueuedRoutes.add(key);
-        const tier = readConfidenceTier(seed);
-        queue.push({
-          url: seed.url,
-          depth: 0,
-          viaEdge: null,
-          priority: priorityForSeedConfidence(tier),
-        });
-        perTier[tier]++;
-        added++;
-      }
-      console.log(
-        `[crawl] discoverer "${discoverer.name}" enqueued ${added} new route(s): strict=${perTier.strict}, inferred=${perTier.inferred}, fallback=${perTier.fallback} (profile=${profile?.name ?? 'default'})`,
-      );
+      const seeds = sortSeedsByConfidence(await invokeBootstrap(discoverer, ctx));
+      enqueueAndLog(discoverer.name, seeds, queue, enqueuedRoutes, profile?.name, 'bootstrap');
     } catch (err) {
       console.log(
-        `[crawl] discoverer "${discoverer.name}" failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[crawl] discoverer "${discoverer.name}" bootstrap failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
+}
+
+/**
+ * Page-phase: invoked AFTER the first navigation + settle. Each discoverer's
+ * optional `discoverFromPage(ctx)` is called with the live Playwright page
+ * folded into the context. Discoverers that don't implement `discoverFromPage`
+ * are skipped. New seeds are appended to the same priority frontier, deduped
+ * by normalised route against `enqueuedRoutes` so a viewId already known from
+ * the bootstrap pass doesn't get a duplicate entry.
+ */
+export async function runProfilePageDiscovery(
+  page: unknown,
+  startUrl: string,
+  profile: WebappProfileLike | undefined,
+  queue: PriorityQueue,
+  enqueuedRoutes: Set<string>,
+): Promise<void> {
+  const discoverers = profile?.discoverers;
+  if (!discoverers || discoverers.length === 0) return;
+  let host = '';
+  let origin = '';
+  try {
+    const u = new URL(startUrl);
+    host = u.host;
+    origin = u.origin;
+  } catch {
+    return;
+  }
+  const ctx = {
+    host,
+    origin,
+    startUrl,
+    networkLogPaths: [] as readonly string[],
+    page,
+  };
+  for (const discoverer of discoverers) {
+    const fn = (
+      discoverer as {
+        discoverFromPage?: (ctx: unknown) => Promise<unknown>;
+      }
+    ).discoverFromPage;
+    if (typeof fn !== 'function') continue;
+    try {
+      const result = (await fn.call(discoverer, ctx)) as ReadonlyArray<unknown>;
+      const seeds = sortSeedsByConfidence(
+        result as ReadonlyArray<{ url: string; confidence?: unknown }>,
+      );
+      enqueueAndLog(discoverer.name, seeds, queue, enqueuedRoutes, profile?.name, 'page-sidebar');
+    } catch (err) {
+      console.log(
+        `[crawl] discoverer "${discoverer.name}" page-phase failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+}
+
+/**
+ * Resolve the bootstrap callable for a discoverer: prefer the new
+ * `discoverFromBootstrap`, fall back to the legacy `discover`. Returns an
+ * empty array when neither is implemented so missing methods don't throw.
+ */
+function invokeBootstrap(
+  discoverer: unknown,
+  ctx: unknown,
+): Promise<ReadonlyArray<{ url: string; confidence?: unknown }>> {
+  const d = discoverer as {
+    discoverFromBootstrap?: (ctx: unknown) => Promise<unknown>;
+    discover?: (ctx: unknown) => Promise<unknown>;
+  };
+  if (typeof d.discoverFromBootstrap === 'function') {
+    return d.discoverFromBootstrap(ctx) as Promise<
+      ReadonlyArray<{ url: string; confidence?: unknown }>
+    >;
+  }
+  if (typeof d.discover === 'function') {
+    return d.discover(ctx) as Promise<ReadonlyArray<{ url: string; confidence?: unknown }>>;
+  }
+  return Promise.resolve([]);
+}
+
+/**
+ * Shared enqueue + log routine for both phases. Pushes each seed onto the
+ * priority queue (deduped by normalised route), tallies per-tier counts, and
+ * emits the `enqueued N new route(s): strict=… inferred=… fallback=…` line.
+ */
+function enqueueAndLog(
+  discovererName: string,
+  seeds: ReadonlyArray<{ url: string; confidence?: unknown }>,
+  queue: PriorityQueue,
+  enqueuedRoutes: Set<string>,
+  profileName: string | undefined,
+  phase: 'bootstrap' | 'page-sidebar',
+): void {
+  const perTier: Record<SeedConfidence, number> = { strict: 0, inferred: 0, fallback: 0 };
+  let added = 0;
+  for (const seed of seeds) {
+    const key = normalizeRouteUrl(seed.url);
+    if (enqueuedRoutes.has(key)) continue;
+    enqueuedRoutes.add(key);
+    const tier = readConfidenceTier(seed);
+    queue.push({
+      url: seed.url,
+      depth: 0,
+      viaEdge: null,
+      priority: priorityForSeedConfidence(tier),
+    });
+    perTier[tier]++;
+    added++;
+  }
+  console.log(
+    `[crawl] discoverer "${discovererName}" [${phase}] enqueued ${added} new route(s): strict=${perTier.strict}, inferred=${perTier.inferred}, fallback=${perTier.fallback} (profile=${profileName ?? 'default'})`,
+  );
 }

@@ -20,6 +20,9 @@ export function SpacesSidebar() {
   const listMatch = pathname.match(/\/v\/l\/([^/]+)/);
   const activeListId = listMatch?.[1] ?? null;
 
+  const spaceMatch = pathname.match(/\/space\/([^/]+)/);
+  const activeSpaceId = spaceMatch?.[1] ?? null;
+
   // Navigate to a list's FIRST templated view (registry-driven), mirroring
   // HomeSidebar.openList exactly. Default first view is List → /v/l/<listId>.
   const openList = (listId: string) => {
@@ -42,6 +45,7 @@ export function SpacesSidebar() {
       <nav style={{ flex: 1, overflowY: 'auto', padding: '8px 4px 12px' }}>
         <SpacesTree
           activeListId={activeListId}
+          activeSpaceId={activeSpaceId}
           onOpen={openList}
           onOpenSpace={openSpace}
           onOpenFolder={openFolder}

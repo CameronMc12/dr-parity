@@ -1,0 +1,67 @@
+# Tempo (app.withtempo.ai) crawler blocklist
+# One phrase per line. Matched against link/button text and URLs.
+# Goal: never trigger logout, deletion, billing, or destructive AI dispatch
+# during the authenticated full-app sweep.
+
+# --- session / auth ---
+log out
+logout
+sign out
+/api/v1/user/auth/logout
+auth/logout
+
+# --- destructive: brands / projects / assets ---
+delete brand
+delete project
+delete account
+delete workspace
+delete library
+remove brand
+reset onboarding
+purge
+clear-images
+clear all
+
+# --- integrations: never disconnect/revoke live connections ---
+disconnect
+revoke
+uninstall
+klaviyo/oauth/disconnect
+
+# --- billing / payments ---
+cancel subscription
+manage subscription
+billing-portal
+billing portal
+upgrade plan
+buy credits
+checkout
+confirm payment
+
+# --- expensive / side-effecting AI dispatch ---
+trigger-scrape
+trigger-onboarding
+run-research
+generate-video
+animate-video
+regenerate
+dispatch
+send email
+send test
+publish
+submit-for-review
+
+# --- CRITICAL: publishing to Meta / approval / go-live (NEVER click) ---
+# Publishing pushes ads live to Meta. These must never be triggered by the crawl.
+prepare-for-publish
+Publish
+publish to meta
+Approve
+Approve all
+approve
+Confirm
+Confirm & Publish
+Schedule
+Go live
+/api/v1/publishing
+/approve

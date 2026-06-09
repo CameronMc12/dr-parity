@@ -51,8 +51,9 @@ const WORKSPACE_ID = '90152566819';
 
 const LIGHT_TEXT = 'var(--cu-text-primary)';
 const MUTED_TEXT = 'var(--cu-text-muted)';
-const HOVER_BG   = 'var(--cu-bg-hover)';
-const ACTIVE_BG  = 'var(--cu-bg-active)'; // oracle-sampled selected-row bg
+// Figma: translucent-white hover/active tints over the #191919 sidebar.
+const HOVER_BG   = 'rgba(255,255,255,0.06)';
+const ACTIVE_BG  = 'rgba(255,255,255,0.08)';
 
 /**
  * Disclosure chevron. Matches the oracle resting state: a right-pointing chevron
@@ -108,7 +109,7 @@ const SidebarItemButton = forwardRef<
         minHeight: 30,
         background: active ? ACTIVE_BG : 'transparent',
         border: 'none',
-        borderRadius: 6,
+        borderRadius: 8,
         cursor: 'pointer',
         color: active ? LIGHT_TEXT : MUTED_TEXT,
         fontSize: 13,
@@ -186,7 +187,7 @@ function CustomizeSidebarFooter() {
           height: 32,
           background: hover ? 'var(--cu-bg-strong)' : 'var(--cu-bg-hover)',
           border: 'none',
-          borderRadius: 6,
+          borderRadius: 8,
           cursor: 'pointer',
           color: 'var(--cu-text-secondary)',
           fontSize: 13,
@@ -371,6 +372,43 @@ function DocIcon() {
       }}
     >
       <Cu3Icon id="cu3-icon-v4IaSidebarDocsFilled" size={11} />
+    </span>
+  );
+}
+
+// Circular person avatar with an optional green online dot (bottom-right),
+// used for Direct Messages rows.
+function DmAvatar({ online }: { online?: boolean }) {
+  return (
+    <span style={{ position: 'relative', width: 18, height: 18, display: 'inline-flex', flexShrink: 0 }}>
+      <span
+        style={{
+          width: 18,
+          height: 18,
+          borderRadius: 9999,
+          background: 'rgb(80,80,80)',
+          color: 'white',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Cu3Icon id="cu3-icon-user" size={11} />
+      </span>
+      {online && (
+        <span
+          style={{
+            position: 'absolute',
+            bottom: -1,
+            right: -1,
+            width: 7,
+            height: 7,
+            borderRadius: 9999,
+            background: 'rgb(34,197,94)',
+            border: '1.5px solid var(--cu-bg-sidebar)',
+          }}
+        />
+      )}
     </span>
   );
 }
@@ -704,12 +742,11 @@ export function HomeSidebar() {
 
         <Divider small />
 
-        {/* Channels */}
+        {/* Channels — collapsible header with a "›" chevron, no rows in the design */}
         <CollapsibleHeader
           label="Channels"
           expanded={channelsOpen}
           onToggle={() => setChannelsOpen((v) => !v)}
-          hideArrow
           right={
             <SectionMenuButton label="Add channel" icon={<PlusGlyph />}>
               <MenuItem
@@ -737,33 +774,33 @@ export function HomeSidebar() {
           label="Direct Messages"
           expanded={dmOpen}
           onToggle={() => setDmOpen((v) => !v)}
-          labelColor={LIGHT_TEXT}
+          labelColor="var(--cu-text-muted)"
           right={
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span
-                style={{
-                  minWidth: 16,
-                  height: 16,
-                  borderRadius: 9999,
-                  background: 'rgb(210,30,36)',
-                  color: 'white',
-                  fontSize: 10,
-                  fontWeight: 700,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: '0 3px',
-                  flexShrink: 0,
-                }}
-              >
-                2
-              </span>
-              <SectionMenuButton label="Direct Messages options" icon={<PlusGlyph />}>
-                <DirectMessagesMenu />
-              </SectionMenuButton>
-            </span>
+            <SectionMenuButton label="Direct Messages options" icon={<PlusGlyph />}>
+              <DirectMessagesMenu />
+            </SectionMenuButton>
           }
         />
+        {dmOpen && (
+          <>
+            <SidebarItem
+              icon={<DmAvatar online />}
+              label="Onboarding Assistant"
+            />
+            <SidebarItem
+              icon={<DmAvatar online />}
+              label="Cameron Mc"
+              rightContent={
+                <span style={{ fontSize: 13, color: MUTED_TEXT, flexShrink: 0 }}>— You</span>
+              }
+            />
+            <SidebarItem
+              icon={<Cu3Icon id="cu3-icon-addSmall" size={16} />}
+              label="New message"
+              onClick={() => router.push(`/${wsId}/chat`)}
+            />
+          </>
+        )}
 
         <Divider small />
 
@@ -794,7 +831,7 @@ export function HomeSidebar() {
             />
             <SidebarItem
               icon={
-                <span style={{ width: 18, height: 18, borderRadius: 4, background: 'rgb(42,113,225)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' }}>
+                <span style={{ width: 20, height: 20, borderRadius: 5, background: 'rgb(42,113,225)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' }}>
                   <Cu3Icon id="cu3-icon-user" size={11} />
                 </span>
               }
@@ -802,7 +839,7 @@ export function HomeSidebar() {
             />
             <SidebarItem
               icon={
-                <span style={{ width: 18, height: 18, borderRadius: 4, background: 'rgb(44,169,88)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' }}>
+                <span style={{ width: 20, height: 20, borderRadius: 5, background: 'rgb(44,169,88)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' }}>
                   <Cu3Icon id="cu3-icon-user" size={11} />
                 </span>
               }

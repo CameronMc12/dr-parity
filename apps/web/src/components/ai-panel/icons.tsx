@@ -150,3 +150,43 @@ export function StuckTileIcon({ size = 22 }: { size?: number }) {
     </svg>
   );
 }
+
+/** Tiny space glyph used inside the composer's knowledge-scope chip. */
+export function SpaceIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4" y="4" width="16" height="16" rx="4" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M9 9h6v6H9z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/**
+ * Rainbow gradient "Max" orb. Used for the model-selector pill and as the
+ * background art of the send button. Solid filled disc with the ClickUp-Brain
+ * pink→orange→blue sweep so it reads as a colourful AI mark.
+ */
+export function MaxOrbIcon({ size = 16 }: { size?: number }) {
+  const gid = `cu-ai-orb-${size}`;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <defs>
+        <radialGradient id={gid} cx="0.32" cy="0.28" r="0.85">
+          <stop offset="0" stopColor="#ff7ad9" />
+          <stop offset="0.45" stopColor="#ff7a45" />
+          <stop offset="1" stopColor="#3e63dd" />
+        </radialGradient>
+      </defs>
+      <circle cx="12" cy="12" r="10" fill={`url(#${gid})`} />
+    </svg>
+  );
+}
+
+/** Send glyph (arrow up) used on the gradient send orb. White on gradient. */
+export function SendArrowIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 19V6M6 11l6-6 6 6" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

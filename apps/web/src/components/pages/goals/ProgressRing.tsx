@@ -1,11 +1,12 @@
 /**
  * Goal-card circular progress ring, sampled 1:1 from the captured oracle:
- *   viewBox 0 0 60 60, r=24, 6px stroke, track #e7e8ea, progress #595d66,
- *   round line cap, a small head dot, and centered "<n>%" text (#595d66).
+ *   viewBox 0 0 60 60, r=24, 6px stroke, round line cap, a small head dot, and
+ *   centered "<n>%" text. Track + progress map to design tokens so the ring
+ *   stays visible in dark mode (track = subtle border, progress = neutral text).
  */
 
-const TRACK = '#e7e8ea';
-const PROGRESS = '#595d66';
+const TRACK = 'var(--cu-border)';
+const PROGRESS = 'var(--cu-text-secondary)';
 const RADIUS = 24;
 const CENTER = 30;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;

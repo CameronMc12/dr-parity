@@ -1,0 +1,79 @@
+# ClickUp (app.clickup.com) crawler blocklist
+# One phrase per line. Matched against link/button text and URLs.
+# Used via: tsx scripts/crawl-webapp.ts <url> --blocklist=docs/blocklists/clickup.txt
+# Defaults already cover delete/logout/payment-funnel — see engine/targets/webapp/crawler/blocklist.ts
+#
+# Goal: capture all the project VIEWS (list/board/calendar/gantt/table/timeline/doc)
+# and their tabs without ever triggering logout, deletion, billing, or integration revoke.
+# NOTE: we deliberately DO NOT block "schedule", "publish", "export", "share",
+# "calendar", "board" — those are view names / legitimate UI we want to capture.
+
+# --- telemetry / analytics hosts (grounded in 2026-05-26 crawl traffic) ---
+api.segment.io
+cdn.segment.com
+fast.chameleon.io
+sdk.split.io
+auth.split.io
+events.split.io
+telemetry.split.io
+streaming.split.io
+www.googletagmanager.com
+sdk.canny.io
+
+# --- session / auth ---
+log out
+logout
+sign out
+/logout
+auth/logout
+
+# --- destructive: spaces / folders / lists / workspace ---
+delete space
+delete folder
+delete list
+delete view
+delete task
+delete workspace
+delete everything
+remove space
+remove folder
+remove list
+remove from space
+archive space
+archive folder
+archive list
+archive
+trash
+move to trash
+empty trash
+
+# --- billing / subscription ---
+cancel subscription
+manage subscription
+manage plan
+upgrade plan
+downgrade plan
+change plan
+billing
+add payment method
+buy now
+upgrade now
+start trial
+
+# --- integrations: never disconnect / revoke live connections ---
+disconnect
+revoke
+revoke access
+uninstall
+remove integration
+disconnect integration
+revoke token
+
+# --- workspace / member admin destructive ---
+remove member
+remove guest
+deactivate
+delete account
+close account
+leave workspace
+transfer ownership

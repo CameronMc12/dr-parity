@@ -354,7 +354,7 @@ function PopularWikisCard() {
         padding: '26px 18px 22px',
         border: `1px solid ${BORDER}`,
         borderRadius: 12,
-        background: '#fff',
+        background: 'var(--cu-bg-menu, #fff)',
         overflow: 'hidden',
       }}
     >
@@ -376,7 +376,7 @@ const dotStyle: React.CSSProperties = {
   width: 22,
   height: 22,
   borderRadius: '50%',
-  background: 'rgb(238,238,238)',
+  background: 'var(--cu-bg-hover, rgb(238,238,238))',
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',

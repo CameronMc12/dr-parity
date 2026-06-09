@@ -143,11 +143,88 @@ export type CrawlOptions = {
    */
   bypassServiceWorker?: boolean;
   /**
+   * Additive, opt-in. When true, the persistent Chrome profile launches
+   * headless. Absent / false => the profile launches headed (the prior default),
+   * so behaviour is unchanged unless this flag is explicitly set.
+   */
+  headless?: boolean;
+  /**
+   * Additive, opt-in. Overrides the per-route interaction budget (max clicks /
+   * right-clicks the crawler spends inside a single route before moving on).
+   * Absent => the built-in default is used, so behaviour is identical to before
+   * this field existed. Higher values yield deeper per-route coverage (more
+   * modal/overlay states) at the cost of more time + states per route.
+   */
+  routeBudget?: number;
+  /**
+   * Additive, opt-in. Extra settle delay (ms) applied AFTER the existing
+   * load/idle/steady-state wait but BEFORE each route's base DOM snapshot.
+   * Gives data-driven views (ClickUp task grids: List/Table/Board) time for the
+   * backend rows to render into the DOM before capture. Absent / 0 => behaviour
+   * is byte-identical to before this field existed (no extra wait).
+   */
+  settleMs?: number;
+  /**
+   * Additive, opt-in. When true, a bounded scroll pass runs BEFORE each route's
+   * base DOM snapshot to trigger lazy/virtualized row rendering and lazy images
+   * (then scrolls back to the top). Absent / false => no pre-capture scroll, so
+   * behaviour is byte-identical to before this field existed.
+   */
+  scrollCapture?: boolean;
+  /**
    * Additive, opt-in. App profile that may supply route discoverers run once
    * at crawler init. Absent / empty discoverers => behaviour is byte-identical
    * to before profiles existed (the DOM-only frontier).
    */
   profile?: WebappProfileLike;
+  /**
+   * Additive, opt-in. L5 keyboard harness (command center Cmd/Ctrl+K, slash
+   * menu, curated safe hotkey sweep). Default ON in exhaustive mode; set false
+   * to disable. Runs AFTER click / right-click discovery per route.
+   */
+  keyboardHarness?: boolean;
+  /**
+   * Additive, opt-in. Drag-and-drop harness — a few representative reversible
+   * drags when a dnd-kit / react-beautiful-dnd / native-draggable signature is
+   * present. Default ON in exhaustive mode; set false to disable.
+   */
+  dndHarness?: boolean;
+  /**
+   * Additive, opt-in. L4 hover-as-state harness (tooltips / popovers triggered
+   * by hover). Default ON in exhaustive mode; set false to disable.
+   */
+  hoverHarness?: boolean;
+  /**
+   * Additive, opt-in. Inter-interaction delay (ms) for the extended harnesses to
+   * stay under rate limits. Absent => env DRPARITY_INTERACTION_DELAY_MS, then a
+   * 400-800ms jittered default.
+   */
+  interactionDelayMs?: number;
+  /**
+   * Additive, opt-in (FOCUSED-CRAWL). When true, the profile route-discoverers
+   * (bootstrap-corpus + page-phase sidebar expander) are NOT run, so the frontier
+   * starts with ONLY the start URL plus whatever the in-page interaction harnesses
+   * surface. Use this to keep a smoke/focus run ON the start route instead of
+   * flooding it with stale corpus seeds. Absent / false => discoverers run as
+   * before (full-crawl behaviour unchanged).
+   */
+  noDiscoverers?: boolean;
+  /**
+   * Additive, opt-in (FOCUSED-CRAWL). When set, any route the crawler would
+   * enqueue whose normalised URL does NOT start with this prefix is dropped. This
+   * confines navigation to a sub-tree (e.g. a single List view) so DnD / hover /
+   * keyboard harnesses get exercised instead of the crawl wandering off. Absent
+   * => no scoping (behaviour unchanged). The start URL is always allowed.
+   */
+  scopePrefix?: string;
+  /**
+   * Additive, opt-in (FOCUSED-CRAWL). When true, `sanityReset(page)` runs once
+   * right after the first authenticated nav + settle, returning the UI to a
+   * pristine default baseline (no chat/home panel leak, no stray overlays)
+   * BEFORE store discovery and the first capture. Absent / false => behaviour
+   * is byte-identical to before this field existed (no reset).
+   */
+  sanityReset?: boolean;
 };
 
 /**

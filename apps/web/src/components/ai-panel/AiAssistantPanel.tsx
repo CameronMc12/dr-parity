@@ -27,9 +27,11 @@ import {
   FlowerBrandIcon,
   GlobeIcon,
   HistoryIcon,
+  MaxOrbIcon,
   PencilNewIcon,
   PlusIcon,
-  SendIcon,
+  SendArrowIcon,
+  SpaceIcon,
   StuckTileIcon,
   SummaryTileIcon,
   UpdateTileIcon,
@@ -63,7 +65,18 @@ const {
   SEND_DISABLED,
 } = panelTokens;
 
-const PANEL_WIDTH = 360;
+// Figma-spec literals (the panel is a 1:1 emulation of ClickUp's Max panel and
+// these exact values are part of the reference, not theme-driven).
+const PANEL_WIDTH = 418;
+const CARD_BG = '#1e2024';
+const CARD_BORDER = '#2a2a2a';
+const CARD_BORDER_HOVER = '#3a3a3a';
+const ROW_HOVER = 'rgba(255,255,255,0.07)';
+const BADGE_BG = '#5842c8';
+const BADGE_FG = '#cfc7ff';
+const DIVIDER = '#3a3a3a';
+const GLOW_BLUE = '#3e63dd';
+const GLOW_ORANGE = '#f76808';
 
 interface ChatMessage {
   id: string;
@@ -85,40 +98,40 @@ const FEATURES: Feature[] = [
     key: 'executive-summary',
     title: 'Executive Summary',
     description: 'Choose from 25+ reporting tools.',
-    tint: 'rgba(78,205,196,0.16)',
-    fg: '#19a89c',
+    tint: 'rgba(62,99,221,0.18)',
+    fg: '#6f93ff',
     Icon: SummaryTileIcon,
   },
   {
     key: 'project-update',
     title: 'Project Update',
     description: 'Time-based project status update.',
-    tint: 'rgba(63,140,255,0.16)',
-    fg: '#3f8cff',
+    tint: 'rgba(255,255,255,0.06)',
+    fg: '#c4c4c4',
     Icon: UpdateTileIcon,
   },
   {
     key: 'find-duplicate-tasks',
     title: 'Find duplicate tasks',
     description: 'Identify and merge duplicate tasks hassle-free.',
-    tint: 'rgba(255,122,69,0.18)',
-    fg: '#e8662a',
+    tint: 'rgba(56,178,118,0.18)',
+    fg: '#4cc38a',
     Icon: DuplicateTileIcon,
   },
   {
     key: 'find-tasks-stuck',
     title: 'Find tasks that are stuck',
     description: 'Quickly locate and resolve stagnant tasks.',
-    tint: 'rgba(245,195,68,0.22)',
-    fg: '#caa01a',
+    tint: 'rgba(247,104,8,0.20)',
+    fg: '#f79009',
     Icon: StuckTileIcon,
   },
 ];
 
 const STATIC_SUGGESTIONS = [
-  'Are there any overdue tasks?',
-  'Which open tasks have the highest priority?',
-  'What is assigned to me?',
+  'When was Task 1 created in ClickUp?',
+  'What project is Task 1 associated with in Team Space',
+  "What steps are included in the task 'Set up Your ClickUp'?",
 ];
 
 /** Build a couple of context-aware suggestions from real recent tasks. */
@@ -129,7 +142,7 @@ function useSuggestions(): string[] {
       .map((t) => t.name.trim())
       .filter(Boolean)
       .map((name) => `When was “${name}” created in ClickUp?`);
-    return [...dynamic, ...STATIC_SUGGESTIONS].slice(0, 4);
+    return [...dynamic, ...STATIC_SUGGESTIONS].slice(0, 3);
   }, [recent]);
 }
 
@@ -199,8 +212,10 @@ export function AiAssistantPanel() {
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        background: PANEL_BG,
-        borderLeft: `1px solid ${BORDER}`,
+        background: 'var(--cu-bg-app)',
+        border: '1px solid rgba(255,255,255,0.04)',
+        borderRadius: '6px',
+        marginLeft: '6px',
         fontFamily: 'var(--cu-font, -apple-system, "Segoe UI", Roboto, sans-serif)',
         color: TEXT_PRIMARY,
         overflow: 'hidden',
@@ -244,8 +259,8 @@ function PanelHeaderBar({
         display: 'flex',
         alignItems: 'center',
         gap: 4,
-        height: 44,
-        padding: '0 6px 0 8px',
+        height: 48,
+        padding: '0 16px',
         borderBottom: `1px solid ${BORDER}`,
         flexShrink: 0,
       }}
@@ -258,26 +273,32 @@ function PanelHeaderBar({
       </IconButton>
 
       <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
-        <span
+        <button
+          type="button"
           id={titleId}
+          aria-label="Select model: Max"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: 6,
             height: 28,
             padding: '0 10px',
-            borderRadius: 7,
-            border: `1px solid ${BORDER}`,
-            fontSize: 13,
-            fontWeight: 600,
+            borderRadius: 8,
+            border: 'none',
+            background: 'transparent',
+            color: TEXT_PRIMARY,
+            fontSize: 14,
+            fontWeight: 500,
+            fontFamily: 'inherit',
+            cursor: 'pointer',
           }}
         >
-          <FlowerBrandIcon size={15} />
+          <MaxOrbIcon size={16} />
           Max
           <span style={{ display: 'flex', color: TEXT_MUTED }}>
             <ChevronDownIcon size={12} />
           </span>
-        </span>
+        </button>
       </div>
 
       <IconButton label="More options">
@@ -338,19 +359,25 @@ function WelcomeBody({
   suggestions: string[];
   onSuggest: (text: string) => void;
 }) {
-  const [showAll, setShowAll] = useState(false);
-  const visible = showAll ? suggestions : suggestions.slice(0, 3);
-  const askLabel = scope ? `Ask about ${scope}` : 'Ask about your workspace';
+  const askLabel = scope ? `Ask about ${scope}` : 'Ask about your Space';
+  const rows = [...suggestions, 'Show more'];
 
   return (
-    <div style={{ padding: '16px 14px 8px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div style={{ padding: '16px 16px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Brain greeting */}
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
-          <FlowerBrandIcon size={17} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <FlowerBrandIcon size={20} />
           <span style={{ fontSize: 14, fontWeight: 600 }}>Brain</span>
         </div>
-        <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.5, color: TEXT_PRIMARY }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: 14,
+            lineHeight: '21px',
+            color: 'rgba(255,255,255,0.93)',
+          }}
+        >
           {greetingFor(scope)}
         </p>
       </div>
@@ -359,37 +386,16 @@ function WelcomeBody({
       <section>
         <SectionHeader>{askLabel}</SectionHeader>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {visible.map((q) => (
+          {rows.map((q) => (
             <SuggestionRow key={q} text={q} onClick={() => onSuggest(q)} />
           ))}
-          {!showAll && suggestions.length > 3 && (
-            <button
-              type="button"
-              onClick={() => setShowAll(true)}
-              style={{
-                alignSelf: 'flex-start',
-                marginTop: 2,
-                padding: '6px 8px',
-                background: 'transparent',
-                border: 'none',
-                color: TEXT_MUTED,
-                fontSize: 13,
-                fontWeight: 500,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                borderRadius: 6,
-              }}
-            >
-              Show more
-            </button>
-          )}
         </div>
       </section>
 
       {/* Features */}
       <section>
         <SectionHeader>Features</SectionHeader>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {FEATURES.map((f) => (
             <FeatureCard key={f.key} feature={f} onClick={() => onSuggest(f.title)} />
           ))}
@@ -403,11 +409,13 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
+        display: 'flex',
+        alignItems: 'center',
+        height: 30,
         fontSize: 12,
-        fontWeight: 600,
-        color: TEXT_MUTED,
-        padding: '0 2px 8px',
-        textTransform: 'none',
+        fontWeight: 500,
+        color: '#7b7b7b',
+        paddingLeft: 8,
       }}
     >
       {children}
@@ -426,23 +434,33 @@ function SuggestionRow({ text, onClick }: { text: string; onClick: () => void })
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
+        gap: 8,
         width: '100%',
+        height: 28,
         textAlign: 'left',
-        padding: '8px',
-        background: hover ? HOVER_BG : 'transparent',
+        padding: '0 8px',
+        background: hover ? ROW_HOVER : 'transparent',
         border: 'none',
-        borderRadius: 7,
+        borderRadius: 4,
         cursor: 'pointer',
         fontFamily: 'inherit',
-        color: TEXT_PRIMARY,
+        color: 'rgba(255,255,255,0.93)',
         transition: 'background 120ms ease',
       }}
     >
-      <span style={{ display: 'flex', color: TEXT_FAINT, flexShrink: 0 }}>
-        <ArrowRightIcon size={15} />
+      <span style={{ display: 'flex', color: '#7b7b7b', flexShrink: 0 }}>
+        <ArrowRightIcon size={14} />
       </span>
-      <span style={{ fontSize: 13, lineHeight: 1.35 }}>{text}</span>
+      <span
+        style={{
+          fontSize: 14,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {text}
+      </span>
     </button>
   );
 }
@@ -459,23 +477,23 @@ function FeatureCard({ feature, onClick }: { feature: Feature; onClick: () => vo
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 11,
+        gap: 12,
         width: '100%',
         textAlign: 'left',
-        padding: '9px 8px',
-        background: hover ? HOVER_BG : 'transparent',
-        border: 'none',
+        padding: 12,
+        background: CARD_BG,
+        border: `1px solid ${hover ? CARD_BORDER_HOVER : CARD_BORDER}`,
         borderRadius: 8,
         cursor: 'pointer',
         fontFamily: 'inherit',
-        transition: 'background 120ms ease',
+        transition: 'border-color 120ms ease',
       }}
     >
       <span
         style={{
-          width: 38,
-          height: 38,
-          borderRadius: 9,
+          width: 40,
+          height: 40,
+          borderRadius: 10,
           background: tint,
           color: fg,
           display: 'inline-flex',
@@ -488,39 +506,46 @@ function FeatureCard({ feature, onClick }: { feature: Feature; onClick: () => vo
       </span>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: TEXT_PRIMARY }}>{title}</span>
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: 0.2,
-              padding: '1px 6px',
-              borderRadius: 999,
-              background: INPUT_BG,
-              color: TEXT_MUTED,
-            }}
-          >
-            New
-          </span>
+          <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>{title}</span>
+          <NewBadge />
         </span>
         <span
           style={{
             display: 'block',
-            fontSize: 12,
-            color: TEXT_MUTED,
-            marginTop: 2,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
+            fontSize: 13,
+            lineHeight: '17px',
+            color: '#b4b4b4',
+            marginTop: 3,
           }}
         >
           {description}
         </span>
       </span>
-      <span style={{ display: 'flex', color: TEXT_FAINT, flexShrink: 0 }}>
+      <span style={{ display: 'flex', color: '#7b7b7b', flexShrink: 0 }}>
         <ChevronRightIcon size={16} />
       </span>
     </button>
+  );
+}
+
+function NewBadge() {
+  return (
+    <span
+      style={{
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: 0.4,
+        textTransform: 'uppercase',
+        lineHeight: 1,
+        padding: '2px 6px',
+        borderRadius: 999,
+        background: BADGE_BG,
+        color: BADGE_FG,
+        flexShrink: 0,
+      }}
+    >
+      New
+    </span>
   );
 }
 
@@ -581,106 +606,165 @@ function Composer({
         e.preventDefault();
         onSend();
       }}
-      style={{ padding: '10px 12px 12px', borderTop: `1px solid ${BORDER}`, flexShrink: 0 }}
+      style={{ padding: '12px 16px 16px', flexShrink: 0 }}
     >
+      <style>{COMPOSER_GLOW_CSS}</style>
+      {/* Glow wrapper: animated blue→orange gradient border around the box. */}
       <div
+        className="cu-ai-composer-glow"
         style={{
-          border: `1px solid ${BORDER}`,
-          borderRadius: 12,
-          background: SURFACE,
-          padding: '8px 8px 6px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 6,
+          borderRadius: 10,
+          padding: 2,
+          background: `linear-gradient(120deg, ${GLOW_BLUE}, ${GLOW_ORANGE}, ${GLOW_BLUE})`,
+          backgroundSize: '200% 200%',
         }}
       >
-        <input
-          ref={inputRef}
-          value={input}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Tell AI what to do next"
-          aria-label="Message Max"
+        <div
           style={{
-            width: '100%',
-            border: 'none',
-            outline: 'none',
-            background: 'transparent',
-            fontSize: 13.5,
-            color: TEXT_PRIMARY,
-            fontFamily: 'inherit',
-            padding: '2px 4px',
+            borderRadius: 8,
+            background: 'var(--cu-bg-sidebar)',
+            padding: '12px 16px 10px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
           }}
-        />
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <ComposerIconButton label="Add context">
-            <PlusIcon size={16} />
-          </ComposerIconButton>
-          <ComposerIconButton label="Search the web">
-            <GlobeIcon size={16} />
-          </ComposerIconButton>
-
-          <span style={{ flex: 1 }} />
-
-          <button
-            type="button"
+        >
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="Tell AI what to do next"
+            aria-label="Message Max"
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 5,
-              maxWidth: 150,
-              height: 26,
-              padding: '0 8px',
-              borderRadius: 7,
-              border: `1px solid ${BORDER}`,
-              background: INPUT_BG,
+              width: '100%',
+              border: 'none',
+              outline: 'none',
+              background: 'transparent',
+              fontSize: 14,
               color: TEXT_PRIMARY,
-              fontSize: 12,
-              fontWeight: 500,
               fontFamily: 'inherit',
-              cursor: 'pointer',
+              padding: '0 2px',
             }}
-          >
-            <span
+          />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              type="button"
+              aria-label="Add context"
               style={{
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
+                width: 28,
+                height: 28,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '50%',
+                border: 'none',
+                background: '#2a2a2a',
+                color: '#fff',
+                cursor: 'pointer',
+                flexShrink: 0,
               }}
             >
-              {scopeLabel}
-            </span>
-            <span style={{ display: 'flex', color: TEXT_MUTED, flexShrink: 0 }}>
-              <ChevronDownIcon size={12} />
-            </span>
-          </button>
+              <PlusIcon size={16} />
+            </button>
 
-          <button
-            type="submit"
-            aria-label="Send"
-            disabled={!canSend}
-            style={{
-              width: 28,
-              height: 28,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '50%',
-              border: 'none',
-              background: canSend ? ACCENT : SEND_DISABLED,
-              color: ON_ACCENT,
-              cursor: canSend ? 'pointer' : 'default',
-              flexShrink: 0,
-              marginLeft: 2,
-            }}
-          >
-            <SendIcon size={15} />
-          </button>
+            <span style={{ flex: 1 }} />
+
+            <ComposerIconButton label="Search the web">
+              <GlobeIcon size={16} />
+            </ComposerIconButton>
+
+            <span
+              aria-hidden="true"
+              style={{ width: 1, height: 16, background: DIVIDER, flexShrink: 0, margin: '0 2px' }}
+            />
+
+            <button
+              type="button"
+              aria-label={`Knowledge scope: ${scopeLabel}`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                maxWidth: 145,
+                height: 26,
+                padding: '0 8px',
+                borderRadius: 6,
+                border: `1px solid ${BORDER}`,
+                background: INPUT_BG,
+                color: TEXT_PRIMARY,
+                fontSize: 12,
+                fontWeight: 500,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              <span style={{ display: 'flex', color: TEXT_MUTED, flexShrink: 0 }}>
+                <SpaceIcon size={13} />
+              </span>
+              <span
+                style={{
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {scopeLabel}
+              </span>
+              <span style={{ display: 'flex', color: TEXT_MUTED, flexShrink: 0 }}>
+                <ChevronDownIcon size={12} />
+              </span>
+            </button>
+
+            <button
+              type="submit"
+              aria-label="Send"
+              disabled={!canSend}
+              style={{
+                position: 'relative',
+                width: 28,
+                height: 28,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '50%',
+                border: 'none',
+                overflow: 'hidden',
+                padding: 0,
+                background: 'transparent',
+                cursor: canSend ? 'pointer' : 'default',
+                opacity: canSend ? 1 : 0.45,
+                flexShrink: 0,
+                marginLeft: 2,
+              }}
+            >
+              <span style={{ position: 'absolute', inset: 0, display: 'flex' }}>
+                <MaxOrbIcon size={28} />
+              </span>
+              <span style={{ position: 'relative', display: 'flex' }}>
+                <SendArrowIcon size={15} />
+              </span>
+            </button>
+          </div>
         </div>
       </div>
     </form>
   );
 }
+
+const COMPOSER_GLOW_CSS = `
+@keyframes cu-ai-composer-sweep {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.cu-ai-composer-glow {
+  animation: cu-ai-composer-sweep 6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cu-ai-composer-glow { animation: none; }
+}
+`;
 
 function ComposerIconButton({
   label,

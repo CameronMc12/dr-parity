@@ -14,6 +14,7 @@ export * from './route-recapture';
 export * from './click-ledger';
 export * from './chrome-warmup';
 export * from './overlay-settle';
+export * from './sanity-reset';
 export * from './aria-snapshot';
 export * from './canonical-key';
 export * from './indexeddb-capture';

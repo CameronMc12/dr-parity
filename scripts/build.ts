@@ -51,6 +51,7 @@ interface ParsedArgs {
 
 const HELP = `Usage:
   tsx scripts/build.ts <clone-dir> --target=<astro|react|webapp> [options]     # single-page
+  tsx scripts/build.ts --target=webapp --crawl-dir=<path> --out=<dir>          # crawl-only (webapp)
   tsx scripts/build.ts --target=<astro|react> --clone-dir=<path>:<pathname> \\  # multi-page
                        --clone-dir=<path2>:<pathname2> --out-dir=<dir>
 
@@ -74,7 +75,10 @@ Options:
   --crawl-dir=<path>    Path to a crawler output directory (graph.json plus
                         per-state DOM snapshots). Consumed by the webapp
                         target only; ignored by astro and react. Lands on
-                        TargetBuildOptions.crawlDir.
+                        TargetBuildOptions.crawlDir. When supplied to
+                        --target=webapp WITHOUT a clone-dir, the build derives
+                        its document head + documentUrl from the crawl's
+                        root-state DOM and graph.json (--out is required).
   --force               Overwrite the output directory if it already exists.
   --help                Show this help text.
 
@@ -277,6 +281,97 @@ function printMultiSummary(target: TargetName, summary: TargetMultiBuildSummary)
   console.log(`Assets copied: ${summary.assetCount} files (${formatBytes(summary.assetBytes)})`);
 }
 
+function assertValidCrawlDir(crawlDir: string): void {
+  if (!existsSync(crawlDir)) {
+    throw new Error(`Crawl directory does not exist: ${crawlDir}`);
+  }
+  if (!statSync(crawlDir).isDirectory()) {
+    throw new Error(`Crawl path is not a directory: ${crawlDir}`);
+  }
+  if (!existsSync(join(crawlDir, 'graph.json'))) {
+    throw new Error(
+      `Crawl directory missing graph.json (looked in ${crawlDir}). Run the crawl step first.`,
+    );
+  }
+}
+
+/** Derive a default project name from the crawl graph's startUrl host. */
+function deriveCrawlName(crawlDir: string): string {
+  const graphPath = join(crawlDir, 'graph.json');
+  if (existsSync(graphPath)) {
+    try {
+      const graph = JSON.parse(readFileSync(graphPath, 'utf8')) as {
+        startUrl?: string;
+        nodes?: { url?: string }[];
+      };
+      const url = graph.startUrl ?? graph.nodes?.[0]?.url ?? '';
+      if (url.length > 0) {
+        try {
+          const host = new URL(url).hostname.replace(/^www\./, '');
+          if (host.length > 0) return host.replace(/[^a-z0-9.-]/gi, '-');
+        } catch {
+          // fall through
+        }
+      }
+    } catch {
+      // fall through
+    }
+  }
+  return basename(resolve(crawlDir)) || 'webapp-site';
+}
+
+/**
+ * Crawl-only webapp build: no positional clone-dir. The webapp adapter sources
+ * its document head + documentUrl from the crawl's root-state DOM and graph.json
+ * instead of a clone index.html. `--out`/`--out-dir` is required because there
+ * is no clone-dir sibling to default a `webapp-site/` folder next to.
+ */
+async function runWebappCrawlOnly(parsed: ParsedArgs): Promise<void> {
+  const crawlDir = isAbsolute(parsed.crawlDir as string)
+    ? (parsed.crawlDir as string)
+    : resolve(parsed.crawlDir as string);
+
+  try {
+    assertValidCrawlDir(crawlDir);
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(2);
+    return;
+  }
+
+  if (!parsed.outDir) {
+    console.error('Crawl-only webapp build requires --out=<dir> (or --out-dir=<dir>).');
+    process.exit(2);
+    return;
+  }
+  const outDir = isAbsolute(parsed.outDir) ? parsed.outDir : resolve(parsed.outDir);
+
+  try {
+    assertWritableOutDir(outDir, parsed.force);
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(2);
+    return;
+  }
+
+  const name = parsed.name ?? deriveCrawlName(crawlDir);
+
+  try {
+    const adapter = await loadAdapter('webapp');
+    const buildOptions: TargetBuildOptions = {
+      outDir,
+      name,
+      force: parsed.force,
+      crawlDir,
+    };
+    const summary = await adapter.build(buildOptions);
+    printSummary('webapp', summary);
+  } catch (err) {
+    console.error(`build (webapp, crawl-only) failed: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 export async function runBuild({ argv, forcedTarget }: RunBuildArgs): Promise<void> {
   let parsed: ParsedArgs;
   try {
@@ -290,7 +385,17 @@ export async function runBuild({ argv, forcedTarget }: RunBuildArgs): Promise<vo
 
   const isMulti = parsed.multiCloneDirs.length > 0;
 
-  if (parsed.help || (parsed.cloneDir === null && !isMulti)) {
+  // Crawl-only webapp mode: --target=webapp --crawl-dir=<dir> with NO clone-dir.
+  // The webapp target derives its document head + documentUrl from the crawl's
+  // root-state DOM and graph.json, so a positional clone-dir is not required.
+  const resolvedTarget = forcedTarget ?? parsed.target;
+  const isWebappCrawlOnly =
+    resolvedTarget === 'webapp' &&
+    parsed.cloneDir === null &&
+    !isMulti &&
+    parsed.crawlDir !== null;
+
+  if (parsed.help || (parsed.cloneDir === null && !isMulti && !isWebappCrawlOnly)) {
     console.log(HELP);
     process.exit(parsed.help ? 0 : 2);
     return;
@@ -300,6 +405,11 @@ export async function runBuild({ argv, forcedTarget }: RunBuildArgs): Promise<vo
     assertValidTarget(parsed.target);
     return parsed.target;
   })();
+
+  if (isWebappCrawlOnly) {
+    await runWebappCrawlOnly(parsed);
+    return;
+  }
 
   if (isMulti) {
     if (!parsed.outDir) {

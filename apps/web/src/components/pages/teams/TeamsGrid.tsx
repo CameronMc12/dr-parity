@@ -31,7 +31,7 @@ function TeamGalleryCard({ team }: { team: TeamSeed }) {
         height: CARD.height,
         display: 'flex',
         flexDirection: 'column',
-        background: T.appBg,
+        background: T.cardBg,
         border: `1px solid ${T.border}`,
         borderRadius: CARD.radius,
         overflow: 'hidden',
@@ -40,8 +40,8 @@ function TeamGalleryCard({ team }: { team: TeamSeed }) {
         transition: 'box-shadow 120ms ease, border-color 120ms ease',
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.08)';
-        e.currentTarget.style.borderColor = 'rgba(0,0,0,0.14)';
+        e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.28)';
+        e.currentTarget.style.borderColor = 'var(--cu-border-strong)';
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.boxShadow = 'none';
@@ -89,7 +89,7 @@ function Cover({ team }: { team: TeamSeed }) {
           height: 32,
           borderRadius: 8,
           background: team.avatarBg,
-          border: `2px solid ${T.appBg}`,
+          border: `2px solid ${T.cardBg}`,
           color: '#fff',
           display: 'flex',
           alignItems: 'center',

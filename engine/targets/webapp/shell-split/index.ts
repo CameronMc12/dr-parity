@@ -51,6 +51,12 @@ export interface ShellSplitInput {
    * across the app resolves in-document. Empty string injects nothing.
    */
   spriteSvg?: string;
+  /**
+   * Captured-app hostname (e.g. `app.clickup.com`). Lets the SPA-nav interceptor
+   * treat the captured DOM's absolute production hrefs as same-origin links it
+   * governs. Empty => window-origin-only same-origin detection.
+   */
+  captureHost?: string;
 }
 
 export interface ShellSplitResult {
@@ -73,6 +79,7 @@ function pickShellSourceIndex(contentLengths: number[]): number {
 export async function emitShellSplit(input: ShellSplitInput): Promise<ShellSplitResult> {
   const { routes, getStateDom, assetMap, outDir } = input;
   const spriteSvg = input.spriteSvg ?? '';
+  const captureHost = input.captureHost ?? '';
   if (routes.length === 0) {
     throw new Error('emitShellSplit requires at least one route.');
   }
@@ -107,6 +114,7 @@ export async function emitShellSplit(input: ShellSplitInput): Promise<ShellSplit
     componentName: LAYOUT_COMPONENT_NAME,
     shellHtml,
     routes: routes.map((r) => ({ path: r.routePath })),
+    captureHost,
   });
   writeFile(join(pagesDir, `${LAYOUT_COMPONENT_NAME}.tsx`), layoutTsx);
 

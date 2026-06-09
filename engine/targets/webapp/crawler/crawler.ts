@@ -27,6 +27,8 @@ import { createRouteBudget } from './route-budget';
 import { buildSelectorForHandle } from './selector-builder';
 import { createSignatureScan, scanPage } from './signature-scan';
 import { captureState } from './state-capture';
+import { sanityReset } from './sanity-reset';
+import { discoverStores } from './state-dump';
 import { startRecorders, type Recorders } from './recorders';
 import { captureStorageState } from './storage-state';
 import { normalizeRouteUrl } from './url-normalize';
@@ -41,9 +43,17 @@ import {
   type StateNode,
   type StateSourceKind,
 } from './types';
-import { mergeProfileDiscovererSeeds } from './discovery/merge-seeds';
+import {
+  mergeProfileDiscovererSeeds,
+  runProfilePageDiscovery,
+} from './discovery/merge-seeds';
+import { createThrottle } from './interaction-throttle';
+import type { HarnessContext } from './harness-context';
+import { runKeyboardHarness } from './keyboard-harness';
+import { runDndHarness } from './dnd-harness';
+import { runHoverHarness } from './hover-harness';
 
-const ROUTE_INTERACTION_LIMIT = 60;
+const DEFAULT_ROUTE_INTERACTION_LIMIT = 60;
 
 // How many levels of in-place overlay/tab/drawer states the crawler will keep
 // exploring FROM. ClickUp-style SPAs change state without changing the URL, so
@@ -176,7 +186,7 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
   const launchArgs = ['--disable-blink-features=AutomationControlled'];
   const launchOpts: Parameters<typeof chromium.launchPersistentContext>[1] = {
     channel: 'chrome',
-    headless: false,
+    headless: opts.headless ?? false,
     viewport: opts.viewport,
     // Block the app's own service worker at the context level. ClickUp (and
     // similar PWAs) register a SW that serves assets from Cache Storage; that
@@ -241,10 +251,36 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
 
   await settle(page);
 
+  // Optional sanity reset (FOCUSED-CRAWL). Return the UI to a pristine default
+  // baseline before discovery + the first capture so a stray chat/home panel or
+  // leftover overlay never pollutes the start state. Additive: only runs when
+  // explicitly opted in; absent => no behaviour change.
+  if (opts.sanityReset) {
+    console.log('[crawl] sanity-reset: returning UI to pristine default baseline');
+    await sanityReset(page);
+    await settle(page);
+  }
+
   // Replay seed: dump cookies + localStorage + sessionStorage for the start
   // route once, after auth + settle, so the replay target can boot into the
   // authenticated state. IndexedDB is NOT captured (known replay limitation).
   await captureStorageState(context, page, opts.outDir);
+
+  // L2 runtime store discovery (additive). Locate the NGXS + React island
+  // stores ONCE after the first authenticated nav and stash handles on
+  // window.__PARITY__ so every per-state capture can cheaply re-read snapshots.
+  // Fully guarded — a discovery failure must NEVER break the crawl.
+  try {
+    const stores = await discoverStores(page);
+    console.log(
+      `[crawl] store-discover: ngxs=${stores.ngxs} react=${stores.react}` +
+        (stores.source.length ? ` via ${stores.source.join(', ')}` : ' (no stores found)'),
+    );
+  } catch (err) {
+    console.warn(
+      `[crawl] store-discover failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   const userAgent = (await page.evaluate('navigator.userAgent')) as string;
   const graph: CrawlGraph = {
@@ -266,12 +302,28 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
   // Normalised route keys already enqueued, to avoid duplicate queue entries.
   const enqueuedRoutes = new Set<string>();
   const clickLedger = createClickLedger();
-  const routeBudget = createRouteBudget(ROUTE_INTERACTION_LIMIT, (routePath, limit) => {
+  const routeInteractionLimit =
+    typeof opts.routeBudget === 'number' && opts.routeBudget > 0
+      ? opts.routeBudget
+      : DEFAULT_ROUTE_INTERACTION_LIMIT;
+  const routeBudget = createRouteBudget(routeInteractionLimit, (routePath, limit) => {
     console.log(`[crawl] route budget exhausted for ${routePath} (limit ${limit})`);
   });
   let blockedCount = 0;
   let errorCount = 0;
   let stateIndex = 0;
+
+  // Extended-harness config (L4 hover / L5 keyboard / DnD). Default ON so an
+  // exhaustive crawl exercises them; each is independently flag-disableable.
+  const keyboardHarnessOn = opts.keyboardHarness !== false;
+  const dndHarnessOn = opts.dndHarness !== false;
+  const hoverHarnessOn = opts.hoverHarness !== false;
+  const throttle = createThrottle(opts.interactionDelayMs);
+  // Non-fatal harness notes (drift caveats, skips) surfaced in the summary log.
+  const harnessNotes: string[] = [];
+  const addHarnessNote = (msg: string): void => {
+    if (harnessNotes.length < 200) harnessNotes.push(msg);
+  };
 
   const persistGraph = (): void => {
     writeFileSync(join(opts.outDir, 'graph.json'), JSON.stringify(graph, null, 2), 'utf8');
@@ -331,12 +383,43 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
   enqueuedRoutes.add(normalizeRouteUrl(opts.startUrl));
   let reachedLimit: CrawlSummary['reachedLimit'] = 'queue-empty';
 
+  // FOCUSED-CRAWL scope gate. When --scope-prefix is set, a route is only
+  // enqueued when its normalised URL starts with the prefix; the start URL is
+  // always allowed. Absent => every route is in scope (behaviour unchanged).
+  const normalisedScopePrefix = opts.scopePrefix
+    ? normalizeRouteUrl(opts.scopePrefix)
+    : undefined;
+  const startRouteKey = normalizeRouteUrl(opts.startUrl);
+  const isInScope = (url: string): boolean => {
+    if (!normalisedScopePrefix) return true;
+    const key = normalizeRouteUrl(url);
+    return key === startRouteKey || key.startsWith(normalisedScopePrefix);
+  };
+  let droppedOffScope = 0;
+
   // Profile-driven route discoverers (additive). When the resolved profile
   // exposes one or more discoverers, run them ONCE here and merge their seeds
   // into the frontier. No discoverers / empty array => bytewise-identical
   // legacy behaviour. Each discoverer is independent and any thrown error is
   // logged + swallowed, so a discoverer fault never blocks the crawl.
-  await mergeProfileDiscovererSeeds(opts.startUrl, opts.profile, queue, enqueuedRoutes);
+  //
+  // FOCUSED-CRAWL: --no-discoverers skips BOTH discovery phases so the frontier
+  // is the start URL plus whatever the in-page harnesses surface. This stops a
+  // stale bootstrap corpus from flooding the crawl off the start route.
+  if (opts.noDiscoverers) {
+    console.log('[crawl] focus: route discoverers DISABLED (--no-discoverers)');
+  } else {
+    await mergeProfileDiscovererSeeds(opts.startUrl, opts.profile, queue, enqueuedRoutes);
+
+    // Phase-2 page-time discovery (additive). After the first navigation + auth
+    // settle, run any discoverers that expose `discoverFromPage`. The sidebar
+    // tree-expander is the only consumer today; profiles without page-phase
+    // discoverers see no behaviour change.
+    await runProfilePageDiscovery(page, opts.startUrl, opts.profile, queue, enqueuedRoutes);
+  }
+  if (normalisedScopePrefix) {
+    console.log(`[crawl] focus: scope-prefix = ${normalisedScopePrefix}`);
+  }
 
   // Interaction kinds already exercised per route (#7) — used to prioritise
   // routes that still have an un-exercised interaction type.
@@ -520,6 +603,7 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
           const popupKey = normalizeRouteUrl(popupUrl);
           if (
             isSameOrigin(popupUrl, opts.startUrl) &&
+            isInScope(popupUrl) &&
             !baseCapturedRoutes.has(popupKey) &&
             !enqueuedRoutes.has(popupKey)
           ) {
@@ -542,7 +626,12 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
         markExercised(routeKey, 'navigate');
         // Route navigation. Enqueue the new route once (normalised key).
         const afterKey = normalizeRouteUrl(afterUrl);
-        if (!baseCapturedRoutes.has(afterKey) && !enqueuedRoutes.has(afterKey)) {
+        if (!isInScope(afterUrl)) droppedOffScope++;
+        if (
+          isInScope(afterUrl) &&
+          !baseCapturedRoutes.has(afterKey) &&
+          !enqueuedRoutes.has(afterKey)
+        ) {
           enqueuedRoutes.add(afterKey);
           queue.push({
             url: afterUrl,
@@ -677,6 +766,24 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
     // route-once loop guard is unaffected. Cheap enough to run per route.
     await warmUpChrome(page);
 
+    // Additive, flag-gated PRE-CAPTURE population for data-driven views (ClickUp
+    // task grids etc.) whose backend rows render AFTER the initial settle. Both
+    // passes are no-ops unless explicitly enabled, so default crawl behaviour is
+    // byte-identical to before these flags existed.
+    //
+    //   --scroll-capture : scroll the primary grid/list container to the bottom
+    //                      in bounded steps to trigger lazy/virtualized rows +
+    //                      lazy images, then scroll back to the top.
+    //   --settle-ms=<n>  : after the scroll pass (if any), wait n ms for late
+    //                      data/render to land before the base snapshot.
+    if (opts.scrollCapture) {
+      await scrollToLoad(page);
+      await waitForSteadyState(page, { quietMs: 400, timeoutMs: 6_000 }).catch(() => {});
+    }
+    if (typeof opts.settleMs === 'number' && opts.settleMs > 0) {
+      await page.waitForTimeout(opts.settleMs).catch(() => {});
+    }
+
     const base = await captureCurrent(item.depth);
     if (!base) continue;
     const node = base.node;
@@ -810,6 +917,75 @@ export async function runCrawler(opts: CrawlOptions): Promise<CrawlSummary> {
         }
       }
     }
+
+    // Extended interaction harnesses (L4 hover / L5 keyboard / DnD). Run AFTER
+    // the click + right-click passes for this route. Each is flag-gated, fully
+    // try/catch-wrapped (a failure never aborts the crawl), throttled, and goes
+    // through the SAME dedup'd capture path via `captureLabelled` so harness
+    // states share the canonical-key visited set. They never touch
+    // state-capture.ts directly.
+    const captureLabelled: HarnessContext['capture'] = async ({
+      fromNode,
+      depth,
+      interaction,
+    }) => {
+      const captured = await captureCurrent(depth, 'overlay');
+      if (!captured) return null;
+      if (captured.node.id === fromNode.id) return null;
+      graph.edges.push(makeEdge(fromNode.id, captured.node.id, interaction));
+      persistGraph();
+      return captured.node;
+    };
+
+    const harnessCtx: HarnessContext = {
+      page,
+      throttle,
+      isAtCapacity: () => Date.now() > deadline || graph.nodes.length >= opts.maxStates,
+      capture: captureLabelled,
+      restore: () => restoreToCleanBase(page.url(), settledBaseHash),
+      signatures: () => signatureScan.list(),
+      note: addHarnessNote,
+    };
+
+    if (item.depth < opts.maxDepth && !harnessCtx.isAtCapacity()) {
+      if (hoverHarnessOn) {
+        try {
+          await runHoverHarness(harnessCtx, node, item.depth);
+        } catch (err) {
+          addHarnessNote(`hover-harness aborted: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        await restoreToCleanBase(page.url(), settledBaseHash);
+      }
+      if (keyboardHarnessOn && !harnessCtx.isAtCapacity()) {
+        try {
+          await runKeyboardHarness(harnessCtx, node, item.depth);
+        } catch (err) {
+          addHarnessNote(`keyboard-harness aborted: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        await restoreToCleanBase(page.url(), settledBaseHash);
+      }
+      if (dndHarnessOn && !harnessCtx.isAtCapacity()) {
+        try {
+          await runDndHarness(harnessCtx, node, item.depth);
+        } catch (err) {
+          addHarnessNote(`dnd-harness aborted: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        await restoreToCleanBase(page.url(), settledBaseHash);
+      }
+    }
+  }
+
+  if (harnessNotes.length > 0) {
+    writeFileSync(
+      join(opts.outDir, 'harness-notes.json'),
+      JSON.stringify({ notes: harnessNotes }, null, 2),
+      'utf8',
+    );
+    console.log(`[crawl] extended harnesses: ${harnessNotes.length} note(s) -> harness-notes.json`);
+  }
+
+  if (normalisedScopePrefix) {
+    console.log(`[crawl] focus: dropped ${droppedOffScope} off-scope route enqueue(s)`);
   }
 
   await scanPage(page, signatureScan);

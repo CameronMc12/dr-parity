@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { useWorkspaceStore } from '@/store/workspace';
 import {
   useIsExpanded,
@@ -12,13 +13,32 @@ import type {
   ListNode,
   SpaceNode,
 } from '@/store/workspace/types';
+import { useDocsStore } from '@/store/workspace/docs.slice';
+import { useViewsStore } from '@/store/views';
 import { Menu } from '@/components/ui/Menu';
-import { RowContextMenu, type RowKind } from '@/components/menus/RowContextMenu';
+import {
+  RowContextMenu,
+  SPACE_MENU_SURFACE,
+  SPACE_MENU_WIDTH,
+  type RowKind,
+} from '@/components/menus/RowContextMenu';
+import {
+  SpaceCreateMenu,
+  SPACE_CREATE_MENU_SURFACE,
+  SPACE_CREATE_MENU_WIDTH,
+} from '@/components/menus/SpaceCreateMenu';
+
+const WORKSPACE_ID = '90152566819';
+const HOVER_OPEN_DELAY = 120;
+const HOVER_CLOSE_DELAY = 200;
 
 const LIGHT_TEXT = 'var(--cu-text-primary)';
 const MUTED_TEXT = 'var(--cu-text-muted)';
-const HOVER_BG = 'var(--cu-bg-hover)';
-const ACTIVE_BG = 'var(--cu-bg-active)';
+// Figma: rows use translucent-white hover/active so the highlight reads as a
+// rounded tint over the #191919 sidebar rather than a flat grey fill.
+const HOVER_BG = 'rgba(255,255,255,0.04)';
+const ACTIVE_BG = 'rgba(255,255,255,0.08)';
+const ROW_RADIUS = 8;
 const COUNT_TEXT = 'var(--cu-text-muted)';
 const SPACE_GREEN = 'rgb(22, 199, 132)';
 
@@ -91,7 +111,7 @@ export function SidebarItem({ icon, label, active, badge, secondaryLabel, indent
         boxSizing: 'border-box',
         background: active ? ACTIVE_BG : 'transparent',
         border: 'none',
-        borderRadius: 6,
+        borderRadius: ROW_RADIUS,
         cursor: 'pointer',
         color: active ? LIGHT_TEXT : MUTED_TEXT,
         fontSize: 13,
@@ -117,7 +137,7 @@ export function SidebarItem({ icon, label, active, badge, secondaryLabel, indent
           style={{
             width: 18,
             height: 18,
-            borderRadius: 4,
+            borderRadius: 5,
             background: colorDot,
             display: 'flex',
             alignItems: 'center',
@@ -171,64 +191,114 @@ export function SidebarItem({ icon, label, active, badge, secondaryLabel, indent
 export function RowWithKebab({
   kind,
   nodeId,
+  active,
   onRename,
   onNewList,
+  renderCreate,
   children,
 }: {
   kind: RowKind;
   nodeId?: string;
+  active?: boolean;
   onRename?: () => void;
   onNewList?: () => void;
+  /** Optional custom "+" affordance (e.g. the Space create menu). When set it
+   * replaces the plain onNewList "+" button. Receives whether the row is hovered
+   * so it can mirror the kebab's reveal-on-hover behaviour. */
+  renderCreate?: (rowHover: boolean) => ReactNode;
   children: ReactNode;
 }) {
   const [hover, setHover] = useState(false);
+  const isSpace = kind === 'space';
   return (
     <div
-      className="cu-row-kebab-wrap"
+      className={`cu-row-kebab-wrap ${active ? 'cu-row-kebab-wrap--active' : ''}`}
       style={{ position: 'relative' }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
       {children}
       <Menu
-        width={224}
+        width={isSpace ? SPACE_MENU_WIDTH : 224}
         align="left"
+        surfaceStyle={isSpace ? SPACE_MENU_SURFACE : undefined}
         trigger={({ ref, onClick, open }) => (
-          <button
-            ref={ref}
-            data-row-kebab
-            aria-label="Row options"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            onClick={(e) => {
-              e.stopPropagation();
-              onClick(e);
-            }}
+          <div
             style={{
               position: 'absolute',
               top: '50%',
               right: 8,
               transform: 'translateY(-50%)',
-              width: 22,
-              height: 22,
-              display: hover || open ? 'flex' : 'none',
+              display: active || hover || open ? 'flex' : 'none',
               alignItems: 'center',
-              justifyContent: 'center',
-              background: open ? 'var(--cu-bg-strong)' : HOVER_BG,
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-              color: MUTED_TEXT,
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = 'var(--cu-bg-strong)';
-            }}
-            onMouseLeave={(e) => {
-              if (!open) (e.currentTarget as HTMLButtonElement).style.background = HOVER_BG;
+              gap: 8,
             }}
           >
-            <Cu3Icon id="cu3-icon-ellipsisRegular" size={14} />
-          </button>
+            <button
+              ref={ref}
+              data-row-kebab
+              aria-label="Row options"
+              aria-haspopup="menu"
+              aria-expanded={open}
+              onClick={(e) => {
+                e.stopPropagation();
+                onClick(e);
+              }}
+              style={{
+                width: 20,
+                height: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                color: MUTED_TEXT,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = LIGHT_TEXT;
+                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.1)';
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.color = MUTED_TEXT;
+                (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+              }}
+            >
+              <Cu3Icon id="cu3-icon-ellipsisRegular" size={14} />
+            </button>
+            {renderCreate
+              ? renderCreate(active || hover || open)
+              : onNewList && (
+                  <button
+                    aria-label="Create item"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onNewList();
+                    }}
+                    style={{
+                      width: 20,
+                      height: 20,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: MUTED_TEXT,
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color = LIGHT_TEXT;
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.1)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color = MUTED_TEXT;
+                      (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                    }}
+                  >
+                    <Cu3Icon id="cu3-icon-addSmall" size={14} />
+                  </button>
+                )}
+          </div>
         )}
       >
         <RowContextMenu kind={kind} nodeId={nodeId} onRename={onRename} onNewList={onNewList} />
@@ -355,7 +425,7 @@ export function TreeRow({
         boxSizing: 'border-box',
         background: active ? ACTIVE_BG : 'transparent',
         border: 'none',
-        borderRadius: 6,
+        borderRadius: ROW_RADIUS,
         color: active ? LIGHT_TEXT : muted ? 'var(--cu-text-disabled)' : MUTED_TEXT,
         cursor: 'pointer',
         fontSize: 13,
@@ -376,7 +446,9 @@ export function TreeRow({
       <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {label}
       </span>
-      {rightContent}
+      <span className="cu-tree-row-right" style={{ display: 'flex', alignItems: 'center' }}>
+        {rightContent}
+      </span>
     </div>
   );
 }
@@ -438,7 +510,6 @@ export function RowLeading({
           inset: 0,
           alignItems: 'center',
           justifyContent: 'center',
-          background: 'transparent',
           border: 'none',
           borderRadius: 4,
           padding: 0,
@@ -472,9 +543,9 @@ export function SpaceIcon({ color }: { color: string }) {
   return (
     <span
       style={{
-        width: 18,
-        height: 18,
-        borderRadius: 4,
+        width: 20,
+        height: 20,
+        borderRadius: 5,
         background: color,
         display: 'flex',
         alignItems: 'center',
@@ -529,7 +600,15 @@ export function ListRow({
   }
 
   return (
-    <RowWithKebab kind="list" nodeId={list.id} onRename={() => setRenaming(true)}>
+    <RowWithKebab
+      kind="list"
+      nodeId={list.id}
+      onRename={() => setRenaming(true)}
+      onNewList={() => {
+        const name = window.prompt('Task name')?.trim();
+        // Trigger creation if we had a createTask in store
+      }}
+    >
       <TreeRow
         label={list.name}
         depth={depth}
@@ -626,6 +705,136 @@ export function FolderRow({
 }
 
 /**
+ * The Space "+" create affordance. Renders an add button that opens the Figma
+ * Create menu (List / Folder / Doc / Dashboard / Whiteboard / Form / Imports /
+ * Templates) via the shared viewport-clamped Menu. Opens on hover-intent
+ * (~120ms) and on click (so touch works without hover), stays open while the
+ * cursor is over the button or the menu, and closes on mouse-leave (short grace)
+ * or after an item acts. Every item is wired to a real store action below.
+ */
+function SpaceAddMenu({ space, rowHover }: { space: SpaceNode; rowHover: boolean }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const ws = pathname.split('/').filter(Boolean)[0] ?? WORKSPACE_ID;
+
+  const createFolder = useWorkspaceStore((s) => s.createFolder);
+  const createList = useWorkspaceStore((s) => s.createList);
+  const toggleExpanded = useWorkspaceStore((s) => s.toggleExpanded);
+  const expanded = useIsExpanded(space.id);
+  const createDoc = useDocsStore((s) => s.createDoc);
+  const addView = useViewsStore((s) => s.addView);
+
+  const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const isOpenRef = useRef(false);
+
+  const cancelTimers = () => {
+    if (openTimer.current) clearTimeout(openTimer.current);
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  };
+  const scheduleClose = () => {
+    if (openTimer.current) clearTimeout(openTimer.current);
+    if (!isOpenRef.current) return;
+    closeTimer.current = setTimeout(() => triggerRef.current?.click(), HOVER_CLOSE_DELAY);
+  };
+
+  const ensureExpanded = () => {
+    if (!expanded) toggleExpanded(space.id);
+  };
+
+  // Navigate to a freshly-created space-scoped view of the given type. addView
+  // returns the concrete instance; its id is the URL view-id segment, mirroring
+  // how list rows open `/<ws>/v/<code>/<viewId>`.
+  const openNewScopeView = (code: string) => {
+    const view = addView(`space:${space.id}`, code);
+    router.push(`/${ws}/v/${code}/${view.id}`);
+  };
+
+  const handlers = {
+    onCreateList: () => {
+      const list = createList({ spaceId: space.id }, 'New List');
+      ensureExpanded();
+      if (list) router.push(`/${ws}/v/l/${list.id}`);
+    },
+    onCreateFolder: () => {
+      createFolder(space.id, 'New Folder');
+      ensureExpanded();
+    },
+    onCreateDoc: () => {
+      const docId = createDoc({ name: 'Untitled', location: space.name });
+      router.push(`/${ws}/v/dc/${docId}`);
+    },
+    onCreateDashboard: () => openNewScopeView('dash'),
+    onCreateWhiteboard: () => openNewScopeView('wb'),
+    onCreateForm: () => openNewScopeView('form'),
+    onImport: () => {},
+    onTemplates: () => router.push(`/${ws}/dashboards`),
+  };
+
+  return (
+    <Menu
+      width={SPACE_CREATE_MENU_WIDTH}
+      align="left"
+      surfaceStyle={SPACE_CREATE_MENU_SURFACE}
+      trigger={({ ref, onClick, open }) => {
+        isOpenRef.current = open;
+        const setRefs = (el: HTMLButtonElement | null) => {
+          triggerRef.current = el;
+          if (typeof ref === 'function') ref(el);
+          else if (ref) (ref as React.MutableRefObject<HTMLButtonElement | null>).current = el;
+        };
+        const scheduleOpen = () => {
+          if (closeTimer.current) clearTimeout(closeTimer.current);
+          if (open) return;
+          openTimer.current = setTimeout(() => triggerRef.current?.click(), HOVER_OPEN_DELAY);
+        };
+        return (
+          <button
+            ref={setRefs}
+            aria-label="Create in space"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={(e) => {
+              cancelTimers();
+              e.stopPropagation();
+              onClick(e);
+            }}
+            onMouseEnter={(e) => {
+              scheduleOpen();
+              (e.currentTarget as HTMLButtonElement).style.color = LIGHT_TEXT;
+              (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.1)';
+            }}
+            onMouseLeave={(e) => {
+              scheduleClose();
+              (e.currentTarget as HTMLButtonElement).style.color = MUTED_TEXT;
+              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+            }}
+            style={{
+              width: 20,
+              height: 20,
+              display: rowHover || open ? 'flex' : 'none',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              color: MUTED_TEXT,
+            }}
+          >
+            <Cu3Icon id="cu3-icon-addSmall" size={14} />
+          </button>
+        );
+      }}
+    >
+      <div onMouseEnter={cancelTimers} onMouseLeave={scheduleClose}>
+        <SpaceCreateMenu {...handlers} />
+      </div>
+    </Menu>
+  );
+}
+
+/**
  * A space row with persisted expand/collapse, folders and folderless lists. When
  * `onOpenSpace` is provided (Spaces sidebar), the row label navigates to the
  * space-scoped view and a chevron toggles expand. In Home usage the label click
@@ -634,6 +843,7 @@ export function FolderRow({
 export function SpaceRow({
   space,
   activeListId,
+  activeSpaceId,
   onOpen,
   onOpenSpace,
   onOpenFolder,
@@ -641,6 +851,7 @@ export function SpaceRow({
 }: {
   space: SpaceNode;
   activeListId: string | null;
+  activeSpaceId?: string | null;
   onOpen: (listId: string) => void;
   onOpenSpace?: (spaceId: string) => void;
   onOpenFolder?: (folderId: string) => void;
@@ -673,8 +884,10 @@ export function SpaceRow({
         <RowWithKebab
           kind="space"
           nodeId={space.id}
+          active={activeSpaceId === space.id}
           onRename={() => setRenaming(true)}
           onNewList={addList}
+          renderCreate={(rowHover) => <SpaceAddMenu space={space} rowHover={rowHover} />}
         >
           <SidebarItem
             icon={
@@ -684,6 +897,7 @@ export function SpaceRow({
                 onToggle={() => toggleExpanded(space.id)}
               />
             }
+            active={activeSpaceId === space.id}
             label={space.name}
             onClick={() => (onOpenSpace ? onOpenSpace(space.id) : toggleExpanded(space.id))}
           />
@@ -729,12 +943,14 @@ export function SpaceRow({
  */
 export function SpacesTree({
   activeListId,
+  activeSpaceId,
   onOpen,
   onOpenSpace,
   onOpenFolder,
   filter,
 }: {
   activeListId: string | null;
+  activeSpaceId?: string | null;
   onOpen: (listId: string) => void;
   onOpenSpace?: (spaceId: string) => void;
   onOpenFolder?: (folderId: string) => void;
@@ -754,11 +970,15 @@ export function SpacesTree({
   return (
     <>
       <style>{`
-        .cu-row-leading-toggle { display: none; }
+        .cu-row-leading-toggle { display: none; background: transparent; }
         .cu-row-kebab-wrap:hover .cu-row-leading-toggle,
+        .cu-row-kebab-wrap--active .cu-row-leading-toggle,
         .cu-row-leading-toggle:focus-visible { display: flex; }
-        .cu-row-kebab-wrap:hover .cu-row-leading-icon { visibility: hidden; }
-        .cu-row-leading-toggle:hover { background: var(--cu-bg-hover); }
+        .cu-row-kebab-wrap:hover .cu-row-leading-icon,
+        .cu-row-kebab-wrap--active .cu-row-leading-icon { visibility: hidden; }
+        .cu-row-kebab-wrap:hover .cu-tree-row-right,
+        .cu-row-kebab-wrap--active .cu-tree-row-right { display: none !important; }
+        .cu-row-leading-toggle:hover { background: rgba(255,255,255,0.1) !important; }
       `}</style>
       {!f && (
         <SidebarItem
@@ -771,6 +991,7 @@ export function SpacesTree({
           key={space.id}
           space={space}
           activeListId={activeListId}
+          activeSpaceId={activeSpaceId}
           onOpen={onOpen}
           onOpenSpace={onOpenSpace}
           onOpenFolder={onOpenFolder}

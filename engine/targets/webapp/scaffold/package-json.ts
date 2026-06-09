@@ -14,6 +14,11 @@ export function writePackageJson(outDir: string, name: string): void {
       preview: 'vite preview',
       typecheck: 'tsc --noEmit',
       'msw:init': 'msw init public --save',
+      // Provision the version-matched mockServiceWorker.js into public/ on
+      // install so the dev worker registers (a missing file boots the real app
+      // bundle's network instead of our mocks). Guarded so install never fails
+      // if the worker already exists or msw is unavailable.
+      postinstall: 'msw init public --save || true',
     },
     dependencies: {
       react: '^18.3.1',

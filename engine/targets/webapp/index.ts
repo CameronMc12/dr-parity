@@ -93,9 +93,7 @@ function deriveDefaultName(cloneDir: string): string {
 export const webappAdapter: TargetAdapter = {
   name: 'webapp',
   async build(options: TargetBuildOptions): Promise<TargetBuildSummary> {
-    const absClone = resolve(options.cloneDir);
     const absOut = resolve(options.outDir);
-    const name = options.name ?? deriveDefaultName(absClone);
     const force = options.force ?? false;
     // `crawlDir` now lives on the shared `TargetBuildOptions` contract so
     // scripts can pass it through without a structural cast. Astro and
@@ -103,8 +101,20 @@ export const webappAdapter: TargetAdapter = {
     // it (stateful build mode).
     const crawlDir = options.crawlDir;
 
+    // Clone-dir is optional ONLY in crawl-only mode (no clone-dir, crawl-dir
+    // present). Outside that mode the positional clone-dir is mandatory.
+    const absClone = options.cloneDir ? resolve(options.cloneDir) : null;
+    if (!absClone && !crawlDir) {
+      throw new Error(
+        'Webapp build requires either a clone-dir or a --crawl-dir.',
+      );
+    }
+    const name =
+      options.name ??
+      (absClone ? deriveDefaultName(absClone) : basename(resolve(crawlDir as string)));
+
     const summary = await buildWebappProject({
-      cloneDir: absClone,
+      ...(absClone ? { cloneDir: absClone } : {}),
       outDir: absOut,
       name,
       force,

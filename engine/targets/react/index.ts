@@ -93,6 +93,9 @@ function deriveDefaultName(cloneDir: string): string {
 export const reactAdapter: TargetAdapter = {
   name: 'react',
   async build(options: TargetBuildOptions): Promise<TargetBuildSummary> {
+    if (!options.cloneDir) {
+      throw new Error('React target requires a clone-dir (cloneDir).');
+    }
     const absClone = resolve(options.cloneDir);
     const absOut = resolve(options.outDir);
     const name = options.name ?? deriveDefaultName(absClone);

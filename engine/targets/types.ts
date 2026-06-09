@@ -10,8 +10,13 @@
  */
 
 export interface TargetBuildOptions {
-  /** Path to the static HTML clone (input). */
-  cloneDir: string;
+  /**
+   * Path to the static HTML clone (input). Optional ONLY for the webapp
+   * target when `crawlDir` is supplied: in that mode the document head and
+   * documentUrl are derived from the crawl's root-state DOM + graph.json
+   * instead of a clone-dir index.html. Astro and React always require it.
+   */
+  cloneDir?: string;
   /** Where to write the framework project. */
   outDir: string;
   /** Optional project name used in package.json or equivalent scaffold files. */

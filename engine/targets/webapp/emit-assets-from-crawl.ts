@@ -40,7 +40,12 @@ import { posix as pathPosix } from 'node:path';
 import { resolveUrl } from '../../clone/url-map';
 import type { CloneAssetMap } from '../shared';
 
-/** Legacy crawler hard-capped text response bodies at this many characters. */
+/**
+ * Legacy crawler hard-capped text response bodies at this many characters.
+ * Only used as a fallback for ancient captures that carry NO `bodySize` field.
+ * Modern captures record `bodySize` (the true decoded byte length), so we detect
+ * truncation precisely by comparing the stored body length to it instead.
+ */
 const LEGACY_TRUNCATION_CAP = 50000;
 
 const STATIC_EXTENSIONS = new Set([
@@ -84,6 +89,27 @@ interface RawResponseLine {
   headers?: Record<string, string>;
   body?: string | null;
   bodyEncoding?: 'utf8' | 'base64';
+  /** True decoded byte length the crawler recorded. Present on modern captures. */
+  bodySize?: number | null;
+}
+
+/**
+ * Decide whether a captured TEXT body is a legacy truncation we must skip.
+ *
+ * Modern captures carry `bodySize` (true decoded byte length). A complete body
+ * has `byteLength(body) >= bodySize`; a body shorter than its recorded size was
+ * cut off by an old crawler cap and would be a corrupt CSS/JS file. Bodies of
+ * ANY size are written when complete — the old blanket ">= 50KB means truncated"
+ * heuristic wrongly dropped every modern stylesheet/bundle over 50KB.
+ *
+ * When `bodySize` is absent (ancient captures with no size metadata), fall back
+ * to the legacy heuristic: a body at/over the old cap is assumed truncated.
+ */
+function isLegacyTruncatedText(body: string, bodySize: number | null | undefined): boolean {
+  if (typeof bodySize === 'number' && bodySize > 0) {
+    return Buffer.byteLength(body, 'utf8') < bodySize;
+  }
+  return body.length >= LEGACY_TRUNCATION_CAP;
 }
 
 export interface CrawlAssetResult {
@@ -250,21 +276,30 @@ export async function emitAssetsFromCrawl(args: {
     const contentType = contentTypeOf(record.headers);
     if (!isStaticAsset(contentType, url)) continue;
 
-    seen.add(url);
-    if (existingUrls.has(url)) continue;
+    if (existingUrls.has(url)) {
+      seen.add(url);
+      continue;
+    }
 
     const body = record.body;
     if (body == null) {
+      // A no-body response (304 / header-only). Do NOT mark the URL seen: a
+      // later hit for the SAME url may carry the real bytes. Marking it seen
+      // here would permanently shadow that bodied response and the asset would
+      // never localize (broken cross-route image/font at runtime).
       noBodySkipped++;
       continue;
     }
+
+    seen.add(url);
 
     const encoding = record.bodyEncoding ?? 'utf8';
     const isBinary = encoding === 'base64';
 
     // Legacy text captures may be truncated at the old cap; skip to avoid
     // writing a corrupt CSS/JS file. Binary base64 bodies are never truncated.
-    if (!isBinary && body.length >= LEGACY_TRUNCATION_CAP) {
+    // Detection is bodySize-aware so complete modern bodies of any size pass.
+    if (!isBinary && isLegacyTruncatedText(body, record.bodySize)) {
       truncatedSkipped++;
       continue;
     }

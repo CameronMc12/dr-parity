@@ -161,7 +161,32 @@ const PATHS: Record<string, ReactElement> = {
   ),
 };
 
+/**
+ * Multicolor App Center glyph — four rounded squares in ClickUp's brand hues,
+ * matching the real App Center icon. Rendered as a filled (non-stroke) SVG so it
+ * keeps its colors regardless of the row's muted text color.
+ */
+function AppCenterGlyph({ size }: { size: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      style={{ display: 'block', flexShrink: 0 }}
+    >
+      <rect x="3" y="3" width="7" height="7" rx="2" fill="#FD71AF" />
+      <rect x="14" y="3" width="7" height="7" rx="2" fill="#FFC800" />
+      <rect x="3" y="14" width="7" height="7" rx="2" fill="#1090E0" />
+      <rect x="14" y="14" width="7" height="7" rx="2" fill="#49CCF9" />
+    </svg>
+  );
+}
+
 export function SettingsNavIcon({ glyph, size = 16 }: Props) {
+  if (glyph === 'appCenter') return <AppCenterGlyph size={size} />;
+
   const path = PATHS[glyph] ?? PATHS.gear;
   return (
     <svg
